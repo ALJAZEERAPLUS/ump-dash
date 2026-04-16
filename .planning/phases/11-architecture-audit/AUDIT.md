@@ -161,9 +161,129 @@
 <!-- Coverage: src/infra/{mod,port,process,worktrees,command_runner,devices,config,jira,jira_cache,multiplexer,sim_history,android_prefs,tmux}.rs -->
 <!-- Wave 1 Plan 11-02 appends here -->
 
+### File Scores
+
+**File:** `src/infra/mod.rs` (15 LOC)
+**Public interface:** 12 `pub mod` re-exports (port, process, worktrees, command_runner, devices, config, jira, jira_cache, tmux, multiplexer, sim_history, android_prefs) + module doc-comment
+**Verdict:** OK (minimal re-export hub)
+**Justification:** Pure re-export hub. Doc-comment (line 2) claims "All concrete implementations are behind trait boundaries (ARCH-02)" — aspirational: only 3 of 12 modules expose a trait (`process::ProcessClient`, `multiplexer::Multiplexer`, `jira::JiraClient`). See the mod.rs Minor finding below.
+
+**File:** `src/infra/port.rs` (66 LOC)
+**Public interface:** `pub fn port_is_free(u16) -> bool` + `pub struct ExternalMetroInfo { pid: u32, working_dir: String }` + `pub async fn detect_external_metro(u16) -> Option<ExternalMetroInfo>` + `pub async fn kill_process(u32) -> anyhow::Result<()>` (4 pub items)
+**Verdict:** OK (shallow-ish — small interface over small impl; hexagonal port candidate)
+**Justification:** Three free functions directly wrap OS calls (`TcpListener::bind`, `lsof`, `kill`). No trait. Called directly from `app.rs` (per RESEARCH §Direct infra↔app coupling). Literally named after hexagonal ports yet isn't one — see the port.rs Major finding.
+
+**File:** `src/infra/process.rs` (51 LOC)
+**Public interface:** `#[async_trait] pub trait ProcessClient { async fn spawn_metro(&self, PathBuf) -> Result<Child> }` + `pub struct TokioProcessClient` (2 pub items)
+**Verdict:** OK — positive example of a trait boundary, but trait placement is wrong per strict hexagonal rule.
+**Justification:** Cleanest single-method trait in the codebase. Caller depends on `ProcessClient`, not on `tokio::process`. However both the trait AND its impl live in `infra/`, which per Cockburn's ports-and-adapters rule makes this interface segregation, not a hexagonal port. Strict grading produces a Major finding below.
+
+**File:** `src/infra/worktrees.rs` (348 LOC)
+**Public interface:** 8 pub fns — `parse_worktree_porcelain`, `check_stale`, `check_stale_pods` (pure), `remove_worktree`, `add_worktree`, `add_worktree_new_branch`, `list_remote_branches`, `list_worktrees` (async/I/O). No trait.
+**Verdict:** OK (deep on the parser, shallow on the I/O surface — mixed responsibilities)
+**Justification:** Pure parsers are deep — non-trivial sentinel logic hidden behind a single function, unit-tested without git. Six async git-invoking functions are thin wrappers over `tokio::process::Command` with no abstraction over the tool. No trait; callers import the free functions directly. Hexagonal port candidate — see the worktrees.rs Major finding.
+
+**File:** `src/infra/command_runner.rs` (129 LOC)
+**Public interface:** `pub async fn spawn_command_task(CommandSpec, PathBuf, String, UnboundedSender<Action>) -> JoinHandle<()>` (1 pub fn; `stream_command_output`, `build_argv` are private)
+**Verdict:** Shallow — clearest layer violation in the codebase. Single public fn imports `crate::action::Action` at line 12 and sends TEA actions over a caller-provided channel.
+**Justification:** Interface surface is one function. Implementation pipes stdout/stderr lines as `Action::CommandOutputLine` and final exit as `Action::CommandExited`. The module cannot be reused outside this codebase without dragging `Action` along. Lines 99 and 105 contain legitimate `_ => { stdout_done = true; }` / `_ => { stderr_done = true; }` catch-alls (next_line returned Err → stream done; full enumeration in Plan 11-05). See the command_runner.rs Critical finding below.
+
+**File:** `src/infra/devices.rs` (273 LOC)
+**Public interface:** 4 pure parsers (`parse_adb_devices`, `parse_xcrun_simctl`, `parse_xctrace_devices`, `parse_avd_list`) + 3 async runners (`list_android_devices`, `list_ios_simulators`, `list_ios_physical_devices`) — 7 pub fns.
+**Verdict:** OK — parsers are deep (well-tested, hide parsing complexity); runners are thin shells over `tokio::process::Command`. No trait.
+**Justification:** Parsers take raw command output and return `Vec<DeviceInfo>` — pure/testable shape. Runners bundle command-invocation + parsing. Callers invoke the async fns directly. Hexagonal port candidate — see the devices.rs Major finding.
+
+**File:** `src/infra/jira.rs` (175 LOC)
+**Public interface:** `#[async_trait] pub trait JiraClient: Send + Sync + Debug { async fn fetch_title(&self, &str) -> Option<String> }` + `pub struct HttpJiraClient` + `pub fn extract_jira_key(&str, &str) -> Option<String>` (pure, 6 inline tests) + `pub fn is_inside_tmux() -> bool` (pure).
+**Verdict:** OK on the trait boundary; two misplaced helpers (`extract_jira_key`, `is_inside_tmux`).
+**Justification:** `JiraClient` + `HttpJiraClient` mirror `ProcessClient` — clean single-method trait, swappable. Same hexagonal grading question as process.rs (trait in infra rather than domain — Major below). `extract_jira_key` is pure and called from `ui/panels.rs:71` (UI→infra leak for domain logic — Major). `is_inside_tmux` is a multiplexer concern misplaced in jira.rs (Minor).
+
 ### Critical
+
+### [Critical] F-101: `command_runner.rs` imports `crate::action::Action` — Data Source layer knows Service-layer messaging type
+- **Location:** `src/infra/command_runner.rs:12` (`use crate::action::Action;`); `src/infra/command_runner.rs:26-70` (`spawn_command_task` signature takes `UnboundedSender<Action>`); lines 38, 54, 68, 98, 104 send `Action::CommandOutputLine(...)` / `Action::CommandExited`.
+- **Dimension:** Hexagonal | Fowler-4-Layer
+- **Symptom:** Infrastructure module imports and sends `Action::CommandOutputLine` and `Action::CommandExited` directly via the channel supplied by app.rs. The function signature itself bakes the TEA vocabulary into the infra API (`UnboundedSender<Action>`).
+- **Why it's a problem:** Reverses the dependency direction — Data Source layer knows the Service layer's messaging vocabulary. `command_runner` cannot be reused without dragging `Action` along; any change to `Action`'s variant set forces a recompile of infra. Combined with F-002 (action.rs placement), this is the single most load-bearing layer violation in the codebase.
+- **Recommendation:** Extract `domain::ports::CommandRunnerPort` that returns a typed event stream; app.rs translates events into `Action` at the boundary. Concrete target shape:
+  ```rust
+  // src/domain/ports/command_runner_port.rs (new file)
+  pub enum CommandEvent { OutputLine(String), Exited(std::process::ExitStatus) }
+  pub trait CommandRunnerPort: Send + Sync {
+      fn spawn(&self, spec: CommandSpec, cwd: PathBuf, branch: String)
+          -> tokio::sync::mpsc::UnboundedReceiver<CommandEvent>;
+  }
+  ```
+  `move` the spawn-and-stream body from `infra/command_runner.rs` into a `TokioCommandRunner` adapter implementing the trait; delete the `use crate::action::Action` import; let app.rs's effect runner translate `CommandEvent::OutputLine` → `Action::CommandOutputLine` and `CommandEvent::Exited` → `Action::CommandExited`. Coordinate with F-002 — once command_runner no longer imports `Action`, the F-002 move becomes a single-importer change (only `app.rs` references `Action`).
+- **Phase 13 task hint:** Define `domain::ports::CommandRunnerPort` + `CommandEvent` enum; move `command_runner.rs` body into `infra::command_runner::TokioCommandRunner` implementing the trait; rewire app.rs to translate events into Actions at the boundary.
+
 ### Major
+
+### [Major] F-102: `infra/port.rs` exposes three free functions for an external port probe — no hexagonal port trait
+- **Location:** `src/infra/port.rs:12-66` (functions `port_is_free`, `detect_external_metro`, `kill_process`); callers in `src/app.rs` (per RESEARCH §Direct infra↔app coupling)
+- **Dimension:** Hexagonal
+- **Symptom:** The module wraps three OS calls (`TcpListener::bind`, `lsof`, `kill`) as free pub fns. app.rs imports them directly (`use crate::infra::port::{detect_external_metro, kill_process, ...}`). No trait abstracts the probe, so the domain layer cannot express "detect an external metro" without depending on the concrete implementation.
+- **Why it's a problem:** The file is literally named after hexagonal ports yet is not one. Consumer depends on the concrete module, not on an abstraction — no way to inject a fake for testing "external metro conflict" flows in `app.rs` without also faking `lsof`/`kill`. Strict hexagonal grading makes this Major.
+- **Recommendation:** Extract `trait domain::ports::PortProbePort { fn is_free(&self, port: u16) -> bool; async fn detect_external(&self, port: u16) -> Option<ExternalProcessInfo>; async fn kill(&self, pid: u32) -> anyhow::Result<()>; }` in a new `src/domain/ports/port_probe_port.rs`. `move` the free-function bodies behind an `infra::port::LsofPortProbe` adapter implementing the trait. `ExternalMetroInfo` becomes `ExternalProcessInfo` (more general — no mention of metro) in domain. app.rs holds the trait object at startup injection.
+- **Phase 13 task hint:** Define `domain::ports::PortProbePort` trait + `ExternalProcessInfo` struct; move port.rs contents behind an `LsofPortProbe` adapter; update app.rs to consume the trait instead of free functions.
+
+### [Major] F-103: `ProcessClient` trait belongs in `domain/`, not `infra/` — strict hexagonal grading
+- **Location:** `src/infra/process.rs:16-26` (trait definition at infra path); `src/infra/process.rs:29-51` (impl in same file)
+- **Dimension:** Hexagonal
+- **Symptom:** `pub trait ProcessClient` and its sole implementation `TokioProcessClient` both live in `src/infra/process.rs`. Per Cockburn's ports-and-adapters rule this is interface segregation, not a port — trait-and-impl in the same layer, domain has no knowledge of the abstraction. `domain/metro.rs::MetroManager` has no reference to `ProcessClient`; the trait serves only app.rs.
+- **Why it's a problem:** Domain layer cannot express "spawn a metro process" without crossing into infra. Test doubles for metro lifecycle must live in infra crate even though they have no business there. Same critique applies to `Multiplexer` (F-110) and `JiraClient` (F-106) — all three infra traits share this wrong-layer placement. Graded Major (not Critical) because the refactor cost is small and the current shape does reduce coupling to `tokio::process` at the call site.
+- **Recommendation:** `move` the `trait ProcessClient` declaration from `src/infra/process.rs` to `src/domain/ports/process_port.rs` (new file); keep the `TokioProcessClient` impl in `src/infra/process.rs` and change it to `impl crate::domain::ports::ProcessClient for TokioProcessClient`. `AppState` holds `Arc<dyn ProcessClient>` injected at startup from `main.rs`. No behavior change — pure file move + import rewrite across three sites (`app.rs`, `infra/process.rs`, new domain module). Alternative (downgrade to Minor): accept the current shape as "pragmatic interface segregation adequate for this codebase's scale" — document the trade-off in domain/mod.rs and close the finding without a refactor. This auditor recommends the strict move for consistency with F-101's CommandRunnerPort placement.
+- **Phase 13 task hint:** Move `trait ProcessClient` from `infra/process.rs` to `domain/ports/process_port.rs`; update impl line in infra; update the import site in app.rs.
+
+### [Major] F-104: `infra/worktrees.rs` exposes 8 free functions for git worktree operations — no hexagonal port
+- **Location:** `src/infra/worktrees.rs:23-89` (pure parser), `:101-185` (pure staleness checks), `:196-348` (6 async git-invoking fns: `remove_worktree`, `add_worktree`, `list_remote_branches`, `add_worktree_new_branch`, `list_worktrees`)
+- **Dimension:** Hexagonal | Fowler-4-Layer
+- **Symptom:** 8 free functions in a single 348-LOC file. The six I/O functions each shell out to `git` via `tokio::process::Command`. No trait abstracts the git backend. app.rs calls them directly.
+- **Why it's a problem:** Domain layer has no "worktree repository" abstraction — the concept of "list/add/remove a worktree" is defined only by whatever git's CLI accepts. Swapping to a different VCS or injecting a fake for app.rs integration tests requires stubbing out `tokio::process::Command` globally, not a clean trait substitution.
+- **Recommendation:** Extract `trait domain::ports::WorktreePort { async fn list(&self) -> anyhow::Result<Vec<Worktree>>; async fn add(&self, branch: &str) -> anyhow::Result<PathBuf>; async fn remove(&self, path: &Path) -> anyhow::Result<()>; async fn add_with_new_branch(&self, new: &str, base: &str) -> anyhow::Result<PathBuf>; async fn list_remote_branches(&self) -> anyhow::Result<Vec<String>>; }`. `move` the six async fns behind a `infra::worktrees::GitWorktreeAdapter` impl. Keep `parse_worktree_porcelain`, `check_stale`, `check_stale_pods` as free module-private helpers (pure parsers/checks, not behavior). app.rs injects `Arc<dyn WorktreePort>` at startup.
+- **Phase 13 task hint:** Define `domain::ports::WorktreePort`; move the six git-invoking fns into `infra::worktrees::GitWorktreeAdapter`; keep the three pure helpers private to infra; rewire app.rs.
+
+### [Major] F-105: `infra/devices.rs` exposes pure parsers + async runners — no hexagonal port for device enumeration
+- **Location:** `src/infra/devices.rs:32-203` (4 pure parsers); `:208-273` (3 async runners `list_android_devices`, `list_ios_simulators`, `list_ios_physical_devices`)
+- **Dimension:** Hexagonal
+- **Symptom:** Three async enumeration fns each shell out to `adb`/`xcrun` and delegate parsing to pure helpers. No trait. app.rs calls the async fns directly.
+- **Why it's a problem:** Same failure mode as F-102 and F-104 — the concept "list devices" is concretely coupled to `adb`/`xcrun`. Cannot inject a stub-device set for app.rs flows without process-level faking.
+- **Recommendation:** Extract `trait domain::ports::DevicePort { async fn list_android(&self) -> anyhow::Result<Vec<DeviceInfo>>; async fn list_ios_simulators(&self) -> anyhow::Result<Vec<DeviceInfo>>; async fn list_ios_physical(&self) -> anyhow::Result<Vec<DeviceInfo>>; }`. `move` the three async runners behind an `infra::devices::AdbXcrunDevices` adapter impl. Keep the four parsers as free module-private helpers (pure, already unit-tested).
+- **Phase 13 task hint:** Define `domain::ports::DevicePort`; move async runners into `AdbXcrunDevices` adapter; keep parsers private to infra; update app.rs import.
+
+### [Major] F-106: `JiraClient` trait belongs in `domain/`, not `infra/` (same shape as F-103)
+- **Location:** `src/infra/jira.rs:22-30` (trait), `:33-88` (`HttpJiraClient` impl)
+- **Dimension:** Hexagonal
+- **Symptom:** `trait JiraClient` and `HttpJiraClient` both in `infra/jira.rs`. Same pattern as `ProcessClient` (F-103) and `Multiplexer` (F-110 below) — wrong layer for a hexagonal port.
+- **Why it's a problem:** Ticket-title fetching is a domain concept (enriches `Worktree`). Domain code today cannot reference the trait — any domain-side test that needs a fake JIRA client must reach into infra.
+- **Recommendation:** `move` the `trait JiraClient` declaration from `src/infra/jira.rs` to `src/domain/ports/jira_port.rs`; keep `HttpJiraClient` in infra, changing its `impl JiraClient` to reference the domain path. AppState holds `Arc<dyn domain::ports::JiraClient>`. Same strict-vs-pragmatic trade-off as F-103 — recommend the strict move for consistency; downgrade to Minor only if F-103 is also downgraded.
+- **Phase 13 task hint:** Move `trait JiraClient` from `infra/jira.rs` to `domain/ports/jira_port.rs`; update impl site; update AppState field type.
+
+### [Major] F-107: `extract_jira_key` is pure domain logic called from `ui/panels.rs:71` — UI→infra leak
+- **Location:** `src/infra/jira.rs:103-120` (pure function, no I/O); called from `src/ui/panels.rs:71` (per RESEARCH §Direct infra↔app coupling)
+- **Dimension:** Hexagonal | Fowler-4-Layer
+- **Symptom:** `extract_jira_key(branch: &str, project_prefix: &str) -> Option<String>` is a pure string parser (6 inline unit tests at lines 130-175). It lives in infra but is called from ui/panels.rs — Presentation reaches directly into Data Source for logic that is purely domain (string manipulation on branch names).
+- **Why it's a problem:** ui/mod.rs's doc-comment claims "Imports: domain types and ratatui ONLY. Never imports infra directly" — panels.rs:71 violates this claim. The function itself has no infra concern (no HTTP, no I/O, no tokio) — its placement in infra is incidental to `HttpJiraClient` happening to share the file.
+- **Recommendation:** `move` `extract_jira_key` (and its 6 inline tests) from `src/infra/jira.rs` to `src/domain/jira.rs` (new file) or `src/domain/worktree.rs` as a free function. Update the two import sites (`src/ui/panels.rs:71` and any app.rs use). Infra keeps only `JiraClient` + `HttpJiraClient`. The UI→infra leak dies.
+- **Phase 13 task hint:** Move `extract_jira_key` and its tests from `infra/jira.rs` to a new `domain/jira.rs` (or `domain/worktree.rs`); update panels.rs and app.rs import paths.
+
 ### Minor
+
+### [Minor] F-100: `infra/mod.rs` doc-claim "All concrete implementations are behind trait boundaries (ARCH-02)" is not enforced
+- **Location:** `src/infra/mod.rs:1-2`
+- **Dimension:** Ousterhout (documentation-bleed / aspirational invariant)
+- **Symptom:** The module-level doc-comment states "All concrete implementations are behind trait boundaries (ARCH-02)." Per this plan's audit, only 3 of 12 modules expose a trait (`process::ProcessClient`, `multiplexer::Multiplexer`, `jira::JiraClient`); the other 9 (`port`, `worktrees`, `command_runner`, `devices`, `config`, `jira_cache`, `sim_history`, `android_prefs`, `tmux`) expose free functions directly.
+- **Why it's a problem:** The doc-comment is load-bearing (an invariant claim about layer discipline) yet false by inspection. Readers who trust it will assume port discipline holds when it doesn't — exactly the misplaced-trust pattern that F-005's CommandSpec miscount embodies on a smaller scale. Minor because the fix is a single-line doc revision; promoted from trivial because the claim directly advertises ARCH-02 compliance.
+- **Recommendation:** Either (a) revise the doc to be honest about the current state — "Most I/O-bearing modules expose a trait; the remainder (port, worktrees, devices, command_runner, persistence helpers) are candidates for trait extraction" — or (b) land the per-module hexagonal findings above (F-102/F-104/F-105/F-106 plus the new `CommandRunnerPort` from F-101) and then the doc-claim becomes true. Option (b) is Phase 13's likely path; option (a) is the immediate safety-valve fix if the refactor slips. No file `move`/`trait` keyword required (Minor) — the concrete keyword budget is covered by the per-module hexagonal findings this doc-claim points to.
+- **Phase 13 task hint:** Drive-by — once the per-module hexagonal extractions land, rewrite `infra/mod.rs` doc-comment to reflect reality; if any module remains trait-less, name it explicitly.
+
+### [Minor] F-108: `is_inside_tmux` lives in `infra/jira.rs` but is a multiplexer concern
+- **Location:** `src/infra/jira.rs:122-128`
+- **Dimension:** Ousterhout (misplaced utility)
+- **Symptom:** `pub fn is_inside_tmux() -> bool { std::env::var("TMUX").is_ok() }` sits at the bottom of `infra/jira.rs` next to `HttpJiraClient` and `extract_jira_key`. It has no relationship to JIRA — the same helper already exists de-facto inside `infra/multiplexer.rs::TmuxAdapter::is_available` (line 34-36).
+- **Why it's a problem:** Low-severity readability hit. A reader looking for "tmux detection" searches `multiplexer.rs`/`tmux.rs` first and misses this duplicate. Minor — no behavior risk.
+- **Recommendation:** `move` `is_inside_tmux` from `src/infra/jira.rs` to `src/infra/multiplexer.rs` (or delete it entirely and have callers use `TmuxAdapter::new().is_available()` directly). Update any existing callers (grep shows none outside tests — function may be unused production code).
+- **Phase 13 task hint:** Drive-by — move `is_inside_tmux` to `multiplexer.rs` or delete it if unused.
 
 ## Module: app/
 <!-- Coverage: src/app.rs (the single 2,425-LOC file) -->
