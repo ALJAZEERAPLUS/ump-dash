@@ -19,9 +19,9 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 
 ### Architecture Audit (ARCH)
 
-- [ ] **ARCH-01**: Auditor produces an Ousterhout review of every module (`domain/`, `infra/`, `app/`, `ui/`) scoring deep-module/narrow-interface criteria with severity-tagged findings (Critical / Major / Minor).
-- [ ] **ARCH-02**: Auditor maps the codebase to Martin Fowler's 4-layer model (Presentation / Domain / Data Source / Service) and flags modules with mixed responsibilities.
-- [ ] **ARCH-03**: Auditor checks hexagonal ports-and-adapters discipline — infra modules must be adapters for domain-defined traits; direct coupling between infra and app/ui is flagged.
+- [x] **ARCH-01**: Auditor produces an Ousterhout review of every module (`domain/`, `infra/`, `app/`, `ui/`) scoring deep-module/narrow-interface criteria with severity-tagged findings (Critical / Major / Minor).
+- [x] **ARCH-02**: Auditor maps the codebase to Martin Fowler's 4-layer model (Presentation / Domain / Data Source / Service) and flags modules with mixed responsibilities.
+- [x] **ARCH-03**: Auditor checks hexagonal ports-and-adapters discipline — infra modules must be adapters for domain-defined traits; direct coupling between infra and app/ui is flagged.
 - [ ] **ARCH-04**: Auditor enumerates every `_ => {}` catch-all in match arms (handle_key, update, modal dispatch) and lists explicit gaps.
 - [ ] **ARCH-05**: Auditor surfaces every place where command ordering / prerequisite logic lives outside the domain layer (e.g. metro-before-run, pod-install-before-build, sync-before-metro inlined in `update()` or `app.rs`).
 - [x] **ARCH-06**: Audit findings are written to `.planning/phases/NN-arch-audit/AUDIT.md` with prioritized recommendations consumed by the refactor phase.
@@ -76,9 +76,9 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ARCH-01 | Phase 11 | Pending |
-| ARCH-02 | Phase 11 | Pending |
-| ARCH-03 | Phase 11 | Pending |
+| ARCH-01 | Phase 11 | Complete |
+| ARCH-02 | Phase 11 | Complete |
+| ARCH-03 | Phase 11 | Complete |
 | ARCH-04 | Phase 11 | Pending |
 | ARCH-05 | Phase 11 | Pending |
 | ARCH-06 | Phase 11 | Complete |
