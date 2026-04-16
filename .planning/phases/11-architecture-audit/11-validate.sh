@@ -95,7 +95,7 @@ check_finding_schema() {
       if ($0 ~ /Location:/)         seen["Location:"]=1
       if ($0 ~ /Dimension:/)        seen["Dimension:"]=1
       if ($0 ~ /Symptom:/)          seen["Symptom:"]=1
-      if ($0 ~ /Why.s a problem:/)  seen["Why its a problem:"]=1
+      if ($0 ~ /Why.*a problem:/)   seen["Why its a problem:"]=1
       if ($0 ~ /Recommendation:/)   seen["Recommendation:"]=1
       if ($0 ~ /Phase 13 task hint:/) seen["Phase 13 task hint:"]=1
     }
@@ -108,9 +108,11 @@ check_finding_schema() {
 }
 
 # --- Check 5: F-NNN IDs unique and sequential within range (D-07) ---
+# Only counts IDs that appear as finding headers (### [Critical|Major|Minor] F-NNN:).
+# Range-header mentions in the preamble (F-001..F-099, etc.) are intentionally excluded.
 check_finding_ids() {
   local dups
-  dups=$(grep -oE 'F-[0-9]{3}' "$AUDIT_MD" | sort | uniq -d || true)
+  dups=$(grep -oE '^### \[(Critical|Major|Minor)\] F-[0-9]{3}' "$AUDIT_MD" | grep -oE 'F-[0-9]{3}' | sort | uniq -d || true)
   [[ -z "$dups" ]] || fail "Duplicate finding IDs: $(echo $dups | tr '\n' ' ')"
 }
 
