@@ -198,6 +198,36 @@
 **Verdict:** OK on the trait boundary; two misplaced helpers (`extract_jira_key`, `is_inside_tmux`).
 **Justification:** `JiraClient` + `HttpJiraClient` mirror `ProcessClient` — clean single-method trait, swappable. Same hexagonal grading question as process.rs (trait in infra rather than domain — Major below). `extract_jira_key` is pure and called from `ui/panels.rs:71` (UI→infra leak for domain logic — Major). `is_inside_tmux` is a multiplexer concern misplaced in jira.rs (Minor).
 
+**File:** `src/infra/config.rs` (138 LOC)
+**Public interface:** `pub fn config_dir() -> PathBuf` + `pub struct DashConfig` (9 pub fields: `jira_base_url`, `jira_email`, `jira_token`, `auth_mode`, `claude_flags`, `repo_root`, `jira_project_prefix`, `app_title`, `auto_sync`) + `impl DashConfig::repo_root_path()` + `pub fn load_config()` + `pub fn save_config()` — 4 pub items + 1 pub method.
+**Verdict:** OK (appropriately-sized config module)
+**Justification:** `DashConfig` is a serde-derived data struct; `load_config` / `save_config` are thin TOML I/O. Importers: `src/app.rs` + `src/infra/jira.rs` (cross-infra coupling for credentials — normal) + sibling persistence modules (`jira_cache`, `sim_history`, `android_prefs` for `config_dir()`). Verified `rg 'crate::infra::config' src/domain/` = no matches — no domain→infra leak. Credentials stored at `~/.config/rn-dash/config.toml` with chmod 0600 on Unix (security-correct). No finding attached — see F-111 below for the persistence-pattern cross-file observation.
+
+**File:** `src/infra/jira_cache.rs` (45 LOC)
+**Public interface:** `pub fn cache_path() -> PathBuf` + `pub fn load_jira_cache() -> Result<HashMap<String, String>>` + `pub fn save_jira_cache(&HashMap) -> Result<()>` (3 pub fns)
+**Verdict:** OK (tiny persistence helper; appropriate shape for caller count)
+**Justification:** Single-caller (app.rs) flat-JSON cache of JIRA title lookups. No credentials → no 0600 needed. Fits the accessor-proliferation pattern across four small persistence modules (see F-111). No per-file finding — folded into F-111.
+
+**File:** `src/infra/multiplexer.rs` (85 LOC)
+**Public interface:** `pub trait Multiplexer: Send + Sync + Debug { fn new_window(&self, &Path, &str, &str) -> Result<()>; fn is_available(&self) -> bool; }` + `pub struct TmuxAdapter` + `pub struct ZellijAdapter` + `pub fn detect_multiplexer() -> Option<Box<dyn Multiplexer>>` (4 pub items).
+**Verdict:** OK — positive example cited in PROJECT.md as "✓ Good — clean trait boundary"; however trait placement is wrong per strict hexagonal rule (same critique as process.rs / jira.rs).
+**Justification:** Two-method trait with two adapters + auto-detect. Reference standard for `Phase 13`'s adapter pattern. Strict-grading note: trait lives in infra, not domain — same hexagonal misplacement as `ProcessClient` (F-103) and `JiraClient` (F-106). See the multiplexer.rs Major finding below (F-110).
+
+**File:** `src/infra/sim_history.rs` (32 LOC)
+**Public interface:** `pub fn load_sim_history() -> Vec<String>` + `pub fn record_sim_used(&str) -> Result<()>` (2 pub fns; `sim_history_path` is private)
+**Verdict:** OK (small, purpose-built)
+**Justification:** JSON array of recently-used simulator UDIDs, push-front + dedup + truncate-to-20. Matches accessor-proliferation pattern (see F-111). No per-file finding.
+
+**File:** `src/infra/android_prefs.rs` (27 LOC)
+**Public interface:** `pub fn load_android_mode() -> Option<String>` + `pub fn save_android_mode(&str) -> Result<()>` (2 pub fns; `android_prefs_path` private)
+**Verdict:** OK (smallest persistence helper; shape is right-sized for its caller)
+**Justification:** Single-key JSON file (`{"mode": "debugOptimized"}`). Matches accessor-proliferation pattern — same shape as `sim_history.rs`, `jira_cache.rs`, and (in part) `config.rs`. See F-111 below for the cross-file cohesion observation.
+
+**File:** `src/infra/tmux.rs` (29 LOC, DEPRECATED)
+**Public interface:** `pub fn open_claude_in_worktree(&Path, &str) -> Result<()>` (1 pub fn, marked `#[allow(dead_code)]`)
+**Verdict:** Shallow (dead-code / conjoined-method — replaced by multiplexer abstraction)
+**Justification:** File's own doc-comment at line 4 reads "DEPRECATED: Use multiplexer::TmuxAdapter::new_window() instead." The function duplicates TmuxAdapter::new_window with a `-d` flag variant (no focus switch). Retained only because app.rs's OpenClaudeCode action hasn't been rewired. See the tmux.rs Minor finding below (F-112).
+
 ### Critical
 
 ### [Critical] F-101: `command_runner.rs` imports `crate::action::Action` — Data Source layer knows Service-layer messaging type
@@ -267,6 +297,14 @@
 - **Recommendation:** `move` `extract_jira_key` (and its 6 inline tests) from `src/infra/jira.rs` to `src/domain/jira.rs` (new file) or `src/domain/worktree.rs` as a free function. Update the two import sites (`src/ui/panels.rs:71` and any app.rs use). Infra keeps only `JiraClient` + `HttpJiraClient`. The UI→infra leak dies.
 - **Phase 13 task hint:** Move `extract_jira_key` and its tests from `infra/jira.rs` to a new `domain/jira.rs` (or `domain/worktree.rs`); update panels.rs and app.rs import paths.
 
+### [Major] F-110: `Multiplexer` trait belongs in `domain/`, not `infra/` (same shape as F-103, F-106)
+- **Location:** `src/infra/multiplexer.rs:10-17` (trait); `:19-37` (`TmuxAdapter` impl); `:39-73` (`ZellijAdapter` impl); `:77-85` (`detect_multiplexer` factory)
+- **Dimension:** Hexagonal
+- **Symptom:** `pub trait Multiplexer` plus both adapter impls live in `src/infra/multiplexer.rs`. PROJECT.md Key Decisions table cites this as "✓ Good — clean trait boundary" — and it is good interface segregation. But per Cockburn's strict hexagonal rule (same as F-103 `ProcessClient`, F-106 `JiraClient`), the trait belongs in `domain/` so the domain/app layers depend on an abstraction defined by the domain, not imported from infra.
+- **Why it's a problem:** Three infra traits (`ProcessClient`, `JiraClient`, `Multiplexer`) all share wrong-layer placement. A new Phase 13 contributor reading `domain/` cannot see what external collaborators the application depends on — they must read all of `infra/` to discover the abstractions. Also prevents any future domain-layer helper from accepting a `&dyn Multiplexer` parameter without a domain→infra upward import. Graded Major for consistency with F-103 and F-106; auditor recommends downgrading to Minor only if ALL three are downgraded together (uniform treatment — either the strict rule applies to this codebase or it doesn't).
+- **Recommendation:** `move` the `pub trait Multiplexer` declaration from `src/infra/multiplexer.rs` to `src/domain/ports/multiplexer_port.rs` (new file); keep `TmuxAdapter`, `ZellijAdapter`, and `detect_multiplexer` in infra, changing their `impl Multiplexer` lines to reference the new domain path. AppState holds `Option<Box<dyn domain::ports::Multiplexer>>`. No behavior change — the trait itself already has exactly the right shape (2 methods, Send+Sync+Debug bound).
+- **Phase 13 task hint:** Move `trait Multiplexer` from `infra/multiplexer.rs` to `domain/ports/multiplexer_port.rs`; update impl sites in infra; update AppState field.
+
 ### Minor
 
 ### [Minor] F-100: `infra/mod.rs` doc-claim "All concrete implementations are behind trait boundaries (ARCH-02)" is not enforced
@@ -284,6 +322,22 @@
 - **Why it's a problem:** Low-severity readability hit. A reader looking for "tmux detection" searches `multiplexer.rs`/`tmux.rs` first and misses this duplicate. Minor — no behavior risk.
 - **Recommendation:** `move` `is_inside_tmux` from `src/infra/jira.rs` to `src/infra/multiplexer.rs` (or delete it entirely and have callers use `TmuxAdapter::new().is_available()` directly). Update any existing callers (grep shows none outside tests — function may be unused production code).
 - **Phase 13 task hint:** Drive-by — move `is_inside_tmux` to `multiplexer.rs` or delete it if unused.
+
+### [Minor] F-111: persistence-accessor proliferation across four small infra modules — cohesion miss
+- **Location:** `src/infra/sim_history.rs:12-31` (`load_sim_history` / `record_sim_used`); `src/infra/android_prefs.rs:12-26` (`load_android_mode` / `save_android_mode`); `src/infra/jira_cache.rs:24-44` (`load_jira_cache` / `save_jira_cache`); `src/infra/config.rs:99-138` (`load_config` / `save_config`)
+- **Dimension:** Ousterhout (accessor proliferation) | Fowler-4-Layer
+- **Symptom:** Four modules in `src/infra/` each expose a `pub fn load_X / save_X` pair over a single JSON-or-TOML file in `~/.config/rn-dash/`. None shares structure with the others; each repeats the same pattern of "check file exists → deserialize → on error return empty/None". Identified as accessor-proliferation in RESEARCH §Anti-patterns (lines 200-203).
+- **Why it's a problem:** Not broken — each module works — just a cohesion miss. The four modules collectively define "application persistence" but have no shared boundary, so any policy change (e.g. encrypt credentials, swap to sqlite, rotate on every save) must be repeated four times. Minor because the current shape satisfies its callers and the cost of consolidation is not justified by present needs.
+- **Recommendation:** Consider either (a) a single `trait domain::ports::PersistencePort { fn load<T: DeserializeOwned>(&self, key: &str) -> anyhow::Result<Option<T>>; fn save<T: Serialize>(&self, key: &str, value: &T) -> anyhow::Result<()>; }` with one infra adapter reading/writing the four known files; or (b) a generic `Repository<T>` helper in infra that each module delegates to. `trait`-based option (a) is the hexagonal-consistent choice. DO NOT action in Phase 13 unless a second persistence need arises — per D-02, Minor findings may be deferred with rationale. Phase 16 (per-worktree tasks) may add persistence for task history and is the right trigger to consolidate.
+- **Phase 13 task hint:** Do not action — defer until a new persistence concern lands. When it does, extract `trait PersistencePort` and migrate all four modules behind a single adapter.
+
+### [Minor] F-112: `infra/tmux.rs` is DEPRECATED per its own doc-comment — delete in Phase 13 (NOT Phase 11)
+- **Location:** `src/infra/tmux.rs:1-29` (the entire file); re-exported via `src/infra/mod.rs:12` (`pub mod tmux;`)
+- **Dimension:** Ousterhout (conjoined-method / dead-code) | Fowler-4-Layer
+- **Symptom:** File's own doc-comment at `src/infra/tmux.rs:4` reads "DEPRECATED: Use multiplexer::TmuxAdapter::new_window() instead." The sole public function `open_claude_in_worktree` is marked `#[allow(dead_code)]` (line 14). The comment promises removal once "app.rs OpenClaudeCode action is rewired in Plan 05" — that rewiring has happened (the multiplexer abstraction is live per PROJECT.md v1.0), but the file remains.
+- **Why it's a problem:** Dead code erodes trust in the codebase — readers encountering `pub mod tmux;` in `infra/mod.rs` must investigate whether it's still in use. Per RESEARCH Open Question 4, deletion is Phase 13's job (Phase 11 is read-only audit).
+- **Recommendation:** `move` the file (figurative delete): remove `src/infra/tmux.rs` entirely; `move` the `pub mod tmux;` line out of `src/infra/mod.rs` (i.e., delete line 12 of mod.rs). Any remaining importers (expected: none — the function is marked `#[allow(dead_code)]`) should be rewired to `infra::multiplexer::TmuxAdapter::new_window()` with a `-d` flag variant if no-focus-switch behavior is still needed. Verify with `rg 'crate::infra::tmux|infra::tmux::' src/` returning no matches before deletion. Explicitly deferred to Phase 13 per D-11 (Phase 11 is audit-only — no src/ modifications allowed).
+- **Phase 13 task hint:** Delete `src/infra/tmux.rs`; remove `pub mod tmux;` from `src/infra/mod.rs`; confirm no remaining importers via ripgrep.
 
 ## Module: app/
 <!-- Coverage: src/app.rs (the single 2,425-LOC file) -->
