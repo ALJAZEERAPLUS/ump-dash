@@ -294,7 +294,7 @@
 - **Dimension:** Hexagonal | Fowler-4-Layer
 - **Symptom:** `extract_jira_key(branch: &str, project_prefix: &str) -> Option<String>` is a pure string parser (6 inline unit tests at lines 130-175). It lives in infra but is called from ui/panels.rs — Presentation reaches directly into Data Source for logic that is purely domain (string manipulation on branch names).
 - **Why it's a problem:** ui/mod.rs's doc-comment claims "Imports: domain types and ratatui ONLY. Never imports infra directly" — panels.rs:71 violates this claim. The function itself has no infra concern (no HTTP, no I/O, no tokio) — its placement in infra is incidental to `HttpJiraClient` happening to share the file.
-- **Recommendation:** `move` `extract_jira_key` (and its 6 inline tests) from `src/infra/jira.rs` to `src/domain/jira.rs` (new file) or `src/domain/worktree.rs` as a free function. Update the two import sites (`src/ui/panels.rs:71` and any app.rs use). Infra keeps only `JiraClient` + `HttpJiraClient`. The UI→infra leak dies.
+- **Recommendation:** move `extract_jira_key` (and its 6 inline tests) from `src/infra/jira.rs` to `src/domain/jira.rs` (new file) or `src/domain/worktree.rs` as a free function. Update the two import sites (`src/ui/panels.rs:71` and any app.rs use). Infra keeps only `JiraClient` + `HttpJiraClient`. The UI→infra leak dies.
 - **Phase 13 task hint:** Move `extract_jira_key` and its tests from `infra/jira.rs` to a new `domain/jira.rs` (or `domain/worktree.rs`); update panels.rs and app.rs import paths.
 
 ### [Major] F-110: `Multiplexer` trait belongs in `domain/`, not `infra/` (same shape as F-103, F-106)
@@ -684,17 +684,88 @@
 ## Cross-Cutting Findings
 
 ### Catch-all match arms (ARCH-04)
-<!-- Wave 2 Plan 11-05 enumerates every `_ => {}` and `_ =>` arm here -->
+
+Exhaustive enumeration of every `_ =>` arm in `src/` per RESEARCH §Catch-All Enumeration Technique (wide grep, not just the literal `_ => {}` pattern per Pitfall 3). Source of truth: `rg --no-heading -n '^\s*_\s*=>' src/`. 30 total hits; each is classified LEGITIMATE (variants documented as intentionally ignored, fall-through behavior is correct) or RISK (a reachable variant could trip user-visible behavior — a finding is filed).
+
+| Location | Pattern | Matched type | Variants silently dropped | Classification | Cross-ref to per-module finding |
+|----------|---------|--------------|---------------------------|----------------|--------------------------------|
+| `src/event.rs:20` | `_ => None` | `crossterm::event::Event` | `Mouse`, `Paste`, `FocusGained`, `FocusLost` | LEGITIMATE — documented in fn doc-comment; rn-dash is keyboard-only by design | F-003 (root/, Plan 11-01) |
+| `src/domain/refresh.rs:67` | `_ => RefreshSet::none()` | `CommandSpec` (23 variants) | All variants not in the 6 handled arms (e.g. palette-open actions, help, navigation) | LEGITIMATE — explicit policy: "commands that do not alter worktree/staleness/jira return an empty RefreshSet"; 17 inline tests pin the policy | F-008 (domain/, Plan 11-01) |
+| `src/domain/command.rs:127` | `_ => false` | `CommandSpec` | All variants except `GitRebase`, `GitCheckout`, `GitCheckoutNew`, `YarnJest` (the 4 that need text input) | LEGITIMATE — explicit policy for `needs_text_input`; graded Minor per F-006 because a new text-input variant added elsewhere would silently be `false` | F-006 (domain/, Plan 11-01) |
+| `src/infra/command_runner.rs:99` | `_ => { stdout_done = true; }` | `Result<Option<String>, io::Error>` (BufReader::next_line return) | Only `Err(_)` (the `Ok(Some(_))`/`Ok(None)` are handled) | LEGITIMATE — treating stream-read error as end-of-stream is intentional; documented in the surrounding block comment | referenced under F-101 (infra, Plan 11-02) |
+| `src/infra/command_runner.rs:105` | `_ => { stderr_done = true; }` | same | same | LEGITIMATE — same reason | referenced under F-101 (infra, Plan 11-02) |
+| `src/app.rs:274` | `_ => None` | `KeyCode` (in `ModalState::Confirm`) | Every KeyCode that is not `y`/`Y`/`n`/`N`/`Esc` (Char(other), Function keys, arrows, Tab, etc.) | LEGITIMATE — confirm modal accepts only these keys; drop is correct | F-205 (app, Plan 11-03) |
+| `src/app.rs:281` | `_ => None` | `KeyCode` (in `ModalState::TextInput`) | KeyCodes that are not Esc/Enter/Backspace/Char (e.g. F1-F12, arrows, Tab, modifier-only) | LEGITIMATE — text-input consumes Char; other keys intentionally ignored | F-205 |
+| `src/app.rs:292` | `_ => None` | `KeyCode` (in `ModalState::DevicePicker`) | KeyCodes beyond Esc/Enter/Up/Down/Backspace/j/k/Char-non-control | LEGITIMATE — explicit key list; drop is correct | F-205 |
+| `src/app.rs:301` | `_ => None` | `KeyCode` (in `ModalState::CleanToggle`) | KeyCodes beyond `n`/`p`/`a`/`i`/`x`/Enter/Esc | LEGITIMATE — toggle keys are the full alphabet for this modal | F-205 |
+| `src/app.rs:306` | `_ => None` | `KeyCode` (in `ModalState::SyncBeforeRun`) | KeyCodes beyond y/Y/n/N/Esc | LEGITIMATE — Yes/No modal | F-205 |
+| `src/app.rs:311` | `_ => None` | `KeyCode` (in `ModalState::SyncBeforeMetro`) | KeyCodes beyond y/Y/n/N/Esc | LEGITIMATE — Yes/No modal | F-205 |
+| `src/app.rs:316` | `_ => None` | `KeyCode` (in `ModalState::ExternalMetroConflict`) | KeyCodes beyond y/Y/Enter/n/N/Esc | LEGITIMATE — Yes/No modal | F-205 |
+| `src/app.rs:325` | `_ => None` | `KeyCode` (in `ModalState::BranchPicker`) | KeyCodes beyond Enter/Esc/Up/Down/Backspace/Char | LEGITIMATE — filter accepts all Char; others ignored | F-205 |
+| `src/app.rs:344` | `_ => Some(Action::ModalCancel)` | `KeyCode` (in `PaletteMode::Android`) | KeyCodes beyond `d`/`e`/`r`/`m`/Esc | LEGITIMATE — unbound palette key closes the palette (UX: single keystroke escape); documented in Plan 11-03 F-205 | F-205 |
+| `src/app.rs:351` | `_ => Some(Action::ModalCancel)` | `KeyCode` (`PaletteMode::Ios`) | KeyCodes beyond `d`/`e`/`p`/Esc | LEGITIMATE — same | F-205 |
+| `src/app.rs:362` | `_ => Some(Action::ModalCancel)` | `KeyCode` (`PaletteMode::Yarn`) | KeyCodes beyond `i`/`p`/`u`/`t`/`j`/`l`/`c`/Esc | LEGITIMATE — same | F-205 |
+| `src/app.rs:373` | `_ => Some(Action::ModalCancel)` | `KeyCode` (`PaletteMode::Git`) | KeyCodes beyond `f`/`p`/`P`/`X`/`b`/`c`/`r`/Esc | LEGITIMATE — same | F-205 |
+| `src/app.rs:380` | `_ => Some(Action::ModalCancel)` | `KeyCode` (`PaletteMode::Worktree`) | KeyCodes beyond `w`/`d`/`b`/Esc | LEGITIMATE — same | F-205 |
+| `src/app.rs:389` | `_ => None` | `KeyCode` (in `state.show_help` overlay) | KeyCodes beyond `q`/Esc | LEGITIMATE — help overlay dismisses only on q/Esc | F-205 |
+| `src/app.rs:397` | `_ => None` | `KeyCode` (in `state.error_state.is_some()` overlay) | KeyCodes beyond `r`/`q`/Esc | LEGITIMATE — error overlay actions are retry or dismiss | F-205 |
+| `src/app.rs:441` | `_ => {}` | `KeyCode` (in `FocusedPanel::WorktreeTable`) | Char(c) for unbound letters, F1-F12, most modifier combos | RISK (low) — drops silently with no diagnostic; new keybindings that are forgotten will read as no-op | F-205 (Plan 11-03 Major) |
+| `src/app.rs:461` | `_ => {}` | `KeyCode` (in `FocusedPanel::CommandOutput`) | Char(c) for unbound letters, arrows other than j/k, modifier combos | RISK (low) — same | F-205 |
+| `src/app.rs:476` | `_ => None` | `KeyCode` (Normal-mode catch-all at the very end of `handle_key`) | All keys that are not q/?/F1/`/`/j/k/h/l/arrows/Tab/BackTab | LEGITIMATE — falls through to "not handled; do nothing" | F-205 |
+| `src/app.rs:915` | `_ => "Input:".to_string()` | `CommandSpec` | All variants beyond `GitRebase`, `GitCheckout`, `GitCheckoutNew`, `YarnJest` | LEGITIMATE — fall-through prompt label; only reachable when `needs_text_input()==true`; the four named-prompt variants match `needs_text_input==true` set, so drop is safe | F-205 |
+| `src/app.rs:1140` | `_ => {}` | `Option<&mut ModalState>` | `None`, plus `Some(ModalState::Confirm/CleanToggle/SyncBeforeRun/SyncBeforeMetro/ExternalMetroConflict/BranchPicker)` (6 modal variants that don't accept free-form text) | RISK (low) — currently safe because those modals do not produce `ModalInputChar`; but a future text-accepting modal added to `ModalState` will be silently dropped here. **Covered by F-205 Major recommendation to replace with exhaustive named arms.** | F-205 |
+| `src/app.rs:1153` | `_ => {}` | `Option<&mut ModalState>` | Same 7 variants (None + 6 non-text modals) | RISK (low) — same | F-205 |
+| `src/app.rs:1418` | `_ => { /* multi-line */ }` | `Vec<DeviceInfo>::len()`-branch match on `devices` length in `DevicesEnumerated` handler | The multi-device branch (`devices.len() > 1`) — catch-all is `_ => multi-device-picker` after explicit `0` and `1` arms | LEGITIMATE — exhaustive by construction (a Vec length is `0`, `1`, or `>1`); the catch-all is the `>1` arm written as `_` for brevity | F-205 |
+| `src/app.rs:2153` | `_ => {}` | `ratatui::crossterm::event::Event` (CE) | `CE::Mouse`, `CE::Paste`, `CE::FocusGained`, `CE::FocusLost` | LEGITIMATE — same set as `event.rs:20`; same rationale (keyboard-only TUI) | F-205 |
+| `src/app.rs:2379` | `_ => { stdout_done = true; }` | `Result<Option<String>, io::Error>` inside `stream_metro` | `Err(_)` + `Ok(None)` collapsed | LEGITIMATE — end-of-stream sentinel for metro stdout reader; same pattern as infra/command_runner:99 | F-203 |
+| `src/app.rs:2389` | `_ => { stderr_done = true; }` | same | same | LEGITIMATE — same for stderr | F-203 |
+
+**Counts:** 30 hits total. Literal `_ => {}` (5: app.rs:441, 461, 1140, 1153, 2153; plus 2153-lookalikes at 2379/2389 inside metro helpers). Wider `_ =>` (25 additional). Classification: 26 LEGITIMATE, 4 RISK-low (all four fold into F-205 Major — `replace _ => {}` with exhaustive named arms per D-08 concreteness keyword). No NEW F-4NN finding is created for catch-alls — every RISK case was already captured by F-205 when Plan 11-03 audited app.rs.
 
 ### Misplaced prerequisite/ordering logic (ARCH-05)
-<!-- Wave 2 Plan 11-05 enumerates the prerequisite locations from RESEARCH §Prerequisite/Ordering Logic Detection -->
+
+Exhaustive enumeration of every prerequisite/ordering site in `src/app.rs` that encodes a domain rule inline in the update/dispatch functions. Source: RESEARCH §Prerequisite/Ordering Logic Detection re-verified via `rg -n 'needs_metro\(\)|pending_metro|sync_before|skip_external_metro|command_queue\.push_back' src/app.rs`. Target shape per D-04 RESEARCH sketch: `Prerequisite` + `Recipe` types in `domain/pipeline.rs` (see F-204).
+
+| Location | Pattern | Domain rule represented | Proposed domain target | Cross-ref to per-module finding |
+|----------|---------|------------------------|-----------------------|--------------------------------|
+| `src/app.rs:890` | `if spec.needs_metro() && !state.metro.is_running() { state.pending_metro_run = Some(spec); update(state, Action::MetroStart, ...) }` | Metro must be running before RN build commands (RnRunAndroid/RnRunIos/etc.) | `Prerequisite::MetroRunning` — derived from `CommandSpec::prerequisites() -> Vec<Prerequisite>`; consumed by Recipe::expand() | F-204 (app, Plan 11-03) |
+| `src/app.rs:1014` | Same pattern after command queue pop | Same rule, different trigger (post-dispatch queue drain) | Same — Recipe expansion at dispatch time, not per call site | F-204 |
+| `src/app.rs:1713` | Same pattern inside `SyncBeforeRunDecline` handler | Same rule, third trigger (user declined sync but still needs metro) | Same | F-204 |
+| `src/app.rs:843-887` | `sync-before-run` modal flow — if yarn or pods stale, present `ModalState::SyncBeforeRun`; then on Accept run `YarnInstall` → `YarnPodInstall` → target run command | Stale node_modules + RN run = yarn install first | `Prerequisite::DependenciesFresh { yarn: true, pods: false }` + `Recipe::SyncThenRun(spec)` | F-204 |
+| `src/app.rs:852-886` | Sub-branch of above: if command is iOS-run AND pods stale, include YarnPodInstall in sequence | Stale pods + iOS run = pod-install first | `Prerequisite::DependenciesFresh { yarn: true, pods: true }` (for iOS) | F-204 |
+| `src/app.rs:1463-1499` | Worktree-switch branch: if new worktree is stale, present `SyncBeforeMetro` modal, otherwise stop+start metro | Switching to stale worktree: stop metro → sync → start metro | `Recipe::SyncThenStartMetro` | F-204 |
+| `src/app.rs:949-953` | `if matches!(spec, CommandSpec::RnReleaseBuild) { state.command_queue.push_back(CommandSpec::AdbInstallApk); ... }` | Build-then-install pipeline (assembleRelease → adb install) | `Recipe::Sequence(vec![RnReleaseBuild, AdbInstallApk])` | F-204 |
+| `src/app.rs:956-960` | `if matches!(spec, CommandSpec::GitResetHardFetch) { state.command_queue.push_back(CommandSpec::GitResetHard); dispatch(GitFetch) }` | Fetch-then-reset pipeline | `Recipe::Sequence(vec![GitFetch, GitResetHard])` | F-204 |
+| `src/app.rs:1622-1635` | `CleanConfirm` handler builds ordered sequence `[clean RN, clean android, rm node_modules, (yarn install, yarn pod-install if sync_after)]` | RN metro cache must be cleared before `rm -rf node_modules`; sync commands may tail the sequence | `Recipe::Clean(opts: CleanOptions) -> Vec<CommandSpec>` (domain function, no app-layer list-building) | F-204 |
+| `src/app.rs:1684-1705` | `SyncBeforeRunAccept` handler builds `[YarnInstall, (YarnPodInstall if needs_pods), run_command]` | Sync sequence for a run command (third trigger) | `Recipe::SyncThenRun(spec)` — collapses this + 843-887 + 1463-1499 into a single construction | F-204 |
+| `src/app.rs:1722-1753` | `SyncBeforeMetroAccept` handler builds `[YarnInstall, (YarnPodInstall if needs_pods)]` and sets `pending_metro_after_sync=true` so MetroStart fires after queue drains | Sync sequence for metro start (worktree-switch trigger) | `Recipe::SyncThenStartMetro` | F-204 |
+| `src/app.rs:657-674` | `MetroExited` handler consumes `pending_restart`/`pending_switch_path`/`pending_metro_run` flags to decide what runs next | Metro lifecycle: stop → (optional: switch worktree) → start → (optional: run pending command) | `MetroLifecycle` state machine in `domain::metro` (owns the stop-switch-start-run transitions) | F-204 |
+| `src/app.rs:594-599` | `skip_external_metro_check` flag read in `MetroStart` handler | Implementation artifact: coordinate "restart after stop" to bypass the external-port-8081 check | Disappears once `MetroLifecycle` state machine exists — the flag is a workaround for step ordering being implicit | F-204 |
+
+**Ad-hoc mechanism tally:** 5 boolean fields (`pending_restart`, `pending_switch_path: Option<PathBuf>` used as a flag, `pending_metro_run: Option<CommandSpec>` used as a flag, `pending_metro_after_sync: bool`, `skip_external_metro_check: bool`) + 1 `VecDeque` (`command_queue`) = **6 distinct ad-hoc mechanisms** implementing what is logically a single domain pipeline type. This is the load-bearing observation backing F-204 Major. Per D-04 RESEARCH sketch, all six collapse into `Recipe::expand(&self, state: &DependencyState) -> Vec<CommandSpec>` with the `Prerequisite` enum specifying which pre-conditions a single `CommandSpec` requires. Phase 13 REFACTOR-03 picks the final signature — the audit's job here is to enumerate and propose.
 
 ### Hexagonal port violations (cross-module — ARCH-03)
-<!-- Wave 2 Plan 11-05 captures cross-module hexagonal findings not already attached to a single per-module section -->
+
+Per-module plans (11-01..11-04) captured the per-file hexagonal findings. This subsection surfaces the **cross-module pattern** that does not fit any single file: the global count of external dependencies **without** domain ports, and the resulting shape of the app-layer coupling.
+
+The codebase exposes **3 traits in infra** (`ProcessClient`, `Multiplexer`, `JiraClient`) but **ZERO traits defined in `domain/`**. By Cockburn's strict hexagonal rule (see RESEARCH §Codebase Inventory and F-202), none of these are true *ports* — they are interface segregation within infra. The app layer (`src/app.rs`) therefore depends on concrete `crate::infra::*` modules (captured as Critical F-202) instead of on domain-owned port traits. The cumulative cost of the audit's recommendations is visible below: ~8 new `domain::ports::*` traits, 5-6 file moves, 3 trait relocations.
+
+| External dependency | Current shape | Proposed domain port | Cross-ref to per-module finding |
+|---------------------|---------------|----------------------|--------------------------------|
+| Process spawning | `infra::process::ProcessClient` trait + `TokioProcessClient` impl (both in `infra/process.rs`) | move trait to `domain::ports::ProcessPort`; infra keeps only `TokioProcessClient` | F-103 (Plan 11-02) |
+| Multiplexer (tmux / zellij) | `infra::multiplexer::Multiplexer` trait + 2 adapters (both in `infra/multiplexer.rs`) | move trait to `domain::ports::MultiplexerPort` | F-110 (Plan 11-02) |
+| JIRA HTTP | `infra::jira::JiraClient` trait + `HttpJiraClient` (both in `infra/jira.rs`) | move trait to `domain::ports::JiraPort`; pair with move of pure `extract_jira_key` to `domain/jira.rs` | F-106 (Plan 11-02) + F-107 + F-300 (panels.rs consumer) |
+| Metro lifecycle | **No trait.** Logic split across `domain/metro.rs` (handle + manager), `infra/process.rs` (spawn), `src/app.rs:2208-2425` (orchestration + parsing + HTTP) | new `domain::ports::MetroPort` trait (start/stop/restart/send_stdin/http_post); infra implements as `TokioMetroAdapter` | F-004 (domain/metro.rs) + F-203 (app metro helpers) + F-207 (metro_http_post in app) |
+| Worktree git ops | **No trait.** `infra::worktrees` exposes 8 free functions | new `domain::ports::WorktreePort` trait covering list/add/remove/checkout/stale-probe operations | F-104 (Plan 11-02) |
+| Device enumeration | **No trait.** `infra::devices` exposes 4 parsers + 3 async runners | new `domain::ports::DevicePort` trait for list_android/list_ios with pure parsers kept in domain | F-105 (Plan 11-02) |
+| Port probing (lsof/8081) | **No trait.** `infra::port` exposes 3 free functions | new `domain::ports::PortProbePort` trait (detect external metro, kill PID) | F-102 (Plan 11-02) |
+| Persistence (`config.rs`, `jira_cache.rs`, `sim_history.rs`, `android_prefs.rs`) | **No trait.** 4 small modules, each with its own load/save pair | new `domain::ports::PersistencePort` (or generic `Repository<T>`) consolidating the 4 accessors | F-111 (Minor — backlog candidate) |
+
+**Aggregate:** 8 external dependencies → 8 domain-owned port traits needed; 3 existing infra traits relocate; 5 adapters must be defined (metro, worktree, device, port-probe, persistence). Plus one symmetric two-side fix (F-107 infra-side + F-300 UI-side + F-301 mod.rs doc-claim) for the `extract_jira_key` placement. All Critical/Major findings in this table appear in the Refactor Sequence below.
 
 ### Keybinding source-of-truth (D-14)
-<!-- Wave 2 Plan 11-05 finalizes the D-14 finding, referencing handle_key + footer.rs + help_overlay.rs -->
+<!-- Wave 2 Plan 11-05 Task 2 finalizes the D-14 finding, referencing handle_key + footer.rs + help_overlay.rs -->
 
 ## Refactor Sequence
 
-<!-- Wave 2 Plan 11-05 lists every Critical and Major F-NNN here in dependency order, per D-09 -->
+<!-- Wave 2 Plan 11-05 Task 2 lists every Critical and Major F-NNN here in dependency order, per D-09 -->
