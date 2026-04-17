@@ -626,6 +626,21 @@
 **Verdict:** Deep — single dispatch entry point hiding 8 modal renderers behind one function.
 **Justification:** Textbook Ousterhout depth applied to UI. One pub fn, one match on `ModalState`, eight private renderers (`render_confirm_modal`, `render_text_input_modal`, `render_device_picker_modal`, `render_clean_modal`, `render_sync_prompt`, `render_sync_before_metro`, `render_external_metro_modal`, `render_branch_picker_modal`). Imports are strictly `ratatui::*` + `crate::domain::command::ModalState` + (via full-path) `crate::domain::command::{DeviceInfo, CleanOptions, CommandSpec}`. Verified `rg 'crate::app|crate::infra' src/ui/modals.rs` → no matches. Narrow interface, deep functionality, clean layer discipline. No finding required.
 
+**File:** `src/ui/mod.rs` (83 LOC)
+**Public interface:** `pub fn view(&mut Frame, &mut AppState)` + 6 `pub mod` re-exports (footer, help_overlay, error_overlay, modals, panels, theme) — 1 pub fn + 6 pub mods per `rg '^pub (fn|mod|struct|enum|trait|const)' src/ui/mod.rs`
+**Verdict:** Deep (for its role) — narrow root-render interface hiding layout + overlay-stacking + fullscreen-mode branching.
+**Justification:** Single pub render entry point called from `app::run()`. Hides the three-section layout (top command output / bottom worktree table / footer), the fullscreen branch (single panel + footer), and the overlay ordering (help → error → modal). Imports are strictly `ratatui::*` + `crate::app::{AppState, FocusedPanel}` — no infra reach at the mod.rs level. The load-bearing doc-claim at lines 1-2 ("Imports: domain types and ratatui ONLY. Never imports infra directly.") is aspirational rather than enforced: `rg 'crate::infra' src/ui/` returns exactly one hit — `panels.rs:71` — captured as F-300 (the violation) + F-301 (the doc-claim contradiction) above. No new finding at the mod.rs level beyond those; the contradiction is fully covered by F-301.
+
+**File:** `src/ui/error_overlay.rs` (53 LOC)
+**Public interface:** 1 pub fn — `render_error(&mut Frame, &ErrorState)` (`centered_rect` is private)
+**Verdict:** OK — small, single-purpose, correctly layered.
+**Justification:** One pub render fn. Imports `ratatui::*` + `crate::app::ErrorState` + `crate::ui::theme` — no infra reach. Uses the same `Clear` + `centered_rect` pattern as `help_overlay.rs` and `modals.rs` (independent copy by design per its own doc-comment at line 46 — "Separate copy from help_overlay to avoid cross-widget coupling"). Branching on `error.can_retry` to include/omit the retry hint is the only conditional in the file. No finding.
+
+**File:** `src/ui/theme.rs` (25 LOC)
+**Public interface:** 5 `pub const Color` + 4 `pub fn -> Style` — 9 pub items per `rg '^pub (fn|struct|enum|trait|const)' src/ui/theme.rs`
+**Verdict:** OK — pure data module.
+**Justification:** Five color constants and four zero-arg style-builder functions. No logic, no branching, no dependencies beyond `ratatui::style`. The `#![allow(dead_code)]` attribute reflects that `COLOR_FOOTER_BG` isn't currently used (minor — not worth flagging; one future-reserved constant is acceptable in a pure-data module). No finding.
+
 ### Critical
 
 ### Major
