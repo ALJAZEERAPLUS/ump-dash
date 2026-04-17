@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 11-03-PLAN.md (app.rs audit; 4 Critical + 4 Major + 3 Minor findings)
-last_updated: "2026-04-17T05:02:11.141Z"
+stopped_at: Completed 11-04-PLAN.md (ui audit; 4 Major findings F-300..F-303)
+last_updated: "2026-04-17T05:10:01.814Z"
 last_activity: 2026-04-17
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 7
-  completed_plans: 4
-  percent: 57
+  completed_plans: 5
+  percent: 71
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 ## Current Position
 
 Phase: 11 (architecture-audit) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
 Last activity: 2026-04-17
 
@@ -55,6 +55,7 @@ Progress: [          ] 0% (v1.3 starting)
 | Phase 11 P00 | 4 | 2 tasks | 2 files |
 | Phase 11 P01 | 15min | 2 tasks | 1 files |
 | Phase 11-architecture-audit P03 | 20min | 2 tasks tasks | 1 files files |
+| Phase 11-architecture-audit P04 | 15min | 2 tasks tasks | 1 file files |
 
 ## Accumulated Context
 
@@ -76,6 +77,9 @@ Recent decisions affecting current work:
 - [Phase 11-architecture-audit]: [Phase 11]: app.rs graded Shallow/God-object — 4 Criticals (F-200..F-203) covering god-object split, TEA impurity, hexagonal dependency inversion, and metro helper colocation — each with concrete D-04 target shape sketch
 - [Phase 11-architecture-audit]: [Phase 11]: F-201 Effect enum concretely sketched with 15+ variants (SpawnCommand, StartMetro, MetroHttpPost, LoadDevices, ListWorktrees, SaveAndroidMode, ...) — Phase 13 can implement without re-deciding variant set
 - [Phase 11-architecture-audit]: [Phase 11]: F-208 D-14 keybinding finding anchored here via handle_key; Plan 11-04 captures footer.rs + help_overlay.rs definition sites; Plan 11-05 finalizes the unified registry recommendation
+- [Phase 11-architecture-audit]: [Phase 11]: ui layer scored clean (0 Criticals, 4 Majors) — F-300 panels.rs:71 UI->infra leak pairs with Plan 11-02 F-107 as symmetric two-line fix; F-301 mod.rs doc-claim contradiction kept separate so Phase 13 adds rg grep guard; F-302 footer.rs + F-303 help_overlay.rs finalize D-14 three-site evidence map
+- [Phase 11-architecture-audit]: [Phase 11]: Shallow-by-duplication pattern established — a module with 1-item public interface is still Shallow if its implementation duplicates data owned elsewhere (footer.rs + help_overlay.rs vs handle_key). Hiding nothing original is shallow regardless of impl LOC
+- [Phase 11-architecture-audit]: [Phase 11]: symmetric two-side fix pattern — when a misplaced helper sits across a layer boundary (extract_jira_key in infra, called from ui), file a finding on each side with cross-references (F-107 + F-300); Phase 13 resolves both in a single file move
 
 ### Pending Todos
 
@@ -87,6 +91,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-17T05:02:00.904Z
-Stopped at: Completed 11-03-PLAN.md (app.rs audit; 4 Critical + 4 Major + 3 Minor findings)
+Last session: 2026-04-17T05:09:50.167Z
+Stopped at: Completed 11-04-PLAN.md (ui audit; 4 Major findings F-300..F-303)
 Resume file: None
