@@ -764,8 +764,155 @@ The codebase exposes **3 traits in infra** (`ProcessClient`, `Multiplexer`, `Jir
 **Aggregate:** 8 external dependencies → 8 domain-owned port traits needed; 3 existing infra traits relocate; 5 adapters must be defined (metro, worktree, device, port-probe, persistence). Plus one symmetric two-side fix (F-107 infra-side + F-300 UI-side + F-301 mod.rs doc-claim) for the `extract_jira_key` placement. All Critical/Major findings in this table appear in the Refactor Sequence below.
 
 ### Keybinding source-of-truth (D-14)
-<!-- Wave 2 Plan 11-05 Task 2 finalizes the D-14 finding, referencing handle_key + footer.rs + help_overlay.rs -->
+
+### [Major] F-400: Keybinding definitions scattered across three sites with confirmed drift
+
+- **Location:**
+  - `src/app.rs:260-478` (`handle_key` — KeyCode → Action mapping; ~80 distinct keybinding pairs across nested matches over modal/palette/overlay contexts; captured separately as F-208 Major, app/)
+  - `src/ui/footer.rs:29-161` (`key_hints_for` — `(KeyLabel, HintText)` per state; ~70 tuples across 5 palette tables, 8 modal tables, and 2 panel hint tables; captured separately as F-302 Major, ui/)
+  - `src/ui/help_overlay.rs:17-112` (`render_help` — hand-coded `Vec<Row>` with section headers and ~55 rows over 9 sections; captured separately as F-303 Major, ui/)
+- **Dimension:** Ousterhout (knowledge duplication) | D-14 (mandatory check)
+- **Symptom:** The same keybinding is defined in three places with three slightly different descriptions, and the three sites are already drifting. Concrete examples (verified by grep):
+    - Yarn palette `c`:
+        - `footer.rs:60` → `("c", "clean…")`
+        - `handle_key` at `app.rs:360` → `Char('c') => Some(Action::OpenCleanMenu)`
+        - `help_overlay.rs:72` → `Row::new(vec!["c", "Clean… (select targets: pods, android, node_modules)"])`
+      Three descriptions of the same key; adding a new key requires three edits in three different styles.
+    - WorktreeTable `R` is conditionally `MetroSendReload` (when metro running) or `RefreshWorktrees` (otherwise) per `handle_key` at `app.rs:421-427`. `help_overlay.rs:40` correctly captures the conditional ("Reload metro (when running) / Refresh list"); `footer.rs:135` drops it (only says "reload"). **Drift already visible today**, not hypothetical.
+    - iOS palette `e` description drifts: `footer.rs:49` says "simulator list"; `help_overlay.rs:58` says "Simulator list (xcrun)" — minor but illustrative.
+- **Why it's a problem:** Three sources of truth that must agree manually. Per CONTEXT.md D-14 (folded todo "Refactor keybindings into single source of truth", area: ui, score: 0.9), this is a confirmed Major finding. Per RESEARCH §"Drift evidence", drift exists today and will multiply as keybindings are added. An Ousterhout-pure module hides knowledge; these three modules hide nothing original — they each re-encode the same keymap in their own format. Severity Major (not Critical) per D-14's own calibration: evidence is clear but no user-facing bug has resulted yet.
+- **Recommendation:** Introduce a single keybinding registry. Concrete sketch (per RESEARCH §"D-14 Concrete recommendation"), preserved verbatim here so Phase 13 can implement without re-deciding:
+    ```
+    // src/keybindings.rs (root-level; or src/app/keybindings.rs if Plan 11-03's app-split lands first)
+    pub struct KeyBinding {
+        pub key: KeyCode,
+        pub label: &'static str,            // for footer  ("c")
+        pub short_desc: &'static str,       // for footer  ("clean…")
+        pub long_desc: &'static str,        // for help overlay ("Clean… (select targets: pods, android, node_modules)")
+        pub context: BindingContext,        // WorktreeTable | CommandOutput | Modal(_) | Palette(_) | Overlay
+        pub action: fn(&AppState) -> Option<Action>,  // produces Action; handles conditionals like R/J/Esc
+    }
+    pub const KEYBINDINGS: &[KeyBinding] = &[ /* ~80 entries, one per binding */ ];
+    pub fn handle_key(state: &AppState, key_event: KeyEvent) -> Option<Action>;
+    pub fn footer_hints_for(state: &AppState) -> Vec<(&'static str, &'static str)>;
+    pub fn help_overlay_rows() -> Vec<HelpRow>;
+    ```
+    All three call sites (`handle_key` in `app/`, `key_hints_for` in `footer.rs`, `render_help` in `help_overlay.rs`) move to read from `KEYBINDINGS`. The Recommendation contains `struct ` AND `move ` (both keywords appear above for D-08 concreteness). Open question for Phase 13 (per RESEARCH Open Question 1): registry placement — root-level (`src/keybindings.rs`) or app-level (`src/app/keybindings.rs`) within the Plan 11-03 split. Domain placement is wrong (`KeyCode` is a UI concern). Auditor recommends **app-level** because the registry depends on `AppState` for conditional action functions.
+- **Phase 13 task hint:** Create the `KeyBinding` registry struct + `KEYBINDINGS` const; refactor `handle_key`, `footer.rs::key_hints_for`, and `help_overlay.rs::render_help` to read from `KEYBINDINGS`. Validate with a grep guard that flags orphan key definitions outside the registry (e.g., `! rg 'KeyCode::Char' src/app/handle_key.rs` once the migration is complete). Cross-references: F-208 (handle_key site), F-302 (footer.rs site), F-303 (help_overlay.rs site) — this F-400 is the unified cross-cutting finding; the three per-module findings point here for the consolidated recommendation.
 
 ## Refactor Sequence
 
-<!-- Wave 2 Plan 11-05 Task 2 lists every Critical and Major F-NNN here in dependency order, per D-09 -->
+> Phase 13 task ordering. Every Critical and Major finding from this audit appears below in
+> the order Phase 13 should address them. **COVER gate (COVER-01..COVER-04) MUST be green**
+> before any refactor touches modified code (per D-10 and the phase-ordering rule that puts
+> Phase 12 COVER between this audit and Phase 13 refactor).
+>
+> Sequencing rules per D-09:
+> 1. Foundational extractions (type/trait definitions) before consumers that import them.
+> 2. Coverage-gated changes only after COVER gate (already enforced by phase ordering).
+> 3. UI-touching refactors last, to minimize Phase 14/15/16 conflicts.
+
+### Group A: Foundational domain-side extractions (no consumer changes yet)
+
+1. **F-002 (Major)** — Move `src/action.rs` into `src/domain/action.rs`.
+   - Blocks: F-101 (command_runner import rewrite rides on this move).
+   - Why first: zero-risk file move; the Action grammar belongs to domain; the two importers (`app.rs`, `infra/command_runner.rs`) update in a single atomic commit. Unblocks F-101's infra-side port extraction.
+
+2. **F-103 (Major)** — Move `ProcessClient` trait from `infra/process.rs` to `domain::ports::ProcessPort`; `TokioProcessClient` stays as the infra adapter.
+   - Depends on: none (pure trait relocation).
+   - Blocks: F-101 (CommandRunnerPort sits atop ProcessPort).
+   - Why this position: foundational port trait; `domain::ports` module is established with the first mover.
+
+3. **F-106 (Major)** — Move `JiraClient` trait from `infra/jira.rs` to `domain::ports::JiraPort`; `HttpJiraClient` stays in infra.
+   - Depends on: F-103 (establishes the `domain::ports` convention).
+   - Blocks: F-107 (pure `extract_jira_key` move rides in the same file-edit window).
+
+4. **F-110 (Major)** — Move `Multiplexer` trait from `infra/multiplexer.rs` to `domain::ports::MultiplexerPort`; two adapters stay as infra impls.
+   - Depends on: F-103 (convention established).
+   - Why this order: third existing-trait relocation; completes the "move existing infra traits into domain" batch before new ports are defined.
+
+5. **F-107 + F-300 + F-301 (three Majors, one fix)** — Move pure `extract_jira_key` (plus its 6 inline tests) from `infra/jira.rs` to `domain/jira.rs` (new file). Update `ui/panels.rs:71` import and remove the UI→infra leak; mod.rs doc-claim (F-301) then becomes accurate without edit.
+   - Depends on: F-106 (new `domain/jira.rs` is also the home for the port trait).
+   - Why grouped: symmetric two-side fix — one `move` operation resolves all three findings.
+
+6. **F-102 / F-104 / F-105 (Majors, batched)** — Define new domain port traits: `PortProbePort`, `WorktreePort`, `DevicePort`. Each is a new `domain::ports::*` trait capturing the operations already provided by free functions in `infra/{port,worktrees,devices}.rs`. Adapters (infra-side) wrap the existing free functions.
+   - Depends on: F-103 (convention established).
+   - Blocks: F-202 (app must depend on these ports, not on concrete infra modules).
+
+7. **F-201 (Critical)** — Define `Effect` enum in `domain/effect.rs` with the ~15 variants sketched in F-201 (SpawnCommand, StartMetro, MetroHttpPost, LoadDevices, ListWorktrees, SaveAndroidMode, ...). No consumer changes yet — this is the type definition that the refactored `update()` will return.
+   - Depends on: F-002 (Action in domain).
+   - Blocks: F-200 (app-split needs an Effect type to route through the boundary).
+   - Why first among Criticals: the `Effect` enum is the smallest-risk piece of the TEA purity refactor and is required by every subsequent Critical.
+
+8. **F-204 (Major)** — Define `Prerequisite` enum (`MetroRunning`, `DependenciesFresh { yarn: bool, pods: bool }`) and `Recipe` enum (`Single`, `Sequence`, `Clean`, `SyncThenRun`, `SyncThenStartMetro`) in `domain/pipeline.rs` (new file). Sketch `Recipe::expand(&self, state: &DependencyState) -> Vec<CommandSpec>`. No consumers yet.
+   - Depends on: none inside Group A (pure type definition).
+   - Blocks: the 11 inline prerequisite call sites that F-204 enumerates (see ARCH-05 table above).
+
+9. **F-203 (Critical, preparatory half)** — Define `domain::ports::MetroPort` trait signature (start / stop / restart / send_stdin / http_post / stream). No implementation yet.
+   - Depends on: F-004 (so domain/metro.rs is trait-friendly).
+   - Blocks: F-203's second half (Group B item 12 below).
+
+10. **F-004 (Major)** — Redefine `MetroHandle` so tokio types are no longer in domain public fields. Introduce a `trait MetroHandle` (or `MetroProcess`) in domain whose methods abstract over the tokio senders/join-handles; `infra::metro::TokioMetroHandle` implements it.
+    - Depends on: F-002, F-103.
+    - Blocks: F-203 full extraction.
+
+11. **F-400 (Major)** — Define `KeyBinding` struct + `BindingContext` enum + `KEYBINDINGS: &[KeyBinding]` const in `src/keybindings.rs` (or `src/app/keybindings.rs` once Plan 11-03's split lands; open question for Phase 13 per RESEARCH Open Question 1). No consumer changes yet — the table is populated from the existing three sites but not yet read by them.
+    - Depends on: F-002 (Action in domain, since each binding's `action` function returns `Option<Action>`).
+    - Blocks: F-208, F-302, F-303 (three consumer sites).
+
+### Group B: Infra adapters implementing new/relocated ports
+
+12. **F-101 (Critical)** — Define `domain::ports::CommandRunnerPort` + `CommandEvent` enum (per RESEARCH Example 2); refactor `infra::command_runner` to implement it; **remove** `use crate::action::Action` from infra. app.rs translates `CommandEvent → Action` at the boundary.
+    - Depends on: F-002, F-103, F-201.
+    - Why this order: this is the load-bearing infra-side refactor — it is the one that closes the Fowler Data-Source-knows-Service-type leak. Every subsequent infra adapter change is small relative to this one.
+
+13. **F-203 (Critical, extraction half)** — Move the 7 async metro helpers (218 LOC) from `app.rs:2208-2425` into a new `infra/metro.rs::TokioMetroAdapter` implementing `MetroPort`. app.rs no longer contains async metro code; it holds a `Box<dyn MetroPort>` injected at startup.
+    - Depends on: F-203 trait half (item 9), F-004 (item 10), F-201 (item 7).
+
+14. **F-202 (Critical, infra-side adapter shells)** — Implement `WorktreePort`, `DevicePort`, `PortProbePort` in `infra/*.rs` as adapter shells that wrap the existing free functions. No app-side changes yet.
+    - Depends on: F-102/F-104/F-105 (item 6).
+    - Blocks: F-202 app-side rewiring (Group C item 17).
+
+### Group C: App layer rewiring (the hard one — largest LOC churn)
+
+15. **F-200 (Critical)** — Split monolithic `src/app.rs` (2,425 LOC) into `src/app/{state,update,effect_runner,handle_key,runtime}.rs`. New file boundaries per F-200's own D-04 sketch.
+    - Depends on: F-201 (Effect type must exist so update() can return it), F-400 (handle_key.rs delegates to KEYBINDINGS).
+    - Why this order: the split itself is a lift-and-shift; the behavior-changing Criticals below are written against the split layout.
+
+16. **F-201 (Critical, consumer half)** — Refactor `update()` to be pure: `fn update(state: &mut AppState, action: Action) -> Vec<Effect>`. The 20 `tokio::spawn` call sites become `Effect::*` values; the effect runner (new file per F-200) interprets them. TEA purity restored.
+    - Depends on: F-200 (update has its own file), F-201 type half (item 7).
+
+17. **F-202 (Critical, consumer half)** — Replace `crate::infra::*` imports in `src/app/` with trait-object holds (`Box<dyn ProcessPort>`, `Box<dyn MetroPort>`, etc.). Inject adapters at startup in `app/runtime.rs::run()`. Hexagonal dependency direction restored.
+    - Depends on: items 12-14 (all new/relocated ports have infra-side adapters).
+
+18. **F-204 (Major, consumer half)** — Replace the 11 inline prerequisite/ordering sites (ARCH-05 table above) with `Recipe::expand()` consumers. Delete the 5 boolean flags + `command_queue`-as-prerequisite-mechanism from `AppState`. All prerequisite logic now lives in `domain/pipeline.rs`.
+    - Depends on: F-204 type half (item 8), F-200, F-201 consumer.
+
+19. **F-205 (Major)** — Replace literal `_ => {}` arms at `app.rs:1140, 1153, 441, 461` (now in `src/app/handle_key.rs` post-split) with exhaustive named arms. Rust exhaustiveness check then guards future modal/palette additions.
+    - Depends on: F-200 (placement in handle_key.rs); F-400 preferred-but-optional (some of these arms disappear entirely when KEYBINDINGS consolidates).
+
+20. **F-209 (Major)** — Regroup `AppState`'s 39 pub fields into cohesive sub-structs (e.g., `ModalStack`, `MetroFlags`, `PendingWork`, `PaletteState`). Reduces overexposure.
+    - Depends on: F-200 (state.rs exists); F-204 consumer (pending_* flags die first).
+    - Why this order: without F-204 the "PendingWork" grouping would codify the flags we're trying to delete.
+
+### Group D: UI rewiring (last — minimizes Phase 14/15/16 conflicts)
+
+21. **F-208 (Major, consumer)** — Rewrite `handle_key` (now `src/app/handle_key.rs` per F-200) to walk `KEYBINDINGS`, match on context, dispatch. Deletes the ~200 LOC of nested matches.
+    - Depends on: F-400 (item 11), F-200.
+
+22. **F-302 (Major)** — Refactor `ui/footer.rs::key_hints_for` to call `keybindings::footer_hints_for(&state)` instead of its 15 inline tables. Shallow-by-duplication fixed; WorktreeTable `R` conditional drift dies.
+    - Depends on: F-400.
+
+23. **F-303 (Major)** — Refactor `ui/help_overlay.rs::render_help` to call `keybindings::help_overlay_rows()`. Hand-coded `Vec<Row>` becomes a `KEYBINDINGS` consumer. Yarn `c` description drift dies.
+    - Depends on: F-400.
+
+### Cleanup (Minor — Phase 13 may defer per D-02)
+
+- **F-100 (Minor)** — Add grep guard: `! rg 'use (ratatui|crossterm|crate::app|crate::ui)' src/infra/` in CI to enforce the `infra/mod.rs` doc-claim that was contradictory at audit time. Depends on F-101 (command_runner Action import gone).
+- **F-112 (Minor)** — Delete `src/infra/tmux.rs` (DEPRECATED per its own doc-comment) + remove from `infra/mod.rs`.
+- **F-111 (Minor)** — Persistence-accessor consolidation (4 small modules → `PersistencePort`). May defer to backlog if Phase 13 budget is tight (D-02 permits).
+- **F-108 (Minor)** — Move `is_inside_tmux` from `infra/jira.rs` to `infra/multiplexer.rs` (closer to its concern). Small extraction.
+- **F-207 (Minor)** — Make `metro_http_post` go through a port method rather than a private in-file helper. Falls out of F-203.
+- **F-206 (Minor)** — Eliminate the 7 recursive `update()` self-dispatch calls. Falls out of F-201 (consumer half).
+- **F-210 (Minor)** — Config loading in `run()` — no action needed, listed for completeness.
+- **F-005** / **F-003** / **F-006** / **F-007** / **F-008** / **F-009** (Minor) — Doc updates and small ergonomic fixes in `domain/`. Any of these may ride with their nearest Group A/B move.
