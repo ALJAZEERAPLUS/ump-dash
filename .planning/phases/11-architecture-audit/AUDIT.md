@@ -343,7 +343,130 @@
 <!-- Coverage: src/app.rs (the single 2,425-LOC file) -->
 <!-- Wave 1 Plan 11-03 appends here, INCLUDING D-04 target shapes for Criticals -->
 
+### File Scores
+
+**File:** `src/app.rs` (2,425 LOC — 41% of the codebase)
+**Public interface:** `enum FocusedPanel` (+2 methods) + `struct ErrorState` (2 pub fields) + `enum PaletteMode` (5 variants) + `struct AppState` (**39 pub fields**) + `fn active_worktree_id` + `fn active_output` + `fn active_output_scroll` + `fn handle_key` + `fn update` + `async fn run`. 10 pub items + 39 pub struct fields; additionally 7 private async helpers (`spawn_metro_task`, `metro_process_task`, `parse_metro_line`, `extract_percent`, `drain_metro_output`, `stdin_writer`, `metro_http_post`) and `fn dispatch_command` live in the same file.
+**Verdict:** **Shallow / God-object** (Critical per D-03 Aggressive rubric)
+**Justification:** A single 2,425-LOC file whose `AppState` struct exposes 39 pub fields and whose `update()` function spans lines 538-2061 (~1,520 lines) — the file owns event loop + key dispatch + state mutation + metro lifecycle + command dispatch + modal flow + async I/O runners + log parsing + HTTP POST (≥9 responsibilities, all unrelated). This fails Ousterhout's "deep module" criterion at every joint: the interface is wide (50-field AppState + 5 mega-functions), and functionality is sprawling rather than hidden behind a narrow API. See F-200, F-201, F-202, F-203 below for the Critical findings this score drives.
+
 ### Critical
+
+### [Critical] F-200: `app.rs` is a 2,425-LOC god-object with ≥9 unrelated responsibilities (D-03)
+- **Location:** `src/app.rs:1-2425`
+- **Dimension:** Ousterhout | Fowler-4-Layer
+- **Symptom:** A single source file owns all of: event loop (`run()` — lines 2065-2202), key dispatch (`handle_key()` — 260-478), state mutation (`update()` — 538-2061), metro lifecycle (`spawn_metro_task`/`metro_process_task` — 2209-2295), command dispatch (`dispatch_command()` — 485-536), modal flow (ModalInputChar/Backspace/Submit arms + 8 ModalState variants scattered across update()), async I/O runners (7 private async helpers at 2209-2425), log parsing (`parse_metro_line` + `extract_percent` — 2300-2355), and HTTP POST (`metro_http_post` — 2411-2425). `AppState` has **39 pub fields** (verified via `awk '/^pub struct AppState/,/^}/' | grep -c '^\s\+pub '`), every one reachable by every consumer.
+- **Why it's a problem:** Fails Ousterhout's deep-module principle at every joint — the interface (39-field struct + 4 mega-functions) is wide; functionality is sprawling rather than hidden behind a narrow API. Per CONTEXT.md D-03 Aggressive calibration, a file handling >5 unrelated responsibilities is Critical. Every reader must load 2,425 lines into working memory to safely modify any single arm; every refactor touches files nothing else uses the structure of. Phase 13 cannot stage refactors atomically against this shape — each of F-201/F-202/F-203 requires a split first.
+- **Recommendation:** Per D-04, design the target shape. Concrete proposal — **move** `src/app.rs` into `src/app/` submodule:
+  ```
+  src/app/
+  ├── mod.rs            — re-exports: pub use state::*; pub use runtime::run; (preserve public API)
+  ├── state.rs          — struct AppState (with fields grouped into sub-structs per F-209), Default impl,
+  │                       pub fn active_worktree_id / active_output / active_output_scroll
+  ├── update.rs         — pub fn update(state: AppState, action: Action) -> (AppState, Vec<Effect>)
+  │                       (pure — no tokio::spawn; returns effects, see F-201)
+  ├── effect_runner.rs  — pub struct EffectRunner { adapters: Adapters, tx: UnboundedSender<Action> }
+  │                       impl { pub fn run_effects(&self, effects: Vec<Effect>); }
+  │                       — owns the tokio::spawn calls; translates Effect variants into adapter calls
+  ├── handle_key.rs     — pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action>
+  │                       (later: reads from KEYBINDINGS registry per F-208)
+  └── runtime.rs        — pub async fn run(terminal) — the event loop; wires up channels,
+                          calls handle_key → update → effect_runner.run_effects; holds Adapters.
+  ```
+  The 7 async metro helpers **move** to `src/infra/metro.rs` (see F-203). The direct `crate::infra::*` imports **move** behind trait objects on an `Adapters` struct (see F-202). Recommendation MUST contain `move` (and does: move app.rs into app/ submodule).
+- **Phase 13 task hint:** Split `src/app.rs` into `src/app/{mod.rs,state.rs,update.rs,effect_runner.rs,handle_key.rs,runtime.rs}` preserving public API at module root; stage this split **first** in Phase 13's refactor sequence because F-201/F-202/F-203 all require it.
+
+### [Critical] F-201: `update()` directly invokes `tokio::spawn` 20 times — TEA purity violation (D-03)
+- **Location:** `src/app.rs:538-2061` — the `update()` function body; specifically the 20 in-function side-effect call sites: `tokio::spawn` at lines **524** (inside `dispatch_command`), **602, 619, 636, 649, 708, 794, 816, 929, 992, 1101, 1186, 1205, 1862, 1902, 1928, 2041** (17 direct), plus `tokio::task::spawn_blocking` at **1236, 1548, 1678** (3 more).
+- **Dimension:** Ousterhout | Fowler-4-Layer
+- **Symptom:** `update(state: &mut AppState, action: Action, metro_tx, handle_tx)` directly invokes `tokio::spawn` 17 times and `tokio::task::spawn_blocking` 3 times inline. State mutation is interleaved with task spawning — e.g. `Action::MetroStart` mutates `state.pending_restart`, then spawns external-metro detection; `Action::CommandRun` mutates `state.command_queue`, then spawns device enumeration; `Action::WorktreeRemoveConfirmed` mutates `state.pending_worktree_removal`, then spawns `remove_worktree`. The function is impure (performs I/O dispatch) and cannot be tested without a tokio runtime; effects cannot be replayed, intercepted, logged, or instrumented.
+- **Why it's a problem:** Violates The Elm Architecture's pure-update guarantee that CONTEXT.md D-03 evaluates `update()` at face value against. Every update-level test requires a tokio runtime; every effect is fire-and-forget (no way to know when the side effect completed for deterministic testing); no central place to log/intercept effects for debugging; no way to dry-run a state transition. Per D-03 Aggressive calibration, "`update()` performs I/O or holds mutable side effects" — flag Critical.
+- **Recommendation:** Per D-04, design the `Effect` enum. Concrete proposal (place at `src/app/effect.rs` or `src/domain/effect.rs`):
+  ```rust
+  pub enum Effect {
+      // Metro lifecycle
+      DetectExternalMetro { port: u16 },                       // replaces tokio::spawn at 602
+      SpawnMetro { worktree: PathBuf },                        // replaces 619
+      MetroHttpPost { url: String, body: String },             // replaces 636, 649 (debugger, reload)
+      KillProcess { pid: u32 },                                // replaces 709 (external metro kill)
+
+      // Commands
+      SpawnCommand { spec: CommandSpec, cwd: PathBuf,
+                     branch: String },                         // replaces 524 (dispatch_command)
+      LoadDevices { kind: DeviceKind },                        // replaces 929 (android/iOS list)
+
+      // Worktrees
+      ListWorktrees,                                           // replaces 817, 993, 1863, 1903, 2042, 2107
+      RemoveWorktree { path: PathBuf },                        // replaces 1101
+      AddWorktree { branch: String },                          // replaces 1205
+      AddWorktreeNewBranch { new: String, base: String },      // replaces 1186
+      ListRemoteBranches,                                      // replaces 1928
+
+      // Persistence
+      SaveJiraCache(HashMap<String, String>),                  // replaces 1564 (inline, not spawned)
+      SaveAndroidMode(String),                                 // replaces 1170, 1339, 1362, 1392, 1413
+      RecordSimUsed(String),                                   // replaces 1678
+
+      // External processes
+      OpenInMultiplexer { worktree: PathBuf, name: String,
+                          command: String },                   // replaces 1236, 1548
+
+      // JIRA
+      FetchJiraTitles { keys: Vec<String> },                   // replaces 708, 794
+  }
+  pub fn update(state: AppState, action: Action) -> (AppState, Vec<Effect>);
+  ```
+  The new `effect_runner.rs` from F-200 consumes `Vec<Effect>` and translates each variant into the actual `tokio::spawn` / `spawn_blocking` / direct-call. `update()` becomes pure — testable without a tokio runtime; every effect is a recorded data value; effects can be logged, replayed, or intercepted at the runner boundary. Recommendation MUST contain `enum` (and does: `pub enum Effect`).
+- **Phase 13 task hint:** Define `pub enum Effect` (15+ variants) in `src/app/effect.rs`; refactor `update()` signature to `(AppState, Action) -> (AppState, Vec<Effect>)`; implement `effect_runner.rs::EffectRunner::run_effects(Vec<Effect>)` that consumes the effects and performs the `tokio::spawn` calls previously inline in update(). Depends on F-200 (the split must land first).
+
+### [Critical] F-202: `app.rs` depends on concrete `crate::infra::*` modules instead of domain ports — hexagonal dependency inversion violation
+- **Location:** `src/app.rs` — 43 direct `crate::infra::*` references (verified via `grep -cE 'crate::infra::' src/app.rs`), including `infra::port::{detect_external_metro, kill_process, port_is_free}` (lines 603, 709, 2122, 2283), `infra::worktrees::{list_worktrees, check_stale_pods, remove_worktree, add_worktree, add_worktree_new_branch, list_remote_branches}` (817, 855, 993, 1002, 1003, 1102, 1187, 1206, 1863, 1903, 1929, 2042, 2107), `infra::devices::{list_android_devices, list_ios_simulators}` (931, 933), `infra::jira::{extract_jira_key, HttpJiraClient}` (748, 785, 1569, 2090), `infra::multiplexer::detect_multiplexer` (1237, 1549, 2079), `infra::config::load_config` (2082), `infra::command_runner::spawn_command_task` (525), `infra::android_prefs::{load_android_mode, save_android_mode}` (207, 1170, 1339, 1362, 1392, 1413), `infra::sim_history::{load_sim_history, record_sim_used}` (1423, 1679), `infra::jira_cache::{load_jira_cache, save_jira_cache}` (1564, 2100), `infra::process::{ProcessClient, TokioProcessClient}` (2214, 2215).
+- **Dimension:** Hexagonal | Fowler-4-Layer
+- **Symptom:** Service-layer code (app.rs `update()` / `run()`) reaches into Data Source (infra) modules directly. `AppState` holds a concrete `Option<crate::infra::config::DashConfig>` field (line 134), an `Option<std::sync::Arc<dyn crate::infra::jira::JiraClient>>` (120), an `Option<Box<dyn crate::infra::multiplexer::Multiplexer>>` (130). There is no injection point: `run()` constructs concrete adapters inline (`HttpJiraClient::new`, `detect_multiplexer()`, `TokioProcessClient`) rather than receiving them.
+- **Why it's a problem:** Inverts Cockburn's hexagonal dependency rule — the app layer should depend on domain-defined traits and receive adapter implementations injected at startup. Currently app.rs transitively pulls in tokio::process, reqwest, lsof-invocation, and every other infra concern. Any app-layer test must fake every infra module separately (no single boundary to swap); any swap of an adapter (e.g. alternative JIRA backend, fake device enumerator for a demo mode) requires edits throughout app.rs, not a single `main.rs` wiring change. This is the same dependency-inversion failure already graded Critical for `command_runner.rs` in Plan 11-02 (F-101), now seen from the consumer side.
+- **Recommendation:** Define domain ports for every external dependency app.rs touches — cross-referenced to Plan 11-02's port-extraction findings (F-102 PortProbePort, F-103 ProcessClient, F-104 WorktreePort, F-105 DevicePort, F-106 JiraClient, F-110 Multiplexer, plus F-101 CommandRunnerPort and a new PersistencePort for the four small persistence modules). Introduce an `Adapters` struct that owns all trait objects:
+  ```rust
+  // src/app/adapters.rs (new)
+  pub struct Adapters {
+      pub command_runner: Arc<dyn CommandRunnerPort>,
+      pub metro: Arc<dyn MetroPort>,                   // see F-203
+      pub port_probe: Arc<dyn PortProbePort>,          // Plan 11-02 F-102
+      pub worktrees: Arc<dyn WorktreePort>,            // Plan 11-02 F-104
+      pub devices: Arc<dyn DevicePort>,                // Plan 11-02 F-105
+      pub jira: Option<Arc<dyn JiraPort>>,             // Plan 11-02 F-106
+      pub multiplexer: Option<Arc<dyn Multiplexer>>,   // Plan 11-02 F-110
+      pub persistence: Arc<dyn PersistencePort>,       // Plan 11-02 F-111
+  }
+  ```
+  `run()` (in `app/runtime.rs` after the F-200 split) constructs the concrete adapters and builds the `Adapters` struct at startup. `update()` + `effect_runner.rs` call methods through the trait objects only — zero `crate::infra::*` imports remain in `src/app/`. Recommendation MUST contain `trait` (and does: every port above is a `trait`).
+- **Phase 13 task hint:** After F-200 split and after Plan 11-02 port extractions land, create `src/app/adapters.rs` with the `Adapters` struct; update `run()` in `src/app/runtime.rs` to construct concrete impls once and hold the struct; remove every `crate::infra::*` reference from `src/app/` (verify with `rg 'crate::infra::' src/app/` = 0 matches).
+
+### [Critical] F-203: Async metro helpers (7 functions, 218 LOC) are Data Source code colocated with Service code
+- **Location:** `src/app.rs:2209-2425` — `spawn_metro_task` (2209-2256), `metro_process_task` (2259-2295), `parse_metro_line` (2300-2332), `extract_percent` (2336-2355), `drain_metro_output` (2358-2395), `stdin_writer` (2398-2409), `metro_http_post` (2411-2425).
+- **Dimension:** Fowler-4-Layer | Hexagonal
+- **Symptom:** 218 lines of pure-infra code — tokio process spawning (`ProcessClient::spawn_metro`), raw byte-stream parsing (`BufReader::lines`, SIGKILL via `libc::kill(-PGID, SIGKILL)`), HTTP POST (`reqwest::Client`) — live in the same file as the application Service layer. `spawn_metro_task` imports `crate::infra::process::{ProcessClient, TokioProcessClient}` inline (lines 2214-2215); `metro_process_task` uses `libc::kill` + `tokio::process::Child` directly; `metro_http_post` uses `reqwest` directly. No domain-level metro port exists; update() spawns these helpers directly (lines 619, 636, 649).
+- **Why it's a problem:** Mixes Data Source with Service. Forces app.rs to import `tokio::process`, `reqwest`, `libc`, and raw byte-stream parsing into the same file that orchestrates TEA state transitions. The `domain::metro::MetroManager` (which currently holds tokio-typed fields via `MetroHandle` per Plan 11-01 F-004) has no adapter to delegate to — the "adapter" is scattered across 7 free functions in app.rs. Combined with Plan 11-01 F-004 (MetroHandle tokio leak), this is the load-bearing reason metro lifecycle currently spans 3 layers with no clean boundary.
+- **Recommendation:** `move` `src/app.rs:2209-2425` into a new file `src/infra/metro.rs` containing a `TokioMetroAdapter` struct implementing a new `trait MetroPort` defined in `src/domain/ports/metro_port.rs`:
+  ```rust
+  // src/domain/ports/metro_port.rs (new)
+  pub struct MetroHandle { /* opaque — replaces Plan 11-01 F-004 tokio-leaking struct */ }
+  pub enum MetroActivity { /* re-export or relocate from domain/metro.rs */ }
+
+  pub trait MetroPort: Send + Sync {
+      // Starts metro in the worktree; returns when spawn completes; streams activity via tx.
+      async fn start(&self, worktree: PathBuf,
+                     activity_tx: UnboundedSender<MetroActivity>) -> anyhow::Result<MetroHandle>;
+      // Writes a byte buffer to metro's stdin.
+      fn send_stdin(&self, handle: &MetroHandle, bytes: Vec<u8>) -> anyhow::Result<()>;
+      // Kills the metro process group and waits for port 8081 to free.
+      async fn kill(&self, handle: MetroHandle);
+      // Sends a control HTTP POST to metro (reload, open-debugger).
+      async fn http_post(&self, path: &str, body: &str) -> anyhow::Result<()>;
+  }
+  ```
+  `infra::metro::TokioMetroAdapter` implements the trait by absorbing `spawn_metro_task`, `metro_process_task`, `drain_metro_output`, `stdin_writer`, `metro_http_post`. Pure helpers `parse_metro_line` and `extract_percent` stay with the adapter as private module fns (pure parsers, no I/O — same pattern as Plan 11-02's recommendation for `infra/devices.rs` parsers staying module-private). `app.rs` receives `Arc<dyn MetroPort>` via the `Adapters` struct from F-202. Recommendation MUST contain both `move` and `trait` (and does: move ... to src/infra/metro.rs implementing trait MetroPort).
+- **Phase 13 task hint:** Create `src/domain/ports/metro_port.rs` defining `trait MetroPort` (4 methods) + opaque `MetroHandle` + `MetroActivity` enum; create `src/infra/metro.rs::TokioMetroAdapter` implementing the trait by moving the 7 helpers from `app.rs:2209-2425`; keep `parse_metro_line` / `extract_percent` as private helpers in the adapter module; rewire app.rs `update()` to call `adapters.metro.start/send_stdin/kill/http_post` through the trait object. Depends on F-200 (the split) and coordinates with Plan 11-01 F-004 (the trait here replaces the tokio-leaking MetroHandle struct).
+
 ### Major
 ### Minor
 
