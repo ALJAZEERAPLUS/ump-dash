@@ -22,8 +22,8 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 - [x] **ARCH-01**: Auditor produces an Ousterhout review of every module (`domain/`, `infra/`, `app/`, `ui/`) scoring deep-module/narrow-interface criteria with severity-tagged findings (Critical / Major / Minor).
 - [x] **ARCH-02**: Auditor maps the codebase to Martin Fowler's 4-layer model (Presentation / Domain / Data Source / Service) and flags modules with mixed responsibilities.
 - [x] **ARCH-03**: Auditor checks hexagonal ports-and-adapters discipline — infra modules must be adapters for domain-defined traits; direct coupling between infra and app/ui is flagged.
-- [ ] **ARCH-04**: Auditor enumerates every `_ => {}` catch-all in match arms (handle_key, update, modal dispatch) and lists explicit gaps.
-- [ ] **ARCH-05**: Auditor surfaces every place where command ordering / prerequisite logic lives outside the domain layer (e.g. metro-before-run, pod-install-before-build, sync-before-metro inlined in `update()` or `app.rs`).
+- [x] **ARCH-04**: Auditor enumerates every `_ => {}` catch-all in match arms (handle_key, update, modal dispatch) and lists explicit gaps.
+- [x] **ARCH-05**: Auditor surfaces every place where command ordering / prerequisite logic lives outside the domain layer (e.g. metro-before-run, pod-install-before-build, sync-before-metro inlined in `update()` or `app.rs`).
 - [x] **ARCH-06**: Audit findings are written to `.planning/phases/NN-arch-audit/AUDIT.md` with prioritized recommendations consumed by the refactor phase.
 
 ### Audit-Driven Refactors (REFACTOR)
@@ -79,8 +79,8 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 | ARCH-01 | Phase 11 | Complete |
 | ARCH-02 | Phase 11 | Complete |
 | ARCH-03 | Phase 11 | Complete |
-| ARCH-04 | Phase 11 | Pending |
-| ARCH-05 | Phase 11 | Pending |
+| ARCH-04 | Phase 11 | Complete |
+| ARCH-05 | Phase 11 | Complete |
 | ARCH-06 | Phase 11 | Complete |
 | COVER-01 | Phase 12 | Pending |
 | COVER-02 | Phase 12 | Pending |

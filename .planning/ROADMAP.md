@@ -124,7 +124,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 |-------|-----------|----------------|--------|-----------|
 | 01-06 | v1.0 | 37/37 | Complete | 2026-04-05 |
 | 07-10 | v1.1 | 9/9 | Complete | 2026-04-13 |
-| 11. Architecture Audit | v1.3 | 5/7 | In Progress|  |
+| 11. Architecture Audit | v1.3 | 6/7 | In Progress|  |
 | 12. Coverage Gate | v1.3 | 0/TBD | Not started | - |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/TBD | Not started | - |
