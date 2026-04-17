@@ -468,7 +468,137 @@
 - **Phase 13 task hint:** Create `src/domain/ports/metro_port.rs` defining `trait MetroPort` (4 methods) + opaque `MetroHandle` + `MetroActivity` enum; create `src/infra/metro.rs::TokioMetroAdapter` implementing the trait by moving the 7 helpers from `app.rs:2209-2425`; keep `parse_metro_line` / `extract_percent` as private helpers in the adapter module; rewire app.rs `update()` to call `adapters.metro.start/send_stdin/kill/http_post` through the trait object. Depends on F-200 (the split) and coordinates with Plan 11-01 F-004 (the trait here replaces the tokio-leaking MetroHandle struct).
 
 ### Major
+
+### [Major] F-204: Inline prerequisite/ordering logic scattered across 11 sites in `update()` (ARCH-05)
+- **Location:** `src/app.rs:843-887` (sync-before-run modal flow; pod staleness inline at 852-858), `:890` (`spec.needs_metro() && !state.metro.is_running()` — metro-before-RN-run), `:949-953` (RnReleaseBuild → queue AdbInstallApk pipeline), `:956-960` (GitResetHardFetch → queue GitResetHard pipeline), `:1014` (second `needs_metro` check in CommandExited drain), `:1463-1499` (sync-before-metro on worktree switch; auto_sync fast-path at 1467-1478), `:1622-1635` (CleanConfirm multi-step sequence assembly — cocoapods, android, node_modules, sync_after), `:1684-1705` (SyncBeforeRunAccept sequence), `:1713` (third `needs_metro` check in SyncBeforeRunDecline), `:1722-1753` (SyncBeforeMetroAccept sequence), `:657-674` (MetroExited auto-restart via pending_restart flag; skip_external_metro_check gating at 669), `:594-599` (MetroStart skip_external_metro_check consumption). Plus **five boolean flag fields** coordinating multi-step flows across **45 in-file references** (verified via `grep -cE 'pending_restart|pending_switch_path|pending_metro_run|pending_metro_after_sync|skip_external_metro_check' src/app.rs`): `pending_restart`, `pending_switch_path`, `pending_metro_run`, `pending_metro_after_sync`, `skip_external_metro_check`. Plus `state.command_queue: VecDeque<CommandSpec>` (line 90) as a sixth ad-hoc sequencing mechanism.
+- **Dimension:** Prerequisite-Placement | Fowler-4-Layer
+- **Symptom:** 11 distinct locations in `update()` encode command prerequisite/ordering rules inline (sync-before-run, sync-before-metro, metro-before-run, GitFetch-then-GitResetHard, RnReleaseBuild-then-AdbInstall, CleanConfirm multi-command sequencing, auto-restart after MetroStop, skip-external-detection-during-restart). Six ad-hoc coordination mechanisms (5 boolean flags + VecDeque) implement what is logically a single domain pipeline type. Rule knowledge (which commands depend on which others, in what order) is scattered across `update()` arms — not encoded as domain data.
+- **Why it's a problem:** Domain orchestration logic (command dependency graph) lives in the Service layer (app.rs::update) instead of the Domain layer. Cannot test prerequisite rules without app/runtime context. Every new RN-like command that needs metro-first must touch the SyncBeforeRun arm, the MetroStart arm, the SyncBeforeRunDecline arm, and the needs_metro check inline — four edits for one rule. This is the single clearest ARCH-05 violation in the codebase; per REQUIREMENTS.md REFACTOR-03 ("introduce a domain-level command-prerequisite representation"), Phase 13 must resolve it.
+- **Recommendation:** Introduce domain types encoding prerequisites and recipes. Per RESEARCH §"Recommended target shape for D-04":
+  ```rust
+  // src/domain/prerequisite.rs (new)
+  pub enum Prerequisite {
+      MetroRunning,
+      DependenciesFresh { yarn: bool, pods: bool },
+  }
+  impl CommandSpec {
+      pub fn prerequisites(&self) -> Vec<Prerequisite>;  // replaces needs_metro inline checks
+  }
+
+  // src/domain/recipe.rs (new)
+  pub enum Recipe {
+      Single(CommandSpec),
+      Sequence(Vec<CommandSpec>),
+      Clean(CleanOptions),
+      SyncThenRun(CommandSpec),     // replaces SyncBeforeRun flow
+      SyncThenStartMetro,           // replaces SyncBeforeMetro flow
+      ReleaseBuildAndInstall,       // replaces RnReleaseBuild → AdbInstall
+      GitFetchThenReset,            // replaces GitResetHardFetch → GitResetHard
+  }
+  impl Recipe {
+      pub fn expand(&self, state: &DependencyState) -> Vec<CommandSpec>;
+  }
+  ```
+  Dispatcher reads from `Recipe::expand` instead of inline conditionals across the 11 sites. The five coordinating boolean flags collapse into the Recipe variant's data. Phase 13 picks either (a) a full prerequisite-graph model or (b) this Recipe enum per REFACTOR-03's latitude. Recommendation MUST contain `enum` (and does: `pub enum Prerequisite`, `pub enum Recipe`).
+- **Phase 13 task hint:** Implement REFACTOR-03 by introducing `Prerequisite` + `Recipe` domain types per the sketch above; replace the 11 inline ordering sites in `update()` with `Recipe::expand()` consumers; collapse `pending_restart` / `pending_switch_path` / `pending_metro_run` / `pending_metro_after_sync` / `skip_external_metro_check` into Recipe variant data. Depends on F-200 (update() must be pure before this is tractable).
+- **Cross-reference to Plan 11-05:** Plan 11-05 enumerates each of these 11 locations row-by-row with every variant touched in its `## Cross-Cutting Findings > Misplaced prerequisite/ordering logic (ARCH-05)` section.
+
+### [Major] F-205: Catch-all match arms in `app.rs` drop inputs without exhaustive coverage (ARCH-04)
+- **Location:** `src/app.rs:441` (handle_key WorktreeTable focused — `_ => {}`), `:461` (handle_key CommandOutput focused — `_ => {}`), `:1140` (ModalInputChar fall-through — `_ => {}`), `:1153` (ModalInputBackspace fall-through — `_ => {}`), `:2153` (run() event-loop Mouse/Paste/Focus fall-through — `_ => {}`). Plus **16 `_ => None` arms** in handle_key modal dispatchers (lines 274, 281, 292, 301, 306, 311, 316, 325, 344, 351, 362, 373, 380, 389, 397, 476) and the `_ => Some(Action::ModalCancel)` arms (344, 351, 362, 373, 380). Plus broader arms at 915 (`_ => "Input:".to_string()` in TextInput prompt builder) and 1418 (`_ => { ... multi-line modal DevicePicker creation }`).
+- **Dimension:** Catch-All
+- **Symptom:** 5 literal `_ => {}` arms + 16 `_ => None` / `_ => Some(ModalCancel)` arms + 2 wider-body catch-alls. The `Action` enum (src/action.rs) has ~55 variants; the `ModalState` enum has 8 variants (`Confirm`, `TextInput`, `DevicePicker`, `CleanToggle`, `SyncBeforeRun`, `SyncBeforeMetro`, `ExternalMetroConflict`, `BranchPicker`). The two modal-input catch-alls at 1140 and 1153 silently drop typing events for five of those eight ModalState variants — a future modal type that should accept character input would be silently ignored because the compiler does not force the author to consider the new variant.
+- **Why it's a problem:** Per RESEARCH §"Why this matters more than it seems" — Action enum has ~55 variants and several update() arms have implicit assumptions about which ModalState variant is active when a key arrives. Future variant additions can be silently swallowed. Handle_key's 16 `_ => None` arms collectively document nothing about WHICH keys are intentionally unhandled versus accidentally missed. Of the 5 `_ => {}` literals, lines 1140 and 1153 are the most load-bearing because they gate user input based on a non-exhaustive ModalState match.
+- **Recommendation:** For ModalInputChar / ModalInputBackspace catch-alls at 1140/1153 — `replace _ => {}` with **explicit named arms covering each ModalState variant** (`Some(ModalState::Confirm {..}) | Some(ModalState::CleanToggle {..}) | Some(ModalState::SyncBeforeRun {..}) | Some(ModalState::SyncBeforeMetro {..}) | Some(ModalState::ExternalMetroConflict {..}) | Some(ModalState::BranchPicker {..}) | None => { /* intentionally ignore — modal does not accept char input */ }`). Rust's exhaustiveness check then guards future ModalState additions. For the 5 literal `_ => {}` arms at 441/461/2153 and the 16 `_ => None` in handle_key, document the propagation policy in a doc-comment on `handle_key` itself ("unhandled keys return None so callers can compose key dispatchers"). Recommendation MUST contain `replace _ =>` (and does: `replace _ => {} with explicit named arms`).
+- **Phase 13 task hint:** `replace _ =>` literal arms at `src/app.rs:1140` and `:1153` with exhaustive ModalState enumeration; for handle_key `_ => None` arms, add a doc-comment on handle_key documenting the "return None for anything unhandled" policy; for `:441`, `:461`, `:2153` event-loop arms, add `// intentionally unhandled` comments with the event categories (Mouse/Paste/Focus).
+- **Cross-reference to Plan 11-05:** Plan 11-05 enumerates each catch-all arm row-by-row with full variant breakdown in its `## Cross-Cutting Findings > Catch-all match arms (ARCH-04)` section.
+
+### [Major] F-208: `handle_key` is one of three keybinding definition sites — no single source of truth (D-14)
+- **Location:** `src/app.rs:260-478` — the entire `handle_key` function body, which encodes the canonical `(KeyCode → Action)` mapping (e.g. `Char('q') => Some(Action::Quit)`, `Char('?') | F(1) => Some(Action::ShowHelp)`, `Char('m') => Some(Action::MetroStart)` in various contexts). The other two sites are `src/ui/footer.rs::key_hints_for` (encodes the same keybindings as footer hint strings — key labels + short descriptions) and `src/ui/help_overlay.rs::render_help` (encodes the same keybindings as a help-table of key labels + long descriptions). Three sources of truth that must agree manually.
+- **Dimension:** Ousterhout (overexposure / knowledge duplication) | Hexagonal
+- **Symptom:** The keybinding knowledge — which key triggers which Action, in which context, with what description — is duplicated across three files in three different encodings: `handle_key` knows `KeyCode → Action`; `footer.rs::key_hints_for` knows key label + short description; `help_overlay.rs::render_help` knows key label + long description. Adding a new keybinding requires three coordinated edits in three different styles. Per RESEARCH §"Drift evidence" (confirmed during context-gathering): the Yarn-palette `c` key currently has three slightly different descriptions across the three sites.
+- **Why it's a problem:** D-14 CONTEXT.md directive (folded from the 2026-03-11 keybindings todo) mandates the auditor explicitly evaluate this for source-of-truth violations. The violation is confirmed: three sites encode the same information redundantly, with observed drift. Future keybinding additions will drift further. New team members must read all three files to understand which keys are actually bound. The single-source keybinding registry requested by the original todo is concretely justified by this F-208 finding.
+- **Recommendation:** Introduce a single keybinding registry. Concrete sketch:
+  ```rust
+  // src/keybindings.rs (root) or src/app/keybindings.rs (after F-200 split)
+  pub enum BindingContext {
+      Always, NormalMode, WorktreeTable, CommandOutput,
+      Modal(ModalKind), Palette(PaletteMode),
+  }
+  pub struct KeyBinding {
+      pub key: KeyCode,
+      pub label: &'static str,       // e.g. "c", "?", "F1"
+      pub short_desc: &'static str,  // footer hint text
+      pub long_desc: &'static str,   // help overlay description
+      pub context: BindingContext,
+      pub action: fn(&AppState) -> Option<Action>,
+  }
+  pub const KEYBINDINGS: &[KeyBinding] = &[ /* ~60 entries covering every key currently in handle_key */ ];
+
+  pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action>;
+  pub fn footer_hints_for(state: &AppState) -> Vec<(&'static str, &'static str)>;
+  pub fn help_overlay_rows() -> Vec<(&'static str, &'static str)>;
+  ```
+  All three call sites (`handle_key`, `footer.rs::key_hints_for`, `help_overlay.rs::render_help`) read from `KEYBINDINGS` — drift becomes impossible. Recommendation MUST contain `struct` (and does: `pub struct KeyBinding`) and `move` (the three current encoding sites' data **move** into the single KEYBINDINGS table).
+- **Phase 13 task hint:** Create `src/app/keybindings.rs` (after F-200 split) containing the `KeyBinding` struct + `KEYBINDINGS` registry with ~60 entries; refactor `handle_key` to scan the registry filtered by `BindingContext`; refactor `footer.rs::key_hints_for` and `help_overlay.rs::render_help` to project rows from the same registry. The three sites now all read from one source of truth. Depends on F-200 (so new registry can live at `src/app/keybindings.rs`).
+- **Cross-reference to Plan 11-04 and Plan 11-05:** Plan 11-04 captures the `footer.rs` and `help_overlay.rs` definition sites; Plan 11-05 finalizes the unified D-14 finding in `## Cross-Cutting Findings > Keybinding source-of-truth (D-14)` with the full cross-file evidence and the unified recommendation.
+
+### [Major] F-209: `AppState` exposes 39 pub fields — Ousterhout "Overexposure" anti-pattern
+- **Location:** `src/app.rs:61-163` — the `AppState` struct definition. Verified field count: 39 pub fields (via `awk '/^pub struct AppState/,/^}/' src/app.rs | grep -c '^\s\+pub '`).
+- **Dimension:** Ousterhout (overexposure red flag)
+- **Symptom:** Every field of AppState is `pub`, including 5 coordinating boolean flags (pending_restart, pending_switch_path, pending_metro_run, pending_metro_after_sync, skip_external_metro_check), 3 pending-operation slots (pending_device_command, pending_claude_open, pending_android_mode, pending_worktree_removal, pending_worktree_add, pending_new_branch_base, pending_new_branch_worktree — actually 7), metro-related fields (metro, active_worktree_path, skip_external_metro_check), worktree browser state (worktrees, worktree_table_state, selected_worktree_id, fullscreen_panel), command state (command_queue, command_output_by_worktree, command_output_scroll_by_worktree, running_command, command_task), modal state (modal), configuration (repo_root, palette_mode, config, jira_title_cache, jira_client, jira_project_prefix, multiplexer, claude_flags, android_mode), and first-press tracking (pending_g). Every consumer of AppState can read every field.
+- **Why it's a problem:** Per Ousterhout's "Overexposure" red flag — "interface forces the caller to learn implementation internals." `update()` arms that touch only metro state still see all 39 fields; `handle_key` that only needs modal + palette_mode + pending_g + focused_panel + metro.is_running() sees everything. Any refactoring of AppState breaks every reader because the struct shape is the public API. The 7 `pending_*` fields are a particularly clear code smell: they implement an ad-hoc coordination protocol that would be better encoded as the Recipe variants in F-204.
+- **Recommendation:** Group fields into sub-structs with narrower public API. Concrete proposal:
+  ```rust
+  // src/app/state.rs (after F-200 split)
+  pub struct AppState {
+      pub focused_panel: FocusedPanel,
+      pub show_help: bool,
+      pub error_state: Option<ErrorState>,
+      pub should_quit: bool,
+      pub metro_state: MetroState,
+      pub worktree_browser: WorktreeBrowserState,
+      pub command_runner: CommandRunnerState,
+      pub modal_stack: ModalStackState,
+      pub pending: PendingFlags,     // shrinks to 0 after F-204 Recipe lands
+      pub config: AppConfigState,
+  }
+  pub struct MetroState { pub metro: MetroManager, pub active_worktree_path: Option<PathBuf> }
+  pub struct WorktreeBrowserState { pub worktrees: Vec<Worktree>, pub table_state: TableState,
+                                    pub selected_worktree_id: Option<WorktreeId>,
+                                    pub fullscreen_panel: Option<FocusedPanel>, ... }
+  pub struct CommandRunnerState { pub command_queue: VecDeque<CommandSpec>,
+                                   pub output_by_worktree: HashMap<...>,
+                                   pub running_command: Option<CommandSpec>, ... }
+  // ... etc
+  ```
+  Sub-structs are pub; inner fields become `pub(crate)` (visible within the `app/` module only, not to external consumers). Readers of `AppState` declare intent via which sub-struct they touch; refactoring `CommandRunnerState` cannot break `modals.rs`. Recommendation MUST contain `struct` (and does: multiple `pub struct` sub-types).
+- **Phase 13 task hint:** Group AppState's 39 pub fields into 6-7 sub-structs (`MetroState`, `WorktreeBrowserState`, `CommandRunnerState`, `ModalStackState`, `PendingFlags`, `AppConfigState`); make sub-structs pub but narrow inner fields to `pub(crate)`. Stage after F-200 (fields move with the split) and coordinate with F-204 (the `PendingFlags` sub-struct empties out once Recipe lands).
+
 ### Minor
+
+### [Minor] F-206: Recursive `update()` self-dispatch calls scattered across 7 arms — temporal decomposition
+- **Location:** `src/app.rs:590` (MetroStart calls `update(state, Action::MetroStop, ...)`), `:670` (MetroExited calls `update(state, Action::MetroStart, ...)`), `:673` (MetroExited calls `update(state, Action::RefreshWorktrees, ...)`), `:893` (CommandRun calls `update(state, Action::MetroStart, ...)`), `:1474` (WorktreeSwitchToSelected calls `update(state, Action::MetroStop, ...)`), `:1491` (same arm, different branch), `:1497` (same arm), `:1715` (SyncBeforeRunDecline calls `update(state, Action::MetroStart, ...)`), `:1732` (SyncBeforeMetroAccept calls `update(state, Action::MetroStop, ...)`), `:2140` (runtime periodic-refresh calls `update(state, Action::RefreshWorktrees, ...)`), `:2149` (handle_key result dispatches via update), `:2157` (metro_rx.recv dispatches via update), `:2161` (handle_rx.recv dispatches via update), `:2170` (drain loop dispatches via update).
+- **Dimension:** Ousterhout (temporal decomposition) | Fowler-4-Layer
+- **Symptom:** `update()` recursively calls itself at least 7 distinct call sites within its own body to chain sequential actions (MetroStart → MetroStop → MetroExited → MetroStart again). This is temporal decomposition — the arm breaks are dictated by execution order ("first stop metro, then start metro, then refresh worktrees") rather than responsibility. The recursion is necessary today because update() is the only place that knows how to fan out effects; once F-201 lands, these recursive calls become `vec![Effect::..., Effect::...]` returns instead.
+- **Why it's a problem:** Temporal decomposition is one of Ousterhout's named anti-patterns. Readers tracing a single user action (e.g. "press Enter on worktree row") must follow the recursion three hops deep (WorktreeSwitchToSelected → MetroStop → MetroExited → MetroStart → MetroStartConfirmed) to see the full effect chain. Minor because the fix falls out naturally from F-201 (the Effect enum makes the chain declarative rather than recursive — each arm returns `vec![Effect::StopMetro, Effect::ScheduleAction(Action::MetroStart, after_delay)]`).
+- **Recommendation:** No direct action. Resolution follows from F-201 — once `update()` returns `(AppState, Vec<Effect>)`, the 7+ recursive self-dispatch sites collapse into effect returns. The `ScheduleAction { action, after }` variant in F-201's Effect enum handles the "after metro exits, dispatch MetroStart" case. Optional `enum Effect::Chain(Vec<Effect>)` variant can model explicit ordering if needed.
+- **Phase 13 task hint:** Do not action independently — fix is absorbed by F-201 implementation. Verify during F-201 rollout that every recursive `update(...)` call becomes an `Effect::` return.
+
+### [Minor] F-207: Metro debugger/reload/port-kill logic owns a private in-file `metro_http_post` instead of going through a port
+- **Location:** `src/app.rs:636-643` (MetroSendDebugger — `metro_http_post("http://localhost:8081/open-debugger", "{}")`), `:649-654` (MetroSendReload — `metro_http_post("http://localhost:8081/reload", "")`), `:2411-2425` (`metro_http_post` definition).
+- **Dimension:** Hexagonal | Ousterhout (colocated-concern)
+- **Symptom:** Two Action arms call `metro_http_post` — a private async fn in the same file that uses `reqwest::Client` directly — to drive metro's HTTP control endpoints. The URL is hard-coded to `http://localhost:8081/`. Combined with F-203, this is the HTTP-POST leaf of the metro-helpers-colocated-with-service finding, called out separately because it's the specific case app.rs imports `reqwest` for.
+- **Why it's a problem:** Metro control HTTP is a domain-level concept ("tell metro to reload", "tell metro to open debugger") that the hexagonal MetroPort should own — but it's currently a private helper in app.rs. Consumers of MetroSendDebugger / MetroSendReload see `tokio::spawn(metro_http_post(...))` at the call site, leaking the HTTP mechanism through the Service layer.
+- **Recommendation:** Absorbed by F-203 — the `MetroPort::http_post(path, body)` method in the proposed trait owns this. `metro_http_post` `move`s into `infra/metro.rs::TokioMetroAdapter`; app.rs calls `adapters.metro.http_post("/open-debugger", "{}")`.
+- **Phase 13 task hint:** Do not action independently — resolved by F-203 implementation.
+
+### [Minor] F-210: Config loading inlined at startup in `run()` — not a real problem, listed for completeness
+- **Location:** `src/app.rs:2079-2100` — multiplexer detection, config load, jira_client construction, jira_title_cache load all inline in `run()`.
+- **Dimension:** Ousterhout (acceptable shape; listed per D-13 completeness)
+- **Symptom:** 22 lines of startup wiring live inline at the top of `run()` — config deserialization, config→state field extraction (claude_flags, jira_project_prefix, repo_root), JIRA client construction, cache hydration. Not broken; just one of the few legitimate uses of direct `crate::infra::*` access in app.rs (because this is where the ports-injection decision happens — F-202 uses this same code path as the injection point).
+- **Why it's a problem:** Not a problem today. Listed for completeness because D-13 asks for every Ousterhout-score block to note structural observations, and this is the startup-wiring section that F-202's `Adapters` construction will occupy after Phase 13.
+- **Recommendation:** Leave as-is for Phase 11. After F-200/F-202 land in Phase 13, this code moves into `src/app/runtime.rs::run` as the Adapters-construction block (documented at that file's head).
+- **Phase 13 task hint:** Do not action. Resolved structurally by F-200 + F-202.
 
 ## Module: ui/
 <!-- Coverage: src/ui/{mod,panels,footer,help_overlay,error_overlay,modals,theme}.rs -->
