@@ -604,8 +604,66 @@
 <!-- Coverage: src/ui/{mod,panels,footer,help_overlay,error_overlay,modals,theme}.rs -->
 <!-- Wave 1 Plan 11-04 appends here, plus initial keybinding evidence (D-14) -->
 
+### File Scores
+
+**File:** `src/ui/panels.rs` (267 LOC)
+**Public interface:** 3 pub fns — `render_title_bar`, `render_worktree_table`, `render_command_output` (per `rg '^pub (fn|struct|enum|trait|const)' src/ui/panels.rs`)
+**Verdict:** OK on rendering; contains the single UI→infra hexagonal leak in the codebase.
+**Justification:** Three render functions that take `&AppState` and draw ratatui widgets — narrow interface relative to the 267 LOC of table/detail-row/scrollbar logic. The load-bearing concern is the import at line 71: `crate::infra::jira::extract_jira_key` — a pure domain helper misplaced in infra, reached into directly by the Presentation layer. See F-300 below; this is the other side of Plan 11-02 F-107 (same function, viewed from the UI side).
+
+**File:** `src/ui/footer.rs` (161 LOC)
+**Public interface:** 1 pub fn — `render_footer` (`key_hints_for` is private)
+**Verdict:** Shallow — narrow interface but the implementation is a giant hand-coded keybinding table duplicating data owned by `app.rs::handle_key`.
+**Justification:** One pub render fn dispatches to `key_hints_for` (lines 29-161) — 5 palette hint tables (lines 40-79), 8 modal hint tables (lines 84-118), and panel hint tables (lines 124-153). ~70 `(key, label)` tuples total, all plain strings with no reference to `Action` or any canonical binding type. This is D-14 keybinding definition site #2; handle_key is site #1 (Plan 11-03 F-208), help_overlay is site #3 (F-303 below). See F-302 for the UI-side D-14 evidence.
+
+**File:** `src/ui/help_overlay.rs` (137 LOC)
+**Public interface:** 1 pub fn — `render_help` (`centered_rect` is private)
+**Verdict:** Shallow — narrow interface but the implementation is a ~55-row hand-coded `Vec<Row>` duplicating keybinding strings from footer + handle_key.
+**Justification:** One pub render fn. Lines 17-112 hand-code the help table with section headers (Navigation, Worktree Table, Android a>, iOS i>, Yarn y>, Git g>, Worktree w>, Output Pane, Icons) and `Row::new(vec!["key", "description"])` rows — no iteration, no data source beyond the literal strings. This is D-14 keybinding definition site #3. See F-303 for the finding; Plan 11-05 finalizes the unified cross-cutting D-14 finding referencing all three sites.
+
+**File:** `src/ui/modals.rs` (376 LOC)
+**Public interface:** 1 pub fn — `render_modal` (8 private per-modal renderers + private `centered_rect`)
+**Verdict:** Deep — single dispatch entry point hiding 8 modal renderers behind one function.
+**Justification:** Textbook Ousterhout depth applied to UI. One pub fn, one match on `ModalState`, eight private renderers (`render_confirm_modal`, `render_text_input_modal`, `render_device_picker_modal`, `render_clean_modal`, `render_sync_prompt`, `render_sync_before_metro`, `render_external_metro_modal`, `render_branch_picker_modal`). Imports are strictly `ratatui::*` + `crate::domain::command::ModalState` + (via full-path) `crate::domain::command::{DeviceInfo, CleanOptions, CommandSpec}`. Verified `rg 'crate::app|crate::infra' src/ui/modals.rs` → no matches. Narrow interface, deep functionality, clean layer discipline. No finding required.
+
 ### Critical
+
 ### Major
+
+### [Major] F-300: `ui/panels.rs:71` calls `crate::infra::jira::extract_jira_key` directly — UI→infra hexagonal leak
+- **Location:** `src/ui/panels.rs:71` (call site inside `render_worktree_table`); transitive import via full-path at the call (no `use crate::infra::jira;` at file top — the `use crate::{app::..., domain::worktree::..., ui::theme}` block at lines 12-16 is clean, so the only infra reach is the fully-qualified call at line 71)
+- **Dimension:** Hexagonal | Fowler-4-Layer
+- **Symptom:** Presentation layer calls `crate::infra::jira::extract_jira_key(branch, &state.jira_project_prefix)` to derive a display string. `extract_jira_key` is a pure function (no I/O, six inline tests in `infra/jira.rs`) — so the runtime is benign — but the dependency direction is wrong: Presentation should not reach Data Source.
+- **Why's a problem:** Per `ui/mod.rs:2` doc-claim ("Imports: domain types and ratatui ONLY. Never imports infra directly."), this is a self-acknowledged contract violation. Per hexagonal: Presentation → Data Source is the one edge the architecture forbids. Per Fowler 4-layer: pure business-vocabulary helpers (parse a branch name → ticket key) live in Domain, not Data Source.
+- **Recommendation:** Coordinate with Plan 11-02 F-107 (same function, infra side): `move extract_jira_key from src/infra/jira.rs to src/domain/worktree.rs` (or a new `src/domain/jira.rs`); update `src/ui/panels.rs:71` to import from domain instead (`use crate::domain::worktree::extract_jira_key;`). No behavior change — pure function move + import rewrite. This is the UI-side of a symmetric two-line fix.
+- **Phase 13 task hint:** When implementing Plan 11-02 F-107's move of `extract_jira_key` to domain, also update the import at `src/ui/panels.rs:71` to reference the new domain path; verify afterwards with `! rg 'crate::infra' src/ui/`.
+
+### [Major] F-301: `ui/mod.rs` doc-claim contradicts actual imports — self-documented but unenforced layer contract
+- **Location:** `src/ui/mod.rs:1-2` (doc-comment: "UI layer — ratatui widgets, rendering, layout. Imports: domain types and ratatui ONLY. Never imports infra directly.") vs `src/ui/panels.rs:71` (calls `crate::infra::jira::extract_jira_key`)
+- **Dimension:** Hexagonal | Fowler-4-Layer
+- **Symptom:** `ui/mod.rs` documents the layer's import contract in a module-level doc-comment. `rg 'crate::infra' src/ui/` returns a single hit at `panels.rs:71` that violates it. The contract is declared but not enforced (no CI check, no arch_test fitness function — arch_test_core is out of scope per REQUIREMENTS.md).
+- **Why's a problem:** Self-documented contracts that aren't enforced create false confidence — readers of `ui/mod.rs` assume the layer is clean, and reviewers of new ui code anchor on the existing comment rather than regrepping. Per Pitfall 2 (§Common Pitfalls): "the comment IS the finding" when the trade-off is documented but drift occurs.
+- **Recommendation:** Preferred path: fix the code, not the doc — land F-300 (`move extract_jira_key from src/infra/jira.rs to src/domain/worktree.rs` + rewrite the `ui/panels.rs:71` import) so the doc-claim holds. After the move, add a verifying grep to any CI/local-lint step: `! rg 'crate::infra' src/ui/` must pass. Do NOT revise the doc to accept the violation — that weakens the layer boundary.
+- **Phase 13 task hint:** After moving `extract_jira_key` per F-300 / Plan 11-02 F-107, verify `ui/mod.rs` doc-claim holds via `! rg 'crate::infra' src/ui/`; add the grep to the project's pre-commit or CI lint step if a cheap one exists.
+
+### [Major] F-302: `ui/footer.rs::key_hints_for` is D-14 keybinding definition site #2 — duplicates handle_key + help_overlay as plain strings
+- **Location:** `src/ui/footer.rs:29-161` (private `key_hints_for` function). Palette hint tables: lines 40-79 (Android, iOS, Yarn, Git, Worktree). Modal hint tables: lines 84-118 (Confirm, TextInput, DevicePicker, CleanToggle, SyncBeforeRun, SyncBeforeMetro, ExternalMetroConflict, BranchPicker). Panel hint tables: lines 124-153 (WorktreeTable, CommandOutput).
+- **Dimension:** Ousterhout (knowledge duplication) | D-14
+- **Symptom:** `key_hints_for` encodes ~70 `(key, label)` tuples covering the same keybinding space as `app.rs::handle_key` (lines 260-478) and `ui/help_overlay.rs::render_help` (lines 17-112) — but as plain strings with no reference to the `Action` enum. Drift evidence: the Yarn palette entry at `footer.rs:60` reads `("c", "clean…")`; `help_overlay.rs:72` reads `"c" → "Clean… (select targets: pods, android, node_modules)"`; `app.rs:360` reads `Char('c') => Some(Action::OpenCleanMenu)` — three sources, three different descriptions. Also: WorktreeTable `R` is conditionally `MetroSendReload | RefreshWorktrees` in handle_key (lines 421-427), but `footer.rs:135` only writes `"reload"` — drops the conditional.
+- **Why's a problem:** D-14 mandates a single source of truth for keybindings. Three hand-maintained sites guarantee drift over time — evidence confirms it already has. Adding a new palette key requires three edits in three different styles; missing one produces a silent UI/help divergence.
+- **Recommendation:** Cross-reference Plan 11-03 F-208 (`handle_key` side of this finding) and its concrete `struct KeyBinding` + `KEYBINDINGS` registry sketch. Concrete fix: `move footer key-hint generation to read from a single src/keybindings.rs registry (the struct from F-208)`; `replace the 5 palette hint tables + 8 modal hint tables + 2 panel hint tables with a single iteration over KEYBINDINGS filtered by current-context (PaletteMode / ModalState / FocusedPanel)`. Recommendation directly aligned with Plan 11-05's unified D-14 finalization.
+- **Phase 13 task hint:** After Phase 13 implements the `KeyBinding` / `KEYBINDINGS` registry per F-208, refactor `footer.rs::key_hints_for` to derive hints by iterating `KEYBINDINGS` filtered by current `AppState` context (palette / modal / panel). Delete all 15 inline hint tables once the registry is the sole source.
+- **Cross-reference:** See Plan 11-05 §Cross-Cutting Findings → Keybinding source-of-truth (D-14) for the unified finding listing all three definition sites — `handle_key` (F-208), `footer.rs` (F-302, this finding), `help_overlay.rs` (F-303 below) — and the consolidated registry design.
+
+### [Major] F-303: `ui/help_overlay.rs::render_help` is D-14 keybinding definition site #3 — hand-coded `Vec<Row>` duplicating handle_key + footer
+- **Location:** `src/ui/help_overlay.rs:17-112` (`keybindings: Vec<Row>` inside `render_help`). Sections: Navigation (lines 19-24), Worktree Table (28-42), Android a> (46-51), iOS i> (55-60), Yarn y> (64-73), Git g> (77-86), Worktree w> (90-95), Output Pane (99-104), Icons (108-111). ~55 `Row::new(vec!["key", "description"])` rows total.
+- **Dimension:** Ousterhout (knowledge duplication) | D-14
+- **Symptom:** `render_help` hand-codes a ratatui `Vec<Row>` with keybindings duplicated from `app.rs::handle_key` + `ui/footer.rs::key_hints_for` as plain strings. Drift evidence: WorktreeTable `R` is correctly captured here as "Reload metro (when running) / Refresh list" (line 40), while footer (line 135) only writes "reload" — the two UI sites disagree even though both describe the same key. Yarn `c` at line 72 reads "Clean… (select targets: pods, android, node_modules)" vs footer's "clean…" (line 60).
+- **Why's a problem:** Same as F-302 — D-14 single-source-of-truth violation. This is the longest and most detailed of the three sites, making it the most expensive to keep in sync by hand. Help-overlay drift is user-visible (users press `?` to see the authoritative mapping) in a way footer drift is not.
+- **Recommendation:** Cross-reference Plan 11-03 F-208's `KeyBinding` registry. Concrete fix: `move help-overlay row generation to read from src/keybindings.rs::help_overlay_rows() — a helper that groups KEYBINDINGS by section and emits Vec<Row> with section headers`. Replace lines 17-112's hand-coded `Vec<Row>` with `let keybindings = keybindings::help_overlay_rows();`. Section headers derived from `BindingContext::section()` on the registry entries. Recommendation aligns with Plan 11-05's unified D-14 finalization.
+- **Phase 13 task hint:** After Phase 13 implements the `KeyBinding` / `KEYBINDINGS` registry per F-208, refactor `help_overlay.rs::render_help` to call `keybindings::help_overlay_rows()` instead of hand-coding the `Vec<Row>`. Keep the Icons section as a separate hand-coded block (it documents display semantics, not key bindings).
+- **Cross-reference:** See Plan 11-05 §Cross-Cutting Findings → Keybinding source-of-truth (D-14) for the unified finding. The three definition sites `handle_key` (F-208) + `footer.rs` (F-302) + `help_overlay.rs` (F-303, this finding) collapse into a single consumer of the `KEYBINDINGS` registry under the Phase 13 refactor.
+
 ### Minor
 
 ## Cross-Cutting Findings
