@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 11-01-PLAN.md (root + domain audit; 2 Major + 6 Minor findings)
-last_updated: "2026-04-16T16:11:02.037Z"
-last_activity: 2026-04-16
+stopped_at: Completed 11-03-PLAN.md (app.rs audit; 4 Critical + 4 Major + 3 Minor findings)
+last_updated: "2026-04-17T05:02:11.141Z"
+last_activity: 2026-04-17
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 7
-  completed_plans: 2
-  percent: 29
+  completed_plans: 4
+  percent: 57
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 ## Current Position
 
 Phase: 11 (architecture-audit) — EXECUTING
-Plan: 3 of 7
+Plan: 4 of 7
 Status: Ready to execute
-Last activity: 2026-04-16
+Last activity: 2026-04-17
 
 Progress: [          ] 0% (v1.3 starting)
 
@@ -54,6 +54,7 @@ Progress: [          ] 0% (v1.3 starting)
 *Updated after each plan completion*
 | Phase 11 P00 | 4 | 2 tasks | 2 files |
 | Phase 11 P01 | 15min | 2 tasks | 1 files |
+| Phase 11-architecture-audit P03 | 20min | 2 tasks tasks | 1 files files |
 
 ## Accumulated Context
 
@@ -72,6 +73,9 @@ Recent decisions affecting current work:
 - [Phase 11]: [Phase 11]: metro.rs tokio-types compromise graded Major (F-004) — trait MetroHandle + move to infra/metro.rs adapter; not Critical because MetroManager itself is deep and refactor cost <1 day
 - [Phase 11]: [Phase 11]: action.rs placement graded Major (F-002) — move src/action.rs to src/domain/action.rs; coordinate with Plan 11-02 so infra/command_runner.rs Action import dies rather than being rewritten
 - [Phase 11]: [Phase 11]: domain/refresh.rs canonized as exemplary deep-module reference standard for rest of Phase 11 — 4-item interface, 17 inline tests, pure function
+- [Phase 11-architecture-audit]: [Phase 11]: app.rs graded Shallow/God-object — 4 Criticals (F-200..F-203) covering god-object split, TEA impurity, hexagonal dependency inversion, and metro helper colocation — each with concrete D-04 target shape sketch
+- [Phase 11-architecture-audit]: [Phase 11]: F-201 Effect enum concretely sketched with 15+ variants (SpawnCommand, StartMetro, MetroHttpPost, LoadDevices, ListWorktrees, SaveAndroidMode, ...) — Phase 13 can implement without re-deciding variant set
+- [Phase 11-architecture-audit]: [Phase 11]: F-208 D-14 keybinding finding anchored here via handle_key; Plan 11-04 captures footer.rs + help_overlay.rs definition sites; Plan 11-05 finalizes the unified registry recommendation
 
 ### Pending Todos
 
@@ -83,6 +87,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-16T16:11:02.034Z
-Stopped at: Completed 11-01-PLAN.md (root + domain audit; 2 Major + 6 Minor findings)
+Last session: 2026-04-17T05:02:00.904Z
+Stopped at: Completed 11-03-PLAN.md (app.rs audit; 4 Critical + 4 Major + 3 Minor findings)
 Resume file: None
