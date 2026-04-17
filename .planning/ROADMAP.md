@@ -42,7 +42,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 
 **Ordering constraint:** COVER (Phase 12) is a hard gate — no refactor or task-system phase ships until COVER-01..COVER-04 are green. ARCH (Phase 11) is read-only and runs before COVER. REFACTOR (Phase 13) requires both ARCH findings and the COVER gate.
 
-- [ ] **Phase 11: Architecture Audit** — Read-only audit of all modules; produces AUDIT.md with severity-tagged findings
+- [x] **Phase 11: Architecture Audit** — Read-only audit of all modules; produces AUDIT.md with severity-tagged findings (completed 2026-04-17)
 - [ ] **Phase 12: Coverage Gate** — Characterization tests and baseline coverage report locking in critical invariants before any structural change
 - [ ] **Phase 13: Audit-Driven Refactors** — Resolve all Critical and Major findings from the audit; type-driven cancellability; domain-level prerequisite ordering
 - [ ] **Phase 14: Per-Worktree Task System Foundation** — Replace global task state with per-worktree task map; parallel execution across worktrees; correct output routing
@@ -56,7 +56,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 **Depends on**: Phase 10 (v1.1 shipped baseline)
 **Requirements**: ARCH-01, ARCH-02, ARCH-03, ARCH-04, ARCH-05, ARCH-06
 **Success Criteria** (what must be TRUE):
-  1. AUDIT.md exists at `.planning/phases/11-arch-audit/AUDIT.md` with every finding tagged Critical, Major, or Minor and includes file and line range
+  1. AUDIT.md exists at `.planning/phases/11-architecture-audit/AUDIT.md` with every finding tagged Critical, Major, or Minor and includes file and line range
   2. Every module in `domain/`, `infra/`, `app/`, `ui/` has been scored for deep-module / narrow-interface criteria
   3. Every `_ => {}` catch-all in `handle_key`, `update`, and modal dispatch is enumerated with explicit gaps listed
   4. Every place where command prerequisite / ordering logic lives outside the domain layer is identified with location
@@ -124,7 +124,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 |-------|-----------|----------------|--------|-----------|
 | 01-06 | v1.0 | 37/37 | Complete | 2026-04-05 |
 | 07-10 | v1.1 | 9/9 | Complete | 2026-04-13 |
-| 11. Architecture Audit | v1.3 | 6/7 | In Progress|  |
+| 11. Architecture Audit | v1.3 | 7/7 | Complete   | 2026-04-17 |
 | 12. Coverage Gate | v1.3 | 0/TBD | Not started | - |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/TBD | Not started | - |

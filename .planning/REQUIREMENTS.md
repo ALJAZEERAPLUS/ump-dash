@@ -24,7 +24,7 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 - [x] **ARCH-03**: Auditor checks hexagonal ports-and-adapters discipline — infra modules must be adapters for domain-defined traits; direct coupling between infra and app/ui is flagged.
 - [x] **ARCH-04**: Auditor enumerates every `_ => {}` catch-all in match arms (handle_key, update, modal dispatch) and lists explicit gaps.
 - [x] **ARCH-05**: Auditor surfaces every place where command ordering / prerequisite logic lives outside the domain layer (e.g. metro-before-run, pod-install-before-build, sync-before-metro inlined in `update()` or `app.rs`).
-- [x] **ARCH-06**: Audit findings are written to `.planning/phases/NN-arch-audit/AUDIT.md` with prioritized recommendations consumed by the refactor phase.
+- [x] **ARCH-06**: Audit findings are written to `.planning/phases/11-architecture-audit/AUDIT.md` with prioritized recommendations consumed by the refactor phase.
 
 ### Audit-Driven Refactors (REFACTOR)
 
