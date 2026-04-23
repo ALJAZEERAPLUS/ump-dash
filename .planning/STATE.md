@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 12-01-PLAN.md (COVER-01 metro single-instance characterization — 3 inline tests at src/domain/metro.rs + 2 integration tests at tests/metro_single_instance.rs; full suite 32/32 passing, clippy -D warnings clean; no deviations)
-last_updated: "2026-04-23T18:45:00Z"
+stopped_at: Completed 12-03-PLAN.md (COVER-03 TEA dispatch coverage — src/app/dispatch_tests.rs with 17 table-driven tests across 3 sub-modules; full lib suite 46/46 passing, clippy -D warnings clean; 1 Rule-1 auto-fix for clippy field_reassign_with_default)
+last_updated: "2026-04-23T18:53:00Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 12
-  completed_plans: 10
-  percent: 21
+  completed_plans: 11
+  percent: 23
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 12 — coverage-gate (wave 1 complete, wave 2 ready)
+**Current focus:** Phase 12 — coverage-gate (wave 1 + wave 2 complete; 12-04 baseline is the last plan)
 
 ## Current Position
 
 Phase: 12 (coverage-gate) — EXECUTING
-Plan: 3 of 5 complete (12-00, 12-01, 12-02 done; 12-03 next — running sequentially on main, not worktrees)
-Status: Wave 2 in progress — 12-01 + 12-02 complete; 12-03 (dispatch tests) still to run; 12-04 is wave 3
+Plan: 4 of 5 complete (12-00, 12-01, 12-02, 12-03 done; 12-04 next — baseline coverage report)
+Status: Wave 2 complete — all 3 characterization-test plans (12-01 metro, 12-02 process-group, 12-03 dispatch) green; 12-04 (baseline + thresholds) is wave 3 and the final plan of the COVER gate
 Last activity: 2026-04-23
 
-Progress: [##        ] 21% (v1.3 — Phase 11 complete 7/7; Phase 12 3/5)
+Progress: [##        ] 23% (v1.3 — Phase 11 complete 7/7; Phase 12 4/5)
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [##        ] 21% (v1.3 — Phase 11 complete 7/7; Phase 12 3/5)
 | Phase 12-coverage-gate P00 | 4min | 2 tasks | 7 files |
 | Phase 12-coverage-gate P02 | 8min | 1 task | 1 file |
 | Phase 12-coverage-gate P01 | 5min | 2 tasks | 2 files |
+| Phase 12-coverage-gate P03 | 3min | 1 task | 2 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,12 @@ Recent decisions affecting current work:
 - [Phase 12-01]: `#[should_panic(expected = ...)]` uses substring prefix `"BUG: MetroManager::register() called with an existing handle"` (omits the em-dash suffix `— kill first`) so punctuation tweaks do not destabilize the characterization.
 - [Phase 12-01]: TEA integration tests hold receivers in `_metro_rx` / `_handle_rx` bindings for the test body (not discarded with `_`) — Action::MetroStart spawns a follow-up tokio task that writes to metro_tx; dropping the receiver first causes `channel closed` panics (12-RESEARCH.md Pitfall 10).
 - [Phase 12-01]: Status assertion accepts `Running { pid: 9999, .. } | Stopping` — the handler's recursive `update(_, MetroStop, ..)` transitions status synchronously, so either pre-stop OR Stopping is acceptable; the test's real target is "not a fresh second Running{pid: ≠9999}".
+- [Phase 12-03]: COVER-03 placed under src/app/dispatch_tests.rs (new sub-module) per D-08 + Claude's Discretion: src/app.rs is 2425 lines, adding ~600 test lines inline would push past 3000 — well beyond the 2000-line Ousterhout threshold. Sub-module split is the research's explicit recommendation.
+- [Phase 12-03]: Split 17 tests into 3 sub-modules (palette_resolution: 6 `#[test]`, modal_dismissal: 8 `#[tokio::test]`, command_queue: 3 `#[tokio::test]`). `#[tokio::test]` used wherever update() may transitively call tokio::spawn (MetroStart external-detect path, dispatch_command).
+- [Phase 12-03]: Regression-guard via `key('z') → Some(Action::ModalCancel)` in every palette test catches the future-addition-drops-a-key class of bug. Re-declaring the palette table verbatim from src/app.rs:333-381 IS the characterization — Phase 13's F-208 keybinding-registry refactor or F-201 Effect-enum refactor will fail CI if behavior shifts.
+- [Phase 12-03]: "Palette x" from phase description interpreted as CleanToggle modal confirm per Research A2. There are only 5 PaletteMode variants (a/i/y/g/w). The yarn_c_opens_clean_toggle_then_x_confirms test covers BOTH Yarn 'c' → Action::OpenCleanMenu entry AND CleanToggle 'x' → Action::CleanConfirm exit.
+- [Phase 12-03]: CommandExited drain test seeds one worktree into state.worktrees so dispatch_command does not early-return at src/app.rs:497. Without the seed, the test would pop_front but never set running_command, silently masking the invariant. Similarly, sync_before_metro dismissal test sets state.skip_external_metro_check = true to route MetroStart through the synchronous channel-send path and avoid requiring cleanup of a spawned detect_external_metro task.
+- [Phase 12-03]: [Rule 1 - Bug] Simplified base_state() helper from `let mut s = AppState::default(); s.focused_panel = FocusedPanel::WorktreeTable; s` to just `AppState::default()`. Clippy's -D clippy::field-reassign-with-default flagged the reassignment because FocusedPanel::WorktreeTable is already the #[default] variant (src/app.rs:13-18). Behavior unchanged; cargo clippy --all-targets -- -D warnings now clean.
 
 ### Pending Todos
 
@@ -110,6 +117,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-23T18:45:00Z
-Stopped at: Completed 12-01-PLAN.md (COVER-01 metro single-instance characterization — a9ddd3b inline tests + 49e69f6 integration tests; 5 new tests across both D-09 layers; full suite 32/32 passing; clippy all-targets -D warnings clean; no deviations)
+Last session: 2026-04-23T18:53:00Z
+Stopped at: Completed 12-03-PLAN.md (COVER-03 TEA dispatch coverage — 108ec84 adds src/app/dispatch_tests.rs with 17 table-driven tests across 3 sub-modules; full lib suite 46/46 passing; clippy all-targets -D warnings clean; 1 Rule-1 auto-fix for clippy field_reassign_with_default in base_state helper)
 Resume file: None
