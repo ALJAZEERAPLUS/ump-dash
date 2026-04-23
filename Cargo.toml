@@ -9,6 +9,14 @@ homepage = "https://github.com/cubicme/rn-dash"
 keywords = ["ratatui", "react-native", "terminal", "dashboard", "worktree"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lib]
+name = "rn_dash"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rn-dash"
+path = "src/main.rs"
+
 [dependencies]
 # TUI core — crossterm accessed via ratatui::crossterm, NOT as a direct dep
 ratatui = { version = "0.30", features = ["crossterm"] }
@@ -45,3 +53,11 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 
 # Process group kill (SIGKILL to PGID) for metro cleanup
 libc = "0.2"
+
+[dev-dependencies]
+# Enables #[tokio::test] macro + tokio::time::timeout in integration tests.
+# dev-dependencies are a SEPARATE resolver scope from [dependencies], so the "full"
+# features on the runtime tokio do NOT flow into the integration-test crate.
+tokio = { version = "1.49", features = ["macros", "rt-multi-thread", "process", "time", "io-util", "sync"] }
+anyhow = "1"
+

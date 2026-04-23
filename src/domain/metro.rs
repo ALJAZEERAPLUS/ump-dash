@@ -89,6 +89,12 @@ pub struct MetroManager {
     pub activity: Option<MetroActivity>,
 }
 
+impl Default for MetroManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetroManager {
     /// Create a new manager in the Stopped state.
     pub fn new() -> Self {

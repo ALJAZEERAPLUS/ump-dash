@@ -1,10 +1,8 @@
-mod action;
-mod app;
-mod domain;
-mod event;
-mod infra;
-mod tui;
-mod ui;
+// src/main.rs — thin binary entrypoint. All module declarations now live in
+// src/lib.rs so integration tests (tests/*.rs) can `use rn_dash::...`. Only
+// the items actually referenced in `main()` are imported here to keep
+// `cargo clippy -D warnings` clean.
+use rn_dash::{app, tui};
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
