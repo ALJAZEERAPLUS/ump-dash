@@ -166,3 +166,62 @@ impl MetroManager {
         self.handle.take()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests — COVER-01 characterization of the single-instance invariant at the
+// MetroManager::register() type boundary (D-09 first layer).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a MetroHandle populated with dummy channels and already-resolved
+    /// JoinHandles. Must run inside a tokio runtime (tokio::spawn requires one),
+    /// hence the callers of this helper use `#[tokio::test]`.
+    fn dummy_handle(pid: u32) -> MetroHandle {
+        let (stdin_tx, _stdin_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (kill_tx, _kill_rx) = tokio::sync::oneshot::channel();
+        MetroHandle {
+            pid,
+            worktree_id: format!("wt-{pid}"),
+            stdin_tx,
+            stream_task: tokio::spawn(async {}),
+            stdin_task: tokio::spawn(async {}),
+            kill_tx: Some(kill_tx),
+        }
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "BUG: MetroManager::register() called with an existing handle")]
+    async fn register_twice_panics() {
+        // COVER-01 — D-09 (a): the debug-assert on double-register is load-bearing.
+        // Phase 13+ refactors that introduce a second MetroHandle construction path
+        // MUST fail here.
+        let mut mgr = MetroManager::new();
+        mgr.register(dummy_handle(1));
+        mgr.register(dummy_handle(2)); // must panic
+    }
+
+    #[tokio::test]
+    async fn register_once_then_clear_allows_second_register() {
+        // Positive-case safety net — the test above only asserts panic on
+        // double-register; this one asserts the legitimate sequence works.
+        let mut mgr = MetroManager::new();
+        mgr.register(dummy_handle(10));
+        assert!(mgr.is_running());
+        mgr.clear();
+        assert!(!mgr.is_running());
+        mgr.register(dummy_handle(11)); // must not panic
+        assert!(mgr.is_running());
+    }
+
+    #[test]
+    fn new_manager_is_stopped_not_running() {
+        // Smallest possible smoke test — no runtime, no handle construction.
+        let mgr = MetroManager::new();
+        assert!(!mgr.is_running());
+        assert!(matches!(mgr.status, MetroStatus::Stopped));
+        assert!(mgr.activity.is_none());
+    }
+}
