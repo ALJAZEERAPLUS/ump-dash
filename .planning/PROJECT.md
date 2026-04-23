@@ -44,9 +44,24 @@ One place to see and control everything about your React Native worktrees — wh
 - ✓ TOML config format replaces JSON — v1.1
 - ✓ `auto_sync` config param and `SyncBeforeMetro` modal — v1.2 (post-ship quick tasks)
 
+- ✓ Architecture audit (ARCH-01..ARCH-06) — deep-module scoring, D-14 keybinding duplication, app.rs god-object findings — v1.3 Phase 11
+- ✓ Coverage gate (COVER-01..COVER-04) — characterization tests for metro single-instance, POSIX process-group kill, TEA dispatch table; baseline coverage 12.84% line / 20.82% function with per-module `floor(baseline, 5)` thresholds — v1.3 Phase 12
+
 ### Active
 
-_(To be defined — next milestone via `/gsd-new-milestone`)_
+_(See Current Milestone below — requirements defined in `.planning/REQUIREMENTS.md`)_
+
+## Current Milestone: v1.3 Per-Worktree Tasks + Architecture Audit
+
+**Goal:** Audit and refactor architecture where it has drifted from Ousterhout principles, then rework the task/command system to be per-worktree (bound, tracked, cancellable, parallel across worktrees) with live UI indicators.
+
+**Target features:**
+- Architecture audit against domain/infra/app/ui boundaries and Ousterhout deep-module criteria
+- Refactor phases for each deviation surfaced by the audit
+- Per-worktree task ownership — commands bound to a worktree instead of a global queue
+- Parallel command execution across worktrees (metro stays single-instance globally)
+- Individual command cancellation for yarn/clean/install, run-android/run-ios, and tests (jest/lint/types). Git operations remain non-cancellable
+- UI live indicators: worktree table row shows current task name + elapsed time; Y/P letters split (not merged) and replaced by a 6-frame rotating yellow spinner when the yarn-like or pod-like task is running. Run/test tasks get a similar animated indicator
 
 ### Out of Scope
 
@@ -102,9 +117,13 @@ Architecture: TEA (The Elm Architecture) with domain/infra/app/ui separation.
 
 **Shipped:** v1.1 Public Release (2026-04-13) — app published to GitHub as `rn-dash`, CI + signed release binaries live. Post-ship quick tasks rolled into v1.2.0.
 
+**v1.3 in progress:** Phase 11 (architecture-audit) and Phase 12 (coverage-gate) complete. 49 tests green, clippy clean, coverage baseline locked in. Phase 13 (audit-driven refactors) is unblocked and next.
+
 ## Next Milestone
 
-_To be defined via `/gsd-new-milestone`._ Candidate directions:
+_Active: v1.3 Per-Worktree Tasks + Architecture Audit (see Current Milestone above)._
+
+Future candidate directions (deferred):
 - Configurable keybinding overrides
 - Theme / color customization
 - Multi-project support (switch between RN repos)
@@ -127,4 +146,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-13 after v1.1 milestone completion*
+*Last updated: 2026-04-23 — v1.3 Phase 12 (coverage-gate) complete; Phase 13 (audit-driven refactors) next*
