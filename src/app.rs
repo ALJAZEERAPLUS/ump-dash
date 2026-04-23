@@ -2423,3 +2423,6 @@ async fn metro_http_post(url: &str, body: &str) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod dispatch_tests;
