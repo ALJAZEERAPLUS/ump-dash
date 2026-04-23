@@ -22,3 +22,6 @@ Thumbs.db
 .vscode/
 
 .release-notes-draft.txt
+
+# Coverage artifacts (D-03 — HTML gitignored, JSON committed to .planning/)
+/target/llvm-cov*
