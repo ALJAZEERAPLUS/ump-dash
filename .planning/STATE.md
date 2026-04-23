@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 11-06-PLAN.md (D-11 path correction applied; ROADMAP.md + REQUIREMENTS.md both reference .planning/phases/11-architecture-audit/AUDIT.md; full-mode 11-validate.sh exits 0; Phase 11 complete 7/7 — ready for verify)
-last_updated: "2026-04-17T05:28:37.135Z"
-last_activity: 2026-04-17
+stopped_at: Completed 12-00-PLAN.md (bin+lib scaffold landed — src/lib.rs with pub mod x7, Cargo.toml [lib]+[[bin]]+[dev-deps], Makefile cov targets, tests/common/mod.rs fake_metro_handle helper; clippy -D warnings clean after Default impl deviation; Wave 2 ready to branch)
+last_updated: "2026-04-23T18:05:22Z"
+last_activity: 2026-04-23
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 7
-  completed_plans: 7
-  percent: 100
+  total_plans: 12
+  completed_plans: 8
+  percent: 17
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 11 — architecture-audit
+**Current focus:** Phase 12 — coverage-gate (wave 1 complete, wave 2 ready)
 
 ## Current Position
 
-Phase: 11 (architecture-audit) — EXECUTING
-Plan: 7 of 7
-Status: Ready to execute
-Last activity: 2026-04-17
+Phase: 12 (coverage-gate) — EXECUTING
+Plan: 1 of 5 complete (12-00 done; 12-01/12-02/12-03 next — wave 2 parallel)
+Status: Wave 1 complete; ready to branch worktrees for wave 2
+Last activity: 2026-04-23
 
-Progress: [          ] 0% (v1.3 starting)
+Progress: [##        ] 17% (v1.3 — Phase 11 complete 7/7; Phase 12 1/5)
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [          ] 0% (v1.3 starting)
 | Phase 11-architecture-audit P04 | 15min | 2 tasks tasks | 1 file files |
 | Phase 11-architecture-audit P05 | 25min | 2 tasks | 1 files |
 | Phase 11 P06 | 1 min | 1 tasks | 2 files |
+| Phase 12-coverage-gate P00 | 4min | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,10 @@ Recent decisions affecting current work:
 - [Phase 11-architecture-audit]: [Phase 11]: only 1 F-4NN finding introduced (F-400 unified D-14) — every catch-all RISK folds into F-205; every prerequisite site folds into F-204; every hexagonal port cites an existing per-module F-NNN. No-duplicate-finding pattern avoids inflating the Refactor Sequence
 - [Phase 11-architecture-audit]: [Phase 11]: hexagonal cross-module table surfaces canonical port inventory — 8 domain ports needed (ProcessPort, MultiplexerPort, JiraPort, MetroPort, WorktreePort, DevicePort, PortProbePort, PersistencePort). Phase 13 uses this as the domain/ports/ module contents, not a re-derivation target
 - [Phase 11]: D-11 path correction: extended to also fix NN-arch-audit template placeholder in REQUIREMENTS.md §ARCH-06 to satisfy the plan's artifacts.contains contract (not just the grep-based truth); full-mode 11-validate.sh now exits 0
+- [Phase 12-00]: rn-dash converted from bin-only to bin+lib — `[lib] name = "rn_dash"` (underscore) + `[[bin]] name = "rn-dash"` (hyphen) coexist; src/lib.rs declares `pub mod {action,app,domain,event,infra,tui,ui};` so tests/*.rs can `use rn_dash::domain::metro::MetroManager`. Main.rs reduced to `use rn_dash::{app, tui};` (only modules actually referenced in main()).
+- [Phase 12-00]: Added `impl Default for MetroManager` as a Rule-3 deviation — clippy's new_without_default was dormant while `mod domain` was private in the bin-only crate; firing once promoted to pub. Plan's `cargo clippy -D warnings` success criterion required the fix. Pre-existing latent lint, not caused by the conversion.
+- [Phase 12-00]: Makefile recipe lines use literal TABs (verified via od); cov-baseline writes to `.planning/phases/12-coverage-gate/BASELINE-COVERAGE.json` per D-03; cov-check uses `jq '.data[0].files[] | .summary.lines.percent'` for the human-check gate per D-05.
+- [Phase 12-00]: `tests/common/mod.rs` uses the Rust-book submodule pattern — Rust treats `tests/*.rs` as separate binaries but `tests/common/mod.rs` as a shared submodule, so the helper doesn't become its own test binary. `fake_metro_handle(pid, worktree)` builds a MetroHandle with dummy tokio channels for the register()/is_running()/take_handle() invariant tests 12-01 will write.
 
 ### Pending Todos
 
@@ -97,6 +102,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-17T05:28:37.132Z
-Stopped at: Completed 11-06-PLAN.md (D-11 path correction applied; ROADMAP.md + REQUIREMENTS.md both reference .planning/phases/11-architecture-audit/AUDIT.md; full-mode 11-validate.sh exits 0; Phase 11 complete 7/7 — ready for verify)
+Last session: 2026-04-23T18:05:22Z
+Stopped at: Completed 12-00-PLAN.md (bin+lib scaffold landed — src/lib.rs with pub mod x7, Cargo.toml [lib]+[[bin]]+[dev-deps], Makefile cov targets, tests/common/mod.rs fake_metro_handle helper; clippy -D warnings clean after Default impl deviation; Wave 2 ready to branch)
 Resume file: None
