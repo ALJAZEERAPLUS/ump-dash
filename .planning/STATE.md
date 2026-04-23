@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 12-00-PLAN.md (bin+lib scaffold landed — src/lib.rs with pub mod x7, Cargo.toml [lib]+[[bin]]+[dev-deps], Makefile cov targets, tests/common/mod.rs fake_metro_handle helper; clippy -D warnings clean after Default impl deviation; Wave 2 ready to branch)
-last_updated: "2026-04-23T18:05:22Z"
+stopped_at: Completed 12-02-PLAN.md (COVER-02 process-group kill characterization — tests/process_group_kill.rs passes in 0.11 s on macOS; Rule 1 deviation: fixture `trap ""` → `trap :` due to SIG_IGN inheritance hazard; full suite 30/30 passing, clippy -D warnings clean)
+last_updated: "2026-04-23T18:18:00Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 12
-  completed_plans: 8
-  percent: 17
+  completed_plans: 9
+  percent: 19
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 ## Current Position
 
 Phase: 12 (coverage-gate) — EXECUTING
-Plan: 1 of 5 complete (12-00 done; 12-01/12-02/12-03 next — wave 2 parallel)
-Status: Wave 1 complete; ready to branch worktrees for wave 2
+Plan: 2 of 5 complete (12-00, 12-02 done; 12-01 + 12-03 next — running sequentially on main, not worktrees)
+Status: Wave 2 in progress — 12-02 complete; 12-01 + 12-03 still to run; 12-04 is wave 3
 Last activity: 2026-04-23
 
-Progress: [##        ] 17% (v1.3 — Phase 11 complete 7/7; Phase 12 1/5)
+Progress: [##        ] 19% (v1.3 — Phase 11 complete 7/7; Phase 12 2/5)
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [##        ] 17% (v1.3 — Phase 11 complete 7/7; Phase 12 1/5)
 | Phase 11-architecture-audit P05 | 25min | 2 tasks | 1 files |
 | Phase 11 P06 | 1 min | 1 tasks | 2 files |
 | Phase 12-coverage-gate P00 | 4min | 2 tasks | 7 files |
+| Phase 12-coverage-gate P02 | 8min | 1 task | 1 file |
 
 ## Accumulated Context
 
@@ -91,6 +92,8 @@ Recent decisions affecting current work:
 - [Phase 12-00]: Added `impl Default for MetroManager` as a Rule-3 deviation — clippy's new_without_default was dormant while `mod domain` was private in the bin-only crate; firing once promoted to pub. Plan's `cargo clippy -D warnings` success criterion required the fix. Pre-existing latent lint, not caused by the conversion.
 - [Phase 12-00]: Makefile recipe lines use literal TABs (verified via od); cov-baseline writes to `.planning/phases/12-coverage-gate/BASELINE-COVERAGE.json` per D-03; cov-check uses `jq '.data[0].files[] | .summary.lines.percent'` for the human-check gate per D-05.
 - [Phase 12-00]: `tests/common/mod.rs` uses the Rust-book submodule pattern — Rust treats `tests/*.rs` as separate binaries but `tests/common/mod.rs` as a shared submodule, so the helper doesn't become its own test binary. `fake_metro_handle(pid, worktree)` builds a MetroHandle with dummy tokio channels for the register()/is_running()/take_handle() invariant tests 12-01 will write.
+- [Phase 12-02]: COVER-02 fixture redesigned from plan-literal `trap "" SIGTERM; sleep 30 & wait` to `trap : TERM; sleep 30 & wait` — SIG_IGN (from `trap ""`) is inherited by forked children on POSIX, so the plan's fixture never reached sleep with PGID broadcast. A no-op handler (`trap :`) is reset to SIG_DFL in children, so sleep dies from the PGID broadcast as intended. This is MORE adversarial: bash actively catches SIGTERM rather than ignoring it. Test now passes in 0.11 s on macOS.
+- [Phase 12-02]: infra/command_runner.rs gap (no `.process_group(0)` set) NOT fixed in this plan per 12-RESEARCH.md Pitfall 6 + A5 — flagged as Phase 13 REFACTOR concern / Phase 15 TASK-04 dependency. Test spawns tokio::process::Command directly rather than going through CommandRunner.
 
 ### Pending Todos
 
@@ -102,6 +105,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-23T18:05:22Z
-Stopped at: Completed 12-00-PLAN.md (bin+lib scaffold landed — src/lib.rs with pub mod x7, Cargo.toml [lib]+[[bin]]+[dev-deps], Makefile cov targets, tests/common/mod.rs fake_metro_handle helper; clippy -D warnings clean after Default impl deviation; Wave 2 ready to branch)
+Last session: 2026-04-23T18:18:00Z
+Stopped at: Completed 12-02-PLAN.md (COVER-02 process-group kill characterization test passing on macOS in 0.11 s; adcc3e9 commit; Rule-1 fixture deviation from plan-literal `trap ""` to `trap :` documented in SUMMARY — SIG_IGN inheritance made plan's fixture non-discriminating; infra/command_runner.rs process_group gap still Phase 13's concern)
 Resume file: None
