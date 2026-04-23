@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 12-02-PLAN.md (COVER-02 process-group kill characterization — tests/process_group_kill.rs passes in 0.11 s on macOS; Rule 1 deviation: fixture `trap ""` → `trap :` due to SIG_IGN inheritance hazard; full suite 30/30 passing, clippy -D warnings clean)
-last_updated: "2026-04-23T18:18:00Z"
+stopped_at: Completed 12-01-PLAN.md (COVER-01 metro single-instance characterization — 3 inline tests at src/domain/metro.rs + 2 integration tests at tests/metro_single_instance.rs; full suite 32/32 passing, clippy -D warnings clean; no deviations)
+last_updated: "2026-04-23T18:45:00Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 12
-  completed_plans: 9
-  percent: 19
+  completed_plans: 10
+  percent: 21
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 ## Current Position
 
 Phase: 12 (coverage-gate) — EXECUTING
-Plan: 2 of 5 complete (12-00, 12-02 done; 12-01 + 12-03 next — running sequentially on main, not worktrees)
-Status: Wave 2 in progress — 12-02 complete; 12-01 + 12-03 still to run; 12-04 is wave 3
+Plan: 3 of 5 complete (12-00, 12-01, 12-02 done; 12-03 next — running sequentially on main, not worktrees)
+Status: Wave 2 in progress — 12-01 + 12-02 complete; 12-03 (dispatch tests) still to run; 12-04 is wave 3
 Last activity: 2026-04-23
 
-Progress: [##        ] 19% (v1.3 — Phase 11 complete 7/7; Phase 12 2/5)
+Progress: [##        ] 21% (v1.3 — Phase 11 complete 7/7; Phase 12 3/5)
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [##        ] 19% (v1.3 — Phase 11 complete 7/7; Phase 12 2/5)
 | Phase 11 P06 | 1 min | 1 tasks | 2 files |
 | Phase 12-coverage-gate P00 | 4min | 2 tasks | 7 files |
 | Phase 12-coverage-gate P02 | 8min | 1 task | 1 file |
+| Phase 12-coverage-gate P01 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,10 @@ Recent decisions affecting current work:
 - [Phase 12-00]: `tests/common/mod.rs` uses the Rust-book submodule pattern — Rust treats `tests/*.rs` as separate binaries but `tests/common/mod.rs` as a shared submodule, so the helper doesn't become its own test binary. `fake_metro_handle(pid, worktree)` builds a MetroHandle with dummy tokio channels for the register()/is_running()/take_handle() invariant tests 12-01 will write.
 - [Phase 12-02]: COVER-02 fixture redesigned from plan-literal `trap "" SIGTERM; sleep 30 & wait` to `trap : TERM; sleep 30 & wait` — SIG_IGN (from `trap ""`) is inherited by forked children on POSIX, so the plan's fixture never reached sleep with PGID broadcast. A no-op handler (`trap :`) is reset to SIG_DFL in children, so sleep dies from the PGID broadcast as intended. This is MORE adversarial: bash actively catches SIGTERM rather than ignoring it. Test now passes in 0.11 s on macOS.
 - [Phase 12-02]: infra/command_runner.rs gap (no `.process_group(0)` set) NOT fixed in this plan per 12-RESEARCH.md Pitfall 6 + A5 — flagged as Phase 13 REFACTOR concern / Phase 15 TASK-04 dependency. Test spawns tokio::process::Command directly rather than going through CommandRunner.
+- [Phase 12-01]: COVER-01 locked at TWO layers per D-09: type-level (3 inline `#[cfg(test)]` tests in src/domain/metro.rs targeting MetroManager::register panic) + TEA-level (2 integration tests in tests/metro_single_instance.rs targeting update(_, Action::MetroStart, ..) double-dispatch guard). Both layers catch independent refactor failure modes — dropping the `assert!` in register OR dropping the `pending_restart = true; update(_, MetroStop, ..)` branch will each fail at least one test in < 1 s.
+- [Phase 12-01]: `#[should_panic(expected = ...)]` uses substring prefix `"BUG: MetroManager::register() called with an existing handle"` (omits the em-dash suffix `— kill first`) so punctuation tweaks do not destabilize the characterization.
+- [Phase 12-01]: TEA integration tests hold receivers in `_metro_rx` / `_handle_rx` bindings for the test body (not discarded with `_`) — Action::MetroStart spawns a follow-up tokio task that writes to metro_tx; dropping the receiver first causes `channel closed` panics (12-RESEARCH.md Pitfall 10).
+- [Phase 12-01]: Status assertion accepts `Running { pid: 9999, .. } | Stopping` — the handler's recursive `update(_, MetroStop, ..)` transitions status synchronously, so either pre-stop OR Stopping is acceptable; the test's real target is "not a fresh second Running{pid: ≠9999}".
 
 ### Pending Todos
 
@@ -105,6 +110,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-23T18:18:00Z
-Stopped at: Completed 12-02-PLAN.md (COVER-02 process-group kill characterization test passing on macOS in 0.11 s; adcc3e9 commit; Rule-1 fixture deviation from plan-literal `trap ""` to `trap :` documented in SUMMARY — SIG_IGN inheritance made plan's fixture non-discriminating; infra/command_runner.rs process_group gap still Phase 13's concern)
+Last session: 2026-04-23T18:45:00Z
+Stopped at: Completed 12-01-PLAN.md (COVER-01 metro single-instance characterization — a9ddd3b inline tests + 49e69f6 integration tests; 5 new tests across both D-09 layers; full suite 32/32 passing; clippy all-targets -D warnings clean; no deviations)
 Resume file: None

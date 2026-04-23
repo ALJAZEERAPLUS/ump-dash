@@ -74,7 +74,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   4. A baseline coverage report is committed and a per-module minimum threshold is documented so subsequent phases can detect regressions
 **Plans**: 5 plans
   - [ ] 12-00-PLAN.md — Scaffolding: bin→bin+lib conversion, Makefile cov targets, .gitignore, tests/common/mod.rs
-  - [ ] 12-01-PLAN.md — COVER-01: metro single-instance characterization (type-level + update()-level, D-09)
+  - [x] 12-01-PLAN.md — COVER-01: metro single-instance characterization (type-level + update()-level, D-09)
   - [x] 12-02-PLAN.md — COVER-02: process-group kill characterization (adversarial bash fixture, PGID SIGTERM)
   - [ ] 12-03-PLAN.md — COVER-03: command-dispatch tests (5 palettes + CleanToggle flow + 8 modals + queue routing)
   - [ ] 12-04-PLAN.md — COVER-04: baseline coverage report + floor(baseline, 5) thresholds
@@ -130,7 +130,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 01-06 | v1.0 | 37/37 | Complete | 2026-04-05 |
 | 07-10 | v1.1 | 9/9 | Complete | 2026-04-13 |
 | 11. Architecture Audit | v1.3 | 7/7 | Complete   | 2026-04-17 |
-| 12. Coverage Gate | v1.3 | 2/5 | In progress | - |
+| 12. Coverage Gate | v1.3 | 3/5 | In progress | - |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/TBD | Not started | - |
 | 15. Task Cancellation + Collision + Semaphore | v1.3 | 0/TBD | Not started | - |
