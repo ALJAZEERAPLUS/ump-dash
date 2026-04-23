@@ -15,7 +15,7 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 - [x] **COVER-01**: Characterization test locks in the metro single-instance invariant — starting metro in one worktree while metro is running in another must fail/resolve via the existing conflict flow, and `MetroManager` must hold exactly one live handle at any time.
 - [x] **COVER-02**: Characterization test locks in process-group kill behavior — killing a running command must terminate the full subprocess tree (yarn → node, gradle → java, xcodebuild → clang, etc.); no orphaned PIDs.
 - [x] **COVER-03**: Coverage tests for the existing command-dispatch paths most likely to be touched by refactors: queue dispatch (`CommandQueued` / `CommandExited` routing), modal dismissal flow, and palette → action resolution for each palette (a / i / x / y / g / w).
-- [ ] **COVER-04**: A baseline coverage report (e.g. via `cargo llvm-cov` or `cargo-tarpaulin`) is committed to the milestone so subsequent phases can detect regressions; a minimum per-module threshold is documented (target value decided at planning time based on the baseline).
+- [x] **COVER-04**: A baseline coverage report (e.g. via `cargo llvm-cov` or `cargo-tarpaulin`) is committed to the milestone so subsequent phases can detect regressions; a minimum per-module threshold is documented (target value decided at planning time based on the baseline).
 
 ### Architecture Audit (ARCH)
 
@@ -85,7 +85,7 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 | COVER-01 | Phase 12 | Complete |
 | COVER-02 | Phase 12 | Complete |
 | COVER-03 | Phase 12 | Complete |
-| COVER-04 | Phase 12 | Pending |
+| COVER-04 | Phase 12 | Complete |
 | REFACTOR-01 | Phase 13 | Pending |
 | REFACTOR-02 | Phase 13 | Pending |
 | REFACTOR-03 | Phase 13 | Pending |

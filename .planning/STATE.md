@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
-stopped_at: Completed 12-03-PLAN.md (COVER-03 TEA dispatch coverage — src/app/dispatch_tests.rs with 17 table-driven tests across 3 sub-modules; full lib suite 46/46 passing, clippy -D warnings clean; 1 Rule-1 auto-fix for clippy field_reassign_with_default)
-last_updated: "2026-04-23T18:53:00Z"
+stopped_at: Completed 12-04-PLAN.md (COVER-04 baseline coverage — BASELINE-COVERAGE.json + BASELINE-COVERAGE.md + COVERAGE-THRESHOLDS.md committed at 5cc75ae; 27 src/ files, 12.84% line / 20.82% function / 9.89% region coverage; per-row floor(baseline,5) thresholds); Phase 12 COMPLETE — all 4 COVER-NN green
+last_updated: "2026-04-23T19:02:42Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 12
-  completed_plans: 11
-  percent: 23
+  completed_plans: 12
+  percent: 33
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 12 — coverage-gate (wave 1 + wave 2 complete; 12-04 baseline is the last plan)
+**Current focus:** Phase 12 complete — COVER gate green; Phase 13 (audit-driven refactors) is next
 
 ## Current Position
 
-Phase: 12 (coverage-gate) — EXECUTING
-Plan: 4 of 5 complete (12-00, 12-01, 12-02, 12-03 done; 12-04 next — baseline coverage report)
-Status: Wave 2 complete — all 3 characterization-test plans (12-01 metro, 12-02 process-group, 12-03 dispatch) green; 12-04 (baseline + thresholds) is wave 3 and the final plan of the COVER gate
+Phase: 12 (coverage-gate) — COMPLETE (5/5 plans; all four COVER-NN green)
+Plan: 5 of 5 complete (12-00 scaffolding, 12-01 metro, 12-02 process-group, 12-03 dispatch, 12-04 baseline)
+Status: Phase 12 COMPLETE. All four COVER-NN requirements green. Baseline locked at 12.84% line / 20.82% function / 9.89% region total coverage; 27-row per-file ratchet recorded in COVERAGE-THRESHOLDS.md (floor-to-5 policy, D-04). Phase 13 (audit-driven refactors) can now begin.
 Last activity: 2026-04-23
 
-Progress: [##        ] 23% (v1.3 — Phase 11 complete 7/7; Phase 12 4/5)
+Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [##        ] 23% (v1.3 — Phase 11 complete 7/7; Phase 12 4/5)
 | Phase 12-coverage-gate P02 | 8min | 1 task | 1 file |
 | Phase 12-coverage-gate P01 | 5min | 2 tasks | 2 files |
 | Phase 12-coverage-gate P03 | 3min | 1 task | 2 files |
+| Phase 12-coverage-gate P04 | 3min 9s | 4 tasks (2 auto, 2 checkpoints) | 3 files |
 
 ## Accumulated Context
 
@@ -106,6 +107,11 @@ Recent decisions affecting current work:
 - [Phase 12-03]: "Palette x" from phase description interpreted as CleanToggle modal confirm per Research A2. There are only 5 PaletteMode variants (a/i/y/g/w). The yarn_c_opens_clean_toggle_then_x_confirms test covers BOTH Yarn 'c' → Action::OpenCleanMenu entry AND CleanToggle 'x' → Action::CleanConfirm exit.
 - [Phase 12-03]: CommandExited drain test seeds one worktree into state.worktrees so dispatch_command does not early-return at src/app.rs:497. Without the seed, the test would pop_front but never set running_command, silently masking the invariant. Similarly, sync_before_metro dismissal test sets state.skip_external_metro_check = true to route MetroStart through the synchronous channel-send path and avoid requiring cleanup of a spawned detect_external_metro task.
 - [Phase 12-03]: [Rule 1 - Bug] Simplified base_state() helper from `let mut s = AppState::default(); s.focused_panel = FocusedPanel::WorktreeTable; s` to just `AppState::default()`. Clippy's -D clippy::field-reassign-with-default flagged the reassignment because FocusedPanel::WorktreeTable is already the #[default] variant (src/app.rs:13-18). Behavior unchanged; cargo clippy --all-targets -- -D warnings now clean.
+- [Phase 12-04]: Post-wave-2 baseline locked at rustc 1.94.1 + cargo-llvm-cov 0.8.5. Workspace line coverage 12.84% (445/3465); function 20.82% (56/269); region 9.89% (589/5958). Per-file ratchet in COVERAGE-THRESHOLDS.md applies floor(baseline, 5) to every src/ file — 27 rows, all threshold ≤ baseline verified.
+- [Phase 12-04]: 20 of 27 src/ files at 0% coverage (accepted by floor-to-5 policy) — ui/*, most of infra/*, tui.rs, event.rs, domain/worktree.rs, main.rs. Their 0% threshold is vacuously satisfied; adding unit tests is a Phase-13+ concern, not a COVER-04 blocker. Highest coverage: domain/refresh.rs (100%), domain/metro.rs (70%), infra/jira.rs (70%).
+- [Phase 12-04]: cargo-llvm-cov writes absolute paths — Markdown tables strip the prefix via jq `sub("^/Users/cubicme/aljazeera/dashboard/"; "")` for repo-relative display. Phase 13+ contributors on other machines need to update this prefix or use a relative-path alternative.
+- [Phase 12-04]: [Rule 3 - Blocking] `git add -f` required for new .planning/ files because .gitignore:5 is `.planning/`. Existing tracked files (all previous 12-NN-PLAN.md/SUMMARY.md) continue tracked; only new file addition needs the force flag. Convention, not a bug.
+- [Phase 12-04]: Phase 12 COMPLETE — all four COVER-NN requirements (COVER-01 metro, COVER-02 process-group, COVER-03 dispatch, COVER-04 baseline) green. Phase 13 (audit-driven refactors) unblocked.
 
 ### Pending Todos
 
@@ -117,6 +123,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-23T18:53:00Z
-Stopped at: Completed 12-03-PLAN.md (COVER-03 TEA dispatch coverage — 108ec84 adds src/app/dispatch_tests.rs with 17 table-driven tests across 3 sub-modules; full lib suite 46/46 passing; clippy all-targets -D warnings clean; 1 Rule-1 auto-fix for clippy field_reassign_with_default in base_state helper)
+Last session: 2026-04-23T19:02:42Z
+Stopped at: Completed 12-04-PLAN.md (COVER-04 post-wave-2 baseline — 5cc75ae commits BASELINE-COVERAGE.json + BASELINE-COVERAGE.md + COVERAGE-THRESHOLDS.md; 27 src/ files, 12.84% line / 20.82% function / 9.89% region total; floor-to-5 ratchet locked; 46 lib tests + 3 integration tests pass under coverage; clippy all-targets -D warnings clean). Phase 12 COMPLETE — all 4 COVER-NN green. Phase 13 (audit-driven refactors) unblocked.
 Resume file: None

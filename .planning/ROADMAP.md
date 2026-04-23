@@ -43,7 +43,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 **Ordering constraint:** COVER (Phase 12) is a hard gate — no refactor or task-system phase ships until COVER-01..COVER-04 are green. ARCH (Phase 11) is read-only and runs before COVER. REFACTOR (Phase 13) requires both ARCH findings and the COVER gate.
 
 - [x] **Phase 11: Architecture Audit** — Read-only audit of all modules; produces AUDIT.md with severity-tagged findings (completed 2026-04-17)
-- [ ] **Phase 12: Coverage Gate** — Characterization tests and baseline coverage report locking in critical invariants before any structural change
+- [x] **Phase 12: Coverage Gate** — Characterization tests and baseline coverage report locking in critical invariants before any structural change (completed 2026-04-23)
 - [ ] **Phase 13: Audit-Driven Refactors** — Resolve all Critical and Major findings from the audit; type-driven cancellability; domain-level prerequisite ordering
 - [ ] **Phase 14: Per-Worktree Task System Foundation** — Replace global task state with per-worktree task map; parallel execution across worktrees; correct output routing
 - [ ] **Phase 15: Task Cancellation + Collision + Semaphore** — Individual task cancellation with SIGTERM/SIGKILL; uniqueness-based collision policy; shared-resource semaphore for yarn installs
@@ -73,11 +73,11 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   3. Tests cover `CommandQueued` / `CommandExited` routing, modal dismissal flow, and palette-to-action resolution for all six palettes (a / i / x / y / g / w)
   4. A baseline coverage report is committed and a per-module minimum threshold is documented so subsequent phases can detect regressions
 **Plans**: 5 plans
-  - [ ] 12-00-PLAN.md — Scaffolding: bin→bin+lib conversion, Makefile cov targets, .gitignore, tests/common/mod.rs
+  - [x] 12-00-PLAN.md — Scaffolding: bin→bin+lib conversion, Makefile cov targets, .gitignore, tests/common/mod.rs
   - [x] 12-01-PLAN.md — COVER-01: metro single-instance characterization (type-level + update()-level, D-09)
   - [x] 12-02-PLAN.md — COVER-02: process-group kill characterization (adversarial bash fixture, PGID SIGTERM)
   - [x] 12-03-PLAN.md — COVER-03: command-dispatch tests (5 palettes + CleanToggle flow + 8 modals + queue routing)
-  - [ ] 12-04-PLAN.md — COVER-04: baseline coverage report + floor(baseline, 5) thresholds
+  - [x] 12-04-PLAN.md — COVER-04: baseline coverage report + floor(baseline, 5) thresholds (completed 2026-04-23; workspace total 12.84% line / 20.82% function / 9.89% region)
 
 ### Phase 13: Audit-Driven Refactors
 **Goal**: Resolve all Critical and Major findings from the audit with the coverage gate green as a safety net; add type-driven cancellability to `CommandSpec`; represent command prerequisites abstractly in the domain layer
@@ -130,7 +130,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 01-06 | v1.0 | 37/37 | Complete | 2026-04-05 |
 | 07-10 | v1.1 | 9/9 | Complete | 2026-04-13 |
 | 11. Architecture Audit | v1.3 | 7/7 | Complete   | 2026-04-17 |
-| 12. Coverage Gate | v1.3 | 4/5 | In progress | - |
+| 12. Coverage Gate | v1.3 | 5/5 | Complete | 2026-04-23 |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/TBD | Not started | - |
 | 15. Task Cancellation + Collision + Semaphore | v1.3 | 0/TBD | Not started | - |
