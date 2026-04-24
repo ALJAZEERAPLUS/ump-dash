@@ -3,19 +3,21 @@
 //! This file covers three TEA surfaces that Phase 13 refactors are most
 //! likely to touch:
 //!
-//! 1. Palette → Action resolution (src/app.rs:333-381): 5 `PaletteMode`
-//!    variants × 2-7 keys each + unrecognized-key fallback.
-//! 2. Modal dismissal (src/app.rs:269-327): 8 `ModalState` variants × dismiss
-//!    keys. Post-condition: `state.modal == None` after `update()`.
-//! 3. Command queue routing (src/app.rs:978-1054): `CommandQueuePush` appends;
-//!    `CommandExited` drains.
+//! 1. Palette → Action resolution (`handle_key` palette branches): 5
+//!    `PaletteMode` variants × 2-7 keys each + unrecognized-key fallback.
+//! 2. Modal dismissal: 8 `ModalState` variants × dismiss keys. Post-condition:
+//!    `state.modal == None` after `update()`.
+//! 3. Command queue routing: `CommandQueuePush` appends; `CommandExited` drains.
 //!
-//! Architectural note on "palette x" (research Assumption A2): there are only
-//! 5 `PaletteMode` variants (a/i/y/g/w). The phase-description's sixth item
-//! "x" refers to the `ModalState::CleanToggle` confirm key, entered via the
-//! Yarn palette's `c` key. Both the entry and exit transitions are tested.
+//! Post-F-201 (Plan 13-07): `update()` signature is now
+//! `pub fn update(state: &mut AppState, action: Action) -> Vec<Effect>`.
+//! Tests no longer need the `metro_tx` / `handle_tx` channels — they just
+//! call `update()` and (optionally) assert on the returned `Vec<Effect>`.
+//! Most tests in this file care about state mutations, not effects, so the
+//! return value is typically bound to `_`.
 
 use super::*;
+use super::effect::Effect;
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
@@ -44,17 +46,16 @@ fn key_code(code: KeyCode) -> KeyEvent {
 }
 
 /// `AppState` focused on `WorktreeTable` — matches the pre-condition for
-/// palette-key interpretation (`handle_key` pre-checks; see src/app.rs:408).
+/// palette-key interpretation (`handle_key` pre-checks).
 ///
-/// `AppState::default()` already sets `focused_panel` to `WorktreeTable`
-/// (see `FocusedPanel::default` at src/app.rs:13-18), so no further
-/// reassignment is needed here.
+/// `AppState::default()` already sets `focused_panel` to `WorktreeTable`,
+/// so no further reassignment is needed here.
 fn base_state() -> AppState {
     AppState::default()
 }
 
 /// Seed one worktree so `dispatch_command` does not early-return on an empty
-/// worktree list (src/app.rs:490-498). Used by the `command_queue` drain test.
+/// worktree list. Used by the `command_queue` drain test.
 fn seed_one_worktree(state: &mut AppState) {
     state.worktrees.push(Worktree {
         id: WorktreeId("wt-1".into()),
@@ -315,26 +316,14 @@ mod palette_resolution {
 //
 // For each of 8 `ModalState` variants, assert that the documented dismiss key
 // produces the documented `Action` AND that `update()` clears `state.modal`
-// to `None`. Tests are `#[tokio::test]` because the `SyncBeforeMetroDecline`
-// handler may call `tokio::spawn` transitively via `update(…, MetroStart, …)`.
+// to `None`. Post-F-201: tests are plain `#[test]` (no tokio runtime needed —
+// update() is pure and effects are data, not spawns).
 
 mod modal_dismissal {
     use super::*;
 
-    #[allow(clippy::type_complexity)]
-    fn channels() -> (
-        tokio::sync::mpsc::UnboundedSender<Action>,
-        tokio::sync::mpsc::UnboundedReceiver<Action>,
-        tokio::sync::mpsc::UnboundedSender<Box<dyn crate::domain::metro::MetroHandle>>,
-        tokio::sync::mpsc::UnboundedReceiver<Box<dyn crate::domain::metro::MetroHandle>>,
-    ) {
-        let (a_tx, a_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (h_tx, h_rx) = tokio::sync::mpsc::unbounded_channel();
-        (a_tx, a_rx, h_tx, h_rx)
-    }
-
-    #[tokio::test]
-    async fn confirm_modal_dismisses_on_n_and_esc() {
+    #[test]
+    fn confirm_modal_dismisses_on_n_and_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::Confirm {
             prompt: "Run?".into(),
@@ -347,13 +336,12 @@ mod modal_dismissal {
             Some(Action::ModalCancel)
         );
 
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::ModalCancel, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal.is_none(), "ModalCancel must clear state.modal");
     }
 
-    #[tokio::test]
-    async fn text_input_modal_dismisses_on_esc() {
+    #[test]
+    fn text_input_modal_dismisses_on_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::TextInput {
             prompt: "Branch:".into(),
@@ -366,13 +354,12 @@ mod modal_dismissal {
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
         );
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::ModalCancel, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal.is_none());
     }
 
-    #[tokio::test]
-    async fn device_picker_modal_dismisses_on_esc() {
+    #[test]
+    fn device_picker_modal_dismisses_on_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::DevicePicker {
             devices: Vec::new(),
@@ -386,13 +373,12 @@ mod modal_dismissal {
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
         );
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::ModalCancel, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal.is_none());
     }
 
-    #[tokio::test]
-    async fn clean_toggle_modal_dismisses_on_esc() {
+    #[test]
+    fn clean_toggle_modal_dismisses_on_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::CleanToggle {
             options: CleanOptions::default(),
@@ -401,13 +387,12 @@ mod modal_dismissal {
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
         );
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::ModalCancel, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal.is_none());
     }
 
-    #[tokio::test]
-    async fn sync_before_run_modal_dismisses_on_n_and_esc() {
+    #[test]
+    fn sync_before_run_modal_dismisses_on_n_and_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::SyncBeforeRun {
             run_command: Box::new(CommandSpec::YarnUnitTests),
@@ -431,23 +416,22 @@ mod modal_dismissal {
         // Applying the decline takes state.modal via `.take()` → modal is None
         // BEFORE the conditional dispatch. YarnUnitTests does not need metro,
         // and with an empty worktrees vec `dispatch_command` early-returns
-        // (src/app.rs:490-498) without spawning.
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::SyncBeforeRunDecline, &a_tx, &h_tx);
+        // without pushing SpawnCommand.
+        let _effects = update(&mut state, Action::SyncBeforeRunDecline);
         assert!(
             state.modal.is_none(),
             "SyncBeforeRunDecline must clear modal"
         );
     }
 
-    #[tokio::test]
-    async fn sync_before_metro_modal_dismisses_on_n_and_esc() {
+    #[test]
+    fn sync_before_metro_modal_dismisses_on_n_and_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::SyncBeforeMetro {
             needs_yarn: true,
             needs_pods: false,
         });
-        // Bypass the external-metro-detect tokio::spawn in the transitive
+        // Bypass the external-metro-detect effect path in the transitive
         // MetroStart dispatch — we only care that modal is cleared.
         state.skip_external_metro_check = true;
 
@@ -464,16 +448,15 @@ mod modal_dismissal {
             Some(Action::SyncBeforeMetroDecline)
         );
 
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::SyncBeforeMetroDecline, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::SyncBeforeMetroDecline);
         assert!(
             state.modal.is_none(),
             "SyncBeforeMetroDecline must clear modal"
         );
     }
 
-    #[tokio::test]
-    async fn external_metro_conflict_dismisses_on_n_and_esc() {
+    #[test]
+    fn external_metro_conflict_dismisses_on_n_and_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::ExternalMetroConflict {
             pid: 12345,
@@ -485,13 +468,12 @@ mod modal_dismissal {
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
         );
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::ModalCancel, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal.is_none());
     }
 
-    #[tokio::test]
-    async fn branch_picker_modal_dismisses_on_esc() {
+    #[test]
+    fn branch_picker_modal_dismisses_on_esc() {
         let mut state = base_state();
         state.modal = Some(ModalState::BranchPicker {
             branches: Vec::new(),
@@ -502,8 +484,7 @@ mod modal_dismissal {
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
         );
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::ModalCancel, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal.is_none());
     }
 }
@@ -515,35 +496,18 @@ mod modal_dismissal {
 mod command_queue {
     use super::*;
 
-    #[allow(clippy::type_complexity)]
-    fn channels() -> (
-        tokio::sync::mpsc::UnboundedSender<Action>,
-        tokio::sync::mpsc::UnboundedReceiver<Action>,
-        tokio::sync::mpsc::UnboundedSender<Box<dyn crate::domain::metro::MetroHandle>>,
-        tokio::sync::mpsc::UnboundedReceiver<Box<dyn crate::domain::metro::MetroHandle>>,
-    ) {
-        let (a_tx, a_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (h_tx, h_rx) = tokio::sync::mpsc::unbounded_channel();
-        (a_tx, a_rx, h_tx, h_rx)
-    }
-
-    #[tokio::test]
-    async fn command_queue_push_appends_to_back() {
+    #[test]
+    fn command_queue_push_appends_to_back() {
         let mut state = base_state();
         assert!(state.command_queue.is_empty());
 
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(
+        let _effects = update(
             &mut state,
             Action::CommandQueuePush(CommandSpec::YarnInstall),
-            &a_tx,
-            &h_tx,
         );
-        update(
+        let _effects = update(
             &mut state,
             Action::CommandQueuePush(CommandSpec::YarnPodInstall),
-            &a_tx,
-            &h_tx,
         );
 
         assert_eq!(state.command_queue.len(), 2);
@@ -557,14 +521,13 @@ mod command_queue {
         );
     }
 
-    #[tokio::test]
-    async fn command_exited_with_empty_queue_clears_running_command() {
+    #[test]
+    fn command_exited_with_empty_queue_clears_running_command() {
         let mut state = base_state();
         state.running_command = Some(CommandSpec::GitFetch);
         assert!(state.command_queue.is_empty());
 
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::CommandExited, &a_tx, &h_tx);
+        let _effects = update(&mut state, Action::CommandExited);
 
         assert!(
             state.running_command.is_none(),
@@ -573,8 +536,8 @@ mod command_queue {
         assert!(state.command_queue.is_empty(), "queue stays empty");
     }
 
-    #[tokio::test]
-    async fn command_exited_with_nonempty_queue_pops_and_dispatches_front() {
+    #[test]
+    fn command_exited_with_nonempty_queue_pops_and_dispatches_front() {
         let mut state = base_state();
         // Seed one worktree so `dispatch_command` does not early-return.
         seed_one_worktree(&mut state);
@@ -585,8 +548,7 @@ mod command_queue {
         state.command_queue.push_back(CommandSpec::YarnInstall);
         state.command_queue.push_back(CommandSpec::YarnPodInstall);
 
-        let (a_tx, _a_rx, h_tx, _h_rx) = channels();
-        update(&mut state, Action::CommandExited, &a_tx, &h_tx);
+        let effects = update(&mut state, Action::CommandExited);
 
         assert_eq!(
             state.running_command.as_ref(),
@@ -597,6 +559,12 @@ mod command_queue {
         assert_eq!(
             state.command_queue.front(),
             Some(&CommandSpec::YarnPodInstall)
+        );
+        // Post-F-201: dispatch_command returned Effect::SpawnCommand, which
+        // should be present in the returned vec.
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::SpawnCommand { .. })),
+            "CommandExited drain must emit Effect::SpawnCommand for the popped spec; got {effects:?}"
         );
     }
 }

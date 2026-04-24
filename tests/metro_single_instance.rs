@@ -6,22 +6,23 @@
 //! assert the TEA boundary: dispatching MetroStart with metro.is_running()
 //! flips pending_restart and dispatches MetroStop — it does NOT construct a
 //! second MetroHandle.
+//!
+//! Post-F-201 (Plan 13-07): `update()` signature is
+//! `pub fn update(state: &mut AppState, action: Action) -> Vec<Effect>`.
+//! The tests no longer need to hold receivers (no channels are passed in) —
+//! they assert on state mutations and (optionally) on the returned
+//! `Vec<Effect>`.
 
 mod common;
 
 use common::fake_metro_handle;
-use rn_dash::domain::action::Action;
+use rn_dash::app::effect::Effect;
 use rn_dash::app::{update, AppState};
+use rn_dash::domain::action::Action;
 use rn_dash::domain::metro::MetroStatus;
 
-#[tokio::test]
-async fn metro_start_while_running_triggers_restart_not_double_spawn() {
-    // Hold receivers for the whole test so tokio::spawn'd followup tasks
-    // (kill_metro, etc.) do not panic with "channel closed" — see Pitfall 10
-    // in 12-RESEARCH.md.
-    let (metro_tx, _metro_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (handle_tx, _handle_rx) = tokio::sync::mpsc::unbounded_channel();
-
+#[test]
+fn metro_start_while_running_triggers_restart_not_double_spawn() {
     let mut state = AppState::default();
     // Simulate "metro already running in worktree A"
     state.metro.register(fake_metro_handle(9999, "wt-a"));
@@ -29,7 +30,7 @@ async fn metro_start_while_running_triggers_restart_not_double_spawn() {
     assert!(!state.pending_restart, "precondition: pending_restart starts false");
 
     // Dispatch a second MetroStart — the characterization target.
-    update(&mut state, Action::MetroStart, &metro_tx, &handle_tx);
+    let effects = update(&mut state, Action::MetroStart);
 
     // Invariant 1: the state machine flagged a restart — it did NOT silently drop
     // or double-spawn.
@@ -38,9 +39,10 @@ async fn metro_start_while_running_triggers_restart_not_double_spawn() {
         "COVER-01: second MetroStart while running MUST set pending_restart = true"
     );
 
-    // Invariant 2: metro is in Stopping OR still Running (MetroStop may be
-    // processed synchronously via the recursive update() call; either end-state
-    // is acceptable as long as it is NOT a fresh Running{pid: different, ...}).
+    // Invariant 2: metro is in Stopping OR still Running (MetroStop is
+    // processed synchronously via the recursive update() call; the resulting
+    // effects list may be empty — MetroStop consumes the handle inline via
+    // state.metro.take_handle() + handle.kill() and does not emit Effects).
     let still_running_or_stopping = matches!(
         state.metro.status,
         MetroStatus::Running { pid: 9999, .. } | MetroStatus::Stopping
@@ -50,23 +52,34 @@ async fn metro_start_while_running_triggers_restart_not_double_spawn() {
         "COVER-01: metro must still track the ORIGINAL handle (pid 9999) or be Stopping — got {:?}",
         state.metro.status
     );
+
+    // Invariant 3: no Effect::SpawnMetro should be present — a second spawn
+    // would have bypassed the restart coordination.
+    assert!(
+        !effects.iter().any(|e| matches!(e, Effect::SpawnMetro { .. })),
+        "COVER-01: MetroStart-while-running MUST NOT emit SpawnMetro — got {effects:?}"
+    );
 }
 
-#[tokio::test]
-async fn metro_start_when_stopped_does_not_set_pending_restart() {
+#[test]
+fn metro_start_when_stopped_does_not_set_pending_restart() {
     // Negative control — MetroStart when metro is NOT running should NOT flip
     // pending_restart. This catches a failure mode where a refactor makes
     // pending_restart always true (regressing the guard to a no-op).
-    let (metro_tx, _metro_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (handle_tx, _handle_rx) = tokio::sync::mpsc::unbounded_channel();
-
     let mut state = AppState::default();
     assert!(!state.metro.is_running(), "precondition: metro stopped");
 
-    update(&mut state, Action::MetroStart, &metro_tx, &handle_tx);
+    let effects = update(&mut state, Action::MetroStart);
 
     assert!(
         !state.pending_restart,
         "MetroStart from Stopped must NOT set pending_restart — that flag is only for the restart path"
+    );
+    // Post-F-201: MetroStart from Stopped emits Effect::DetectExternalMetro
+    // (or ScheduleAction(MetroStartConfirmed) if skip_external_metro_check is
+    // set). Verify the external-detect path fires.
+    assert!(
+        effects.iter().any(|e| matches!(e, Effect::DetectExternalMetro { .. })),
+        "MetroStart from Stopped must emit DetectExternalMetro effect; got {effects:?}"
     );
 }
