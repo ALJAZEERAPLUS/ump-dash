@@ -1,4 +1,11 @@
 #![allow(dead_code)]
+
+// Phase 13 — submodules introduced before the F-200 split (Plan 13-06).
+// src/app.rs continues to host the flat update() body; submodule files live at
+// src/app/<name>.rs alongside it. `dispatch_tests` (already declared at file
+// bottom) uses the same pattern.
+pub mod effect;
+
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
 use crate::domain::metro::MetroHandle;
