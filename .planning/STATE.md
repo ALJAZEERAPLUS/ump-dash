@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 3 complete — 13-04 (PortProbe/Worktree/Device ports + adapter shells) + 13-05 (CommandRunnerPort + TokioCommandRunner; F-101 closed — infra no longer imports Action). 73 tests green, clippy clean, arch-lint PASS. 5 plans remain across 5 waves.
-last_updated: "2026-04-24T11:05:00Z"
+stopped_at: Phase 13 Wave 4 complete — 13-06 F-200 structural split: src/app.rs (2522 LOC) replaced by src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs + preserved effect.rs + dispatch_tests.rs. 73 tests green, clippy clean, arch-lint PASS. 4 plans remain across 4 waves.
+last_updated: "2026-04-24T11:25:00Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 17
-  percent: 77
+  completed_plans: 18
+  percent: 82
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Waves 1-3 complete (5/10 plans), Wave 4 next (structural app split)
+**Current focus:** Phase 13 IN-PROGRESS — Waves 1-4 complete (6/10 plans), Wave 5 next (TEA purity via Effect consumer)
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (5/10 plans executed)
-Plan: W1-W3 complete; next W4 (13-06 — split src/app.rs into src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs — F-200 structural lift)
-Status: All 8 domain ports now scaffolded (ProcessPort, JiraPort, MultiplexerPort, MetroPort, PortProbePort, WorktreePort, DevicePort, CommandRunnerPort). Adapter shells exist (LsofPortProbe, GitWorktreeAdapter, AdbXcrunDevices, TokioCommandRunner); rewiring of consumers lands in 13-08. F-101 closed — src/infra/command_runner.rs has zero imports of crate::domain::action::Action; CommandEvent→Action translation inlined at the single dispatch_command call site in src/app.rs. Guards passing: G-02, G-03, G-07, G-08, G-09, G-10, G-14, G-15, G-17. Tests: 73 pass; clippy --all-targets -D warnings clean; `make arch-lint` PASS.
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (6/10 plans executed)
+Plan: W1-W4 complete; next W5 (13-07 — update() returns Vec<Effect>, KEYBINDINGS registry, 7 async metro helpers → infra/metro.rs::TokioMetroAdapter, F-201+F-203+F-208+F-400 consumers)
+Status: src/app.rs deleted — replaced by 9-file src/app/ directory (mod/state/update/handle_key/runtime/effect_runner/adapters/effect/dispatch_tests). update.rs holds the TEA reducer (1616 LOC — shrinks dramatically in 13-07 when tokio::spawn calls become Effect returns). effect_runner.rs + adapters.rs are stubs for 13-08. dispatch_command kept private to update.rs (D-13-06-01); spawn_metro_task / metro_http_post exposed as pub(super) for update.rs (D-13-06-02). COVERAGE-THRESHOLDS.md updated: src/app.rs row replaced by 7 new per-file rows covering the split. Guards passing: G-02, G-03, G-07, G-08, G-09, G-10, G-14, G-15, G-17. Gated PENDING until consumers land: G-01 (infra imports — 13-08), G-04/G-05 (update purity — 13-07), G-06 (pending flags — 13-09), G-11/G-12 (keybindings — 13-07+13-10), G-13 (Adapters — 13-08), G-16/G-18 (metro opaque + modals — 13-09), G-20 (sub-structs — 13-10). Tests: 73 pass; clippy --all-targets -D warnings clean; `make arch-lint` PASS.
 Last activity: 2026-04-24
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
