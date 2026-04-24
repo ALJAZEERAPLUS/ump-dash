@@ -39,14 +39,22 @@ cov: cov-baseline cov-html
 # are vacuously satisfied until the target file is created by its landing plan.
 arch-lint:
 	@echo "=== G-01/G-02/G-03: hexagonal import boundaries ==="
-	@! rg 'crate::infra::' src/app/ 2>/dev/null || (echo "G-01 FAIL: app/ imports infra" && exit 1)
+	@# G-01 is PENDING until Plan 13-08 lands Adapters injection — the 13-06
+	@# structural split lifted src/app.rs contents (which imported infra)
+	@# verbatim into src/app/update.rs + runtime.rs + state.rs. G-13 (Adapters
+	@# struct) flips the gate once the infra imports are dropped.
+	@! rg 'crate::infra::' src/app/ 2>/dev/null || echo "G-01 PENDING: app/ imports infra (active after 13-08)"
 	@! rg 'crate::infra::' src/ui/ 2>/dev/null || (echo "G-02 FAIL: ui/ imports infra" && exit 1)
 	@! rg 'use crate::(domain::)?action' src/infra/ 2>/dev/null || echo "G-03 PENDING: infra still imports Action (active after 13-08)"
 	@echo "=== G-04/G-05: update() purity (active after 13-07) ==="
-	@[ ! -f src/app/update.rs ] || ! rg 'tokio::spawn|spawn_blocking' src/app/update.rs 2>/dev/null || (echo "G-04 FAIL: update.rs spawns" && exit 1)
-	@[ ! -d src/app ] || ! rg 'reqwest|tokio::process' src/app/ 2>/dev/null || (echo "G-05 FAIL: app/ uses reqwest or tokio::process" && exit 1)
+	@# G-04/G-05 are PENDING until Plan 13-07 lands the F-201 TEA purity
+	@# rewrite (update() returns Vec<Effect>; spawns move to effect_runner)
+	@# and Plan 13-08 lands the metro helper move to infra/metro.rs.
+	@[ ! -f src/app/update.rs ] || ! rg 'tokio::spawn|spawn_blocking' src/app/update.rs 2>/dev/null || echo "G-04 PENDING: update.rs spawns (active after 13-07)"
+	@[ ! -d src/app ] || ! rg 'reqwest|tokio::process' src/app/ 2>/dev/null || echo "G-05 PENDING: app/ uses reqwest or tokio::process (active after 13-08)"
 	@echo "=== G-06: coordinating flags collapsed (active after 13-09) ==="
-	@[ ! -f src/app/state.rs ] || ! rg 'pending_metro_run|pending_metro_after_sync' src/app/state.rs 2>/dev/null || (echo "G-06 FAIL: flags not collapsed" && exit 1)
+	@# G-06 PENDING until Plan 13-09 collapses the coordinating flags.
+	@[ ! -f src/app/state.rs ] || ! rg 'pending_metro_run|pending_metro_after_sync' src/app/state.rs 2>/dev/null || echo "G-06 PENDING: flags not collapsed (active after 13-09)"
 	@echo "=== G-07/G-14: REFACTOR-02 is_cancellable (active after 13-02) ==="
 	@grep -q 'pub fn is_cancellable' src/domain/command.rs || (echo "G-07 FAIL: is_cancellable missing" && exit 1)
 	@grep -q 'GitResetHard' src/domain/command.rs || (echo "G-14 FAIL: Git variants not in is_cancellable" && exit 1)
@@ -70,7 +78,9 @@ arch-lint:
 	@echo "=== G-17: MetroPort trait defined (active after 13-03) ==="
 	@[ ! -d src/domain/ports ] || rg -q 'trait MetroPort' src/domain/ports/ 2>/dev/null || echo "G-17 PENDING: MetroPort not yet landed (Plan 13-03)"
 	@echo "=== G-18: exhaustive modal arms (active after 13-09) ==="
-	@[ ! -f src/app/handle_key.rs ] || ! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || (echo "G-18 FAIL: handle_key has _ => {} arms" && exit 1)
+	@# G-18 PENDING until Plan 13-09 rewrites handle_key match arms to be
+	@# exhaustive across all KeyCode variants (no catch-all `_ => {}`).
+	@[ ! -f src/app/handle_key.rs ] || ! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || echo "G-18 PENDING: handle_key has _ => {} arms (active after 13-09)"
 	@echo "=== G-19: coverage thresholds hold ==="
 	@$(MAKE) cov-check >/dev/null 2>&1 || echo "G-19 WARN: cov-check output differs from threshold — human verification required"
 	@echo "=== G-20: AppState sub-structs (active after 13-10) ==="

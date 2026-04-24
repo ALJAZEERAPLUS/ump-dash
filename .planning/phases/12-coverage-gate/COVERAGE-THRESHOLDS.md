@@ -19,7 +19,13 @@ Total region-coverage baseline: **9.89%** → threshold **5%**
 
 | File | Baseline Lines % | Threshold % (floor,5) |
 |------|------------------|-----------------------|
-| src/app.rs | 11.31% | 10% |
+| src/app/mod.rs | 0.00% | 0% |
+| src/app/state.rs | ~15% (inherits Default + helpers from old src/app.rs) | 10% |
+| src/app/update.rs | ~12% (inherits dispatch_tests exercise from old src/app.rs) | 10% |
+| src/app/handle_key.rs | ~20% (inherits palette + modal dismiss tests) | 15% |
+| src/app/runtime.rs | 0.00% (async event loop not unit-tested) | 0% |
+| src/app/effect_runner.rs | 0.00% (stub, populated in Plan 13-08) | 0% |
+| src/app/adapters.rs | 0.00% (stub, populated in Plan 13-08) | 0% |
 | src/domain/action.rs | 0.00% | 0% |
 | src/domain/command.rs | 8.54% | 5% |
 | src/domain/jira.rs | 100.00% | 100% |
@@ -66,7 +72,7 @@ Total region-coverage baseline: **9.89%** → threshold **5%**
 - `src/domain/metro.rs >= 70%` — the register-once / register-twice / update-level `MetroStart` characterization tests (COVER-01) must keep passing under coverage.
 - `src/domain/jira.rs >= 100%` — the six `extracts_key*` / `returns_none*` inline tests (relocated from `infra/jira.rs` in Phase 13 Plan 13-01) must keep passing.
 - `src/infra/android_prefs.rs >= 55%` — pre-existing inline tests must keep passing.
-- `src/app.rs >= 10%` — 12-03's dispatch-tests module (command-queue drain, modal dismissal, palette resolution) must keep passing under coverage.
+- `src/app/update.rs >= 10%` AND `src/app/handle_key.rs >= 15%` — 12-03's dispatch-tests module (command-queue drain, modal dismissal, palette resolution) was split from the monolithic `src/app.rs` into these two files in Plan 13-06; the coverage that previously bound on `src/app.rs` now binds across these two rows. Neither may regress below its threshold.
 - `src/domain/command.rs >= 5%` and `src/infra/config.rs >= 5%` — whatever minimal coverage exists today must not regress.
 - Total line coverage `>= 10%`, total function coverage `>= 20%`, total region coverage `>= 5%`.
 
@@ -80,6 +86,7 @@ Any Phase 13+ PR that drops a row below its threshold requires:
 |------|-------|--------|-----------|
 | 2026-04-23 | 12 | Initial thresholds | Baseline after COVER-01/02/03 landed (Waves 1+2). Full workspace line coverage = 12.84%; highest coverage is `domain/refresh.rs` (100%); lowest non-zero is `domain/command.rs` (8.54%). Twenty modules at 0% accepted per D-04 floor-to-5 policy — the ratchet for those is "do not remove tests that currently cover them," which is vacuously satisfied at 0%. |
 | 2026-04-24 | 13 | Plan 13-01 — action.rs moved to domain; 3 traits + extract_jira_key relocated; per-file ratchet rows updated per structural-change policy. | `src/action.rs` deleted → replaced by new row `src/domain/action.rs` 0% (trait+enum moved verbatim, no new executable code). `src/infra/jira.rs` 70.18% → 0% is a structural split: the 6 `extract_jira_key*` inline tests migrated to new row `src/domain/jira.rs` 100% (same tests, new location). The 70% threshold invariant now binds to `domain/jira.rs`. Three new trait-only port files (`domain/ports/process_port.rs`, `jira_port.rs`, `multiplexer_port.rs`) added at 0% — trait definitions have no executable region and are floor-exempt. No test was removed; this is a pure file-move refactor. |
+| 2026-04-24 | 13 | Plan 13-06 — F-200 structural split of src/app.rs (2522 LOC) into src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs. Per-file ratchet rows updated per structural-change policy. | `src/app.rs` row DELETED → replaced by 7 new rows for the submodules. The 17 COVER-03 dispatch tests exercise handle_key (palette resolution + modal dismissal) and update (command queue drain); the former 11.31% src/app.rs coverage now distributes across `src/app/update.rs` and `src/app/handle_key.rs`. `src/app/runtime.rs` at 0% because the async event loop is not unit-tested — same as the corresponding `pub async fn run` block that previously lived at src/app.rs:2097-2246 (which contributed 0% to the src/app.rs baseline). `src/app/effect_runner.rs` and `src/app/adapters.rs` are STUBS (6-7 LOC each) — populated in Plans 13-07/13-08. `src/app/mod.rs` is re-exports only (0% floor-exempt). Zero behavior change — verbatim lift-and-shift. No test was removed. |
 
 ## Cross-Reference
 
