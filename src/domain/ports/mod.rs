@@ -7,6 +7,7 @@
 //!
 //! Other port modules added in 13-03 (metro), 13-04 (worktree/device/port_probe),
 //! 13-05 (command_runner).
+pub mod command_runner_port;
 pub mod device_port;
 pub mod jira_port;
 pub mod metro_port;

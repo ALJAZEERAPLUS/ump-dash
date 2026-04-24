@@ -530,10 +530,23 @@ fn dispatch_command(
     let branch = wt.branch.clone();
     let spec_for_task = spec.clone();
 
-    // spawn_command_task is async so we wrap it in a nested spawn
+    // F-101: infra::command_runner is now ignorant of Action — it emits typed
+    // CommandEvents. Translate CommandEvent → Action at this app-side boundary.
+    // Plan 13-08 will move this translation into effect_runner once Adapters
+    // injection lands; for 13-05 we keep it inline at the only call site.
+    use crate::domain::ports::command_runner_port::{CommandEvent, CommandRunnerPort};
+    let runner = crate::infra::command_runner::TokioCommandRunner;
+    let mut rx = runner.spawn(spec_for_task, path, branch);
     let handle = tokio::spawn(async move {
-        let task = crate::infra::command_runner::spawn_command_task(spec_for_task, path, branch, tx).await;
-        let _ = task.await;
+        while let Some(ev) = rx.recv().await {
+            let action = match ev {
+                CommandEvent::OutputLine(line) => Action::CommandOutputLine(line),
+                CommandEvent::Exited(_status) => Action::CommandExited,
+            };
+            if tx.send(action).is_err() {
+                break;
+            }
+        }
     });
     state.command_task = Some(handle);
 }
