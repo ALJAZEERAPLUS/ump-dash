@@ -17,6 +17,9 @@ pub fn from_crossterm(ev: CrosstermEvent) -> Option<Event> {
     match ev {
         Key(k) => Some(Event::Key(k)),
         Resize(w, h) => Some(Event::Resize(w, h)),
+        // intentionally unhandled: Mouse, Paste, FocusGained, FocusLost
+        // (legitimate fall-through — these crossterm event kinds have no
+        //  semantic meaning in this TUI).
         _ => None,
     }
 }

@@ -16,7 +16,7 @@
 //! Yarn palette's `c` key. Both the entry and exit transitions are tested.
 
 use super::*;
-use crate::action::Action;
+use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use ratatui::crossterm::event::{

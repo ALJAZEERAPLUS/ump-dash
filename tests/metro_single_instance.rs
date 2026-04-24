@@ -10,7 +10,7 @@
 mod common;
 
 use common::fake_metro_handle;
-use rn_dash::action::Action;
+use rn_dash::domain::action::Action;
 use rn_dash::app::{update, AppState};
 use rn_dash::domain::metro::MetroStatus;
 

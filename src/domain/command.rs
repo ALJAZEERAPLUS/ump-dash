@@ -4,7 +4,7 @@
 //! to an actual process via `to_argv()`. No process spawning happens here.
 
 /// All commands that can be dispatched from the git or RN command palettes.
-/// 17 variants total. Pure data — no I/O.
+/// 23 variants total. Pure data — no I/O.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandSpec {
     // Git commands (6 variants)

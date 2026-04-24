@@ -20,8 +20,14 @@ Total region-coverage baseline: **9.89%** → threshold **5%**
 | File | Baseline Lines % | Threshold % (floor,5) |
 |------|------------------|-----------------------|
 | src/app.rs | 11.31% | 10% |
+| src/domain/action.rs | 0.00% | 0% |
 | src/domain/command.rs | 8.54% | 5% |
+| src/domain/jira.rs | 100.00% | 100% |
 | src/domain/metro.rs | 70.00% | 70% |
+| src/domain/ports/jira_port.rs | 0.00% | 0% |
+| src/domain/ports/mod.rs | 0.00% | 0% |
+| src/domain/ports/multiplexer_port.rs | 0.00% | 0% |
+| src/domain/ports/process_port.rs | 0.00% | 0% |
 | src/domain/refresh.rs | 100.00% | 100% |
 | src/domain/worktree.rs | 0.00% | 0% |
 | src/event.rs | 0.00% | 0% |
@@ -29,7 +35,7 @@ Total region-coverage baseline: **9.89%** → threshold **5%**
 | src/infra/command_runner.rs | 0.00% | 0% |
 | src/infra/config.rs | 8.70% | 5% |
 | src/infra/devices.rs | 0.00% | 0% |
-| src/infra/jira.rs | 70.18% | 70% |
+| src/infra/jira.rs | structural | 0% (see note) |
 | src/infra/jira_cache.rs | 0.00% | 0% |
 | src/infra/multiplexer.rs | 0.00% | 0% |
 | src/infra/port.rs | 0.00% | 0% |
@@ -47,11 +53,18 @@ Total region-coverage baseline: **9.89%** → threshold **5%**
 | src/ui/panels.rs | 0.00% | 0% |
 | src/ui/theme.rs | 0.00% | 0% |
 
+> **Note on `src/infra/jira.rs`:** Per Plan 13-01, the 6 `extract_jira_key*` inline tests moved to
+> `src/domain/jira.rs` (where they still cover 100% of the pure function) and the pure function
+> itself moved with them. `infra/jira.rs` now contains only the HTTP client + `is_inside_tmux`
+> helper, none of which are unit-tested by current tests. The 70.18% → new-baseline drop is a
+> structural change (code + tests moved together, no test regression). New threshold is 0%
+> under floor-to-5 policy; the covering tests now enforce the floor on `domain/jira.rs`.
+
 ## Invariants Phase 13+ MUST Preserve
 
 - `src/domain/refresh.rs >= 100%` — dropping any of the 17 inline tests in Phase 13 refactor is a ratchet violation.
 - `src/domain/metro.rs >= 70%` — the register-once / register-twice / update-level `MetroStart` characterization tests (COVER-01) must keep passing under coverage.
-- `src/infra/jira.rs >= 70%` — the six `extracts_key*` / `returns_none*` inline tests must keep passing.
+- `src/domain/jira.rs >= 100%` — the six `extracts_key*` / `returns_none*` inline tests (relocated from `infra/jira.rs` in Phase 13 Plan 13-01) must keep passing.
 - `src/infra/android_prefs.rs >= 55%` — pre-existing inline tests must keep passing.
 - `src/app.rs >= 10%` — 12-03's dispatch-tests module (command-queue drain, modal dismissal, palette resolution) must keep passing under coverage.
 - `src/domain/command.rs >= 5%` and `src/infra/config.rs >= 5%` — whatever minimal coverage exists today must not regress.
@@ -66,6 +79,7 @@ Any Phase 13+ PR that drops a row below its threshold requires:
 | Date | Phase | Change | Rationale |
 |------|-------|--------|-----------|
 | 2026-04-23 | 12 | Initial thresholds | Baseline after COVER-01/02/03 landed (Waves 1+2). Full workspace line coverage = 12.84%; highest coverage is `domain/refresh.rs` (100%); lowest non-zero is `domain/command.rs` (8.54%). Twenty modules at 0% accepted per D-04 floor-to-5 policy — the ratchet for those is "do not remove tests that currently cover them," which is vacuously satisfied at 0%. |
+| 2026-04-24 | 13 | Plan 13-01 — action.rs moved to domain; 3 traits + extract_jira_key relocated; per-file ratchet rows updated per structural-change policy. | `src/action.rs` deleted → replaced by new row `src/domain/action.rs` 0% (trait+enum moved verbatim, no new executable code). `src/infra/jira.rs` 70.18% → 0% is a structural split: the 6 `extract_jira_key*` inline tests migrated to new row `src/domain/jira.rs` 100% (same tests, new location). The 70% threshold invariant now binds to `domain/jira.rs`. Three new trait-only port files (`domain/ports/process_port.rs`, `jira_port.rs`, `multiplexer_port.rs`) added at 0% — trait definitions have no executable region and are floor-exempt. No test was removed; this is a pure file-move refactor. |
 
 ## Cross-Reference
 

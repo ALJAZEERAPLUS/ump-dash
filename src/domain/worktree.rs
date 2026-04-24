@@ -37,7 +37,7 @@ pub struct Worktree {
     /// True when `ios/Pods` is missing or older than `ios/Podfile.lock`.
     pub stale_pods: bool,
     /// Extracted JIRA ticket key (e.g. "UMP-1234") from the branch name.
-    /// Set during WorktreesLoaded via infra::jira::extract_jira_key().
+    /// Set during WorktreesLoaded via domain::jira::extract_jira_key().
     pub jira_key: Option<String>,
 }
 

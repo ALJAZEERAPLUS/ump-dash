@@ -9,7 +9,7 @@
 
 #![allow(dead_code)]
 
-use crate::action::Action;
+use crate::domain::action::Action;
 use crate::domain::command::CommandSpec;
 use std::path::PathBuf;
 use std::process::Stdio;

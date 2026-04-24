@@ -68,7 +68,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         let branch = &wt.branch;
 
         // Extract ticket number from branch if possible
-        let ticket_num = crate::infra::jira::extract_jira_key(branch, &state.jira_project_prefix).unwrap_or_default();
+        let ticket_num = crate::domain::jira::extract_jira_key(branch, &state.jira_project_prefix).unwrap_or_default();
         let title = wt.jira_title.as_deref().unwrap_or("");
 
         // Merged ticket display: "UMP-1234 Title text" or just one or the other

@@ -1,35 +1,21 @@
 // src/infra/process.rs
 //
-// ProcessClient trait and TokioProcessClient implementation.
+// TokioProcessClient — concrete adapter implementing `ProcessPort` (defined in
+// `crate::domain::ports::process_port`).
 // ARCH-02: All infra behind trait boundaries — swap TokioProcessClient for a
 // FakeProcessClient in tests without touching any domain or app code.
 
 #![allow(dead_code)]
 
+use crate::domain::ports::process_port::ProcessPort;
 use std::path::PathBuf;
 use tokio::process::Child;
-
-/// Trait boundary for metro process spawning.
-///
-/// The domain and app layers depend only on this trait. TokioProcessClient is the
-/// production implementation; tests may supply a fake.
-#[async_trait::async_trait]
-pub trait ProcessClient: Send + Sync {
-    /// Spawn a metro dev server in the given worktree directory.
-    ///
-    /// Returns the `Child` handle with stdout, stderr, and stdin all piped.
-    /// The caller is responsible for taking those handles before any kill call
-    /// (see research pitfall 5).
-    ///
-    /// Pipes stdout/stderr/stdin for capture by drain_metro_output.
-    async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<Child>;
-}
 
 /// Production implementation that calls `tokio::process::Command` directly.
 pub struct TokioProcessClient;
 
 #[async_trait::async_trait]
-impl ProcessClient for TokioProcessClient {
+impl ProcessPort for TokioProcessClient {
     async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<Child> {
         let mut cmd = tokio::process::Command::new("yarn");
         cmd.args(["start", "--reset-cache"])

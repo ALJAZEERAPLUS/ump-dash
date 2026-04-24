@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::action::Action;
+use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
 use crate::domain::metro::MetroHandle;
 use futures::StreamExt;
@@ -117,7 +117,7 @@ pub struct AppState {
 
     // --- Phase 4 fields ---
     pub jira_title_cache: std::collections::HashMap<String, String>,  // PROJ-XXXX -> title
-    pub jira_client: Option<std::sync::Arc<dyn crate::infra::jira::JiraClient>>,
+    pub jira_client: Option<std::sync::Arc<dyn crate::domain::ports::jira_port::JiraPort>>,
     /// JIRA project key prefix used in branch names (e.g., "UMP" for UMP-1234).
     pub jira_project_prefix: String,
 
@@ -127,7 +127,7 @@ pub struct AppState {
 
     // --- Phase 5.1 fields ---
     /// Detected terminal multiplexer (tmux or zellij). None when not inside either.
-    pub multiplexer: Option<Box<dyn crate::infra::multiplexer::Multiplexer>>,
+    pub multiplexer: Option<Box<dyn crate::domain::ports::multiplexer_port::MultiplexerPort>>,
     /// Claude Code launch flags loaded from config (e.g. "--dangerously-skip-permissions").
     pub claude_flags: String,
     /// Loaded dashboard config — kept for runtime access to claude_flags and other settings.
@@ -745,7 +745,7 @@ pub fn update(
             // Re-derive jira_key and re-apply cached JIRA titles using the configured prefix.
             // jira_key is set here (not in list_worktrees) because the prefix comes from config.
             for wt in &mut worktrees {
-                if let Some(key) = crate::infra::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix) {
+                if let Some(key) = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix) {
                     if let Some(title) = state.jira_title_cache.get(&key) {
                         wt.jira_title = Some(title.clone());
                     }
@@ -782,7 +782,7 @@ pub fn update(
             if let Some(ref client) = state.jira_client {
                 let keys_to_fetch: Vec<(String, String)> = state.worktrees.iter()
                     .filter_map(|wt| {
-                        let key = crate::infra::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)?;
+                        let key = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)?;
                         if state.jira_title_cache.contains_key(&key) { return None; }
                         Some((wt.branch.clone(), key))
                     })
@@ -1566,7 +1566,7 @@ pub fn update(
             }
             // Apply titles to currently loaded worktrees
             for wt in &mut state.worktrees {
-                if let Some(key) = crate::infra::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)
+                if let Some(key) = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)
                     && let Some(title) = state.jira_title_cache.get(&key) {
                         wt.jira_title = Some(title.clone());
                     }
@@ -2211,7 +2211,7 @@ async fn spawn_metro_task(
     action_tx: tokio::sync::mpsc::UnboundedSender<Action>,
     handle_tx: tokio::sync::mpsc::UnboundedSender<MetroHandle>,
 ) {
-    use crate::infra::process::ProcessClient;
+    use crate::domain::ports::process_port::ProcessPort;
     use crate::infra::process::TokioProcessClient;
 
     let client = TokioProcessClient;

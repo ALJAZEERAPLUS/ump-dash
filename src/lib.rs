@@ -5,7 +5,6 @@
 //! delegates its async-main body here so behavior is unchanged.
 #![allow(dead_code)]
 
-pub mod action;
 pub mod app;
 pub mod domain;
 pub mod event;

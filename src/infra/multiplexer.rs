@@ -1,25 +1,16 @@
-//! Terminal multiplexer abstraction — trait with Tmux and Zellij adapters.
-//! Uses std::process::Command (same pattern as existing tmux.rs).
+//! Terminal multiplexer adapters — concrete `TmuxAdapter` + `ZellijAdapter`
+//! implementing `crate::domain::ports::multiplexer_port::MultiplexerPort`.
+//!
+//! Uses `std::process::Command` (same pattern as existing `tmux.rs`).
 //! No new crates required.
 
+use crate::domain::ports::multiplexer_port::MultiplexerPort;
 use std::path::Path;
-
-/// Trait for terminal multiplexer operations.
-/// Implementors must be Send + Sync + Debug for storage in AppState.
-#[allow(dead_code)]
-pub trait Multiplexer: Send + Sync + std::fmt::Debug {
-    /// Creates a new window/tab at the given path with the given name, running the given command.
-    /// The window should switch focus to the newly created tab.
-    fn new_window(&self, path: &Path, name: &str, command: &str) -> anyhow::Result<()>;
-
-    /// Returns true if this multiplexer is available in the current environment.
-    fn is_available(&self) -> bool;
-}
 
 #[derive(Debug)]
 pub struct TmuxAdapter;
 
-impl Multiplexer for TmuxAdapter {
+impl MultiplexerPort for TmuxAdapter {
     fn new_window(&self, path: &Path, name: &str, command: &str) -> anyhow::Result<()> {
         let path_str = path.to_str().unwrap_or(".");
         let status = std::process::Command::new("tmux")
@@ -39,7 +30,7 @@ impl Multiplexer for TmuxAdapter {
 #[derive(Debug)]
 pub struct ZellijAdapter;
 
-impl Multiplexer for ZellijAdapter {
+impl MultiplexerPort for ZellijAdapter {
     fn new_window(&self, path: &Path, name: &str, command: &str) -> anyhow::Result<()> {
         // Zellij tab creation: create tab at CWD with name.
         // Zellij's new-tab does not support running an initial command directly
@@ -74,7 +65,7 @@ impl Multiplexer for ZellijAdapter {
 
 /// Auto-detect the available multiplexer. Checks $TMUX first, then $ZELLIJ.
 /// Returns None if no multiplexer is detected — features that need it are disabled.
-pub fn detect_multiplexer() -> Option<Box<dyn Multiplexer>> {
+pub fn detect_multiplexer() -> Option<Box<dyn MultiplexerPort>> {
     if std::env::var("TMUX").is_ok() {
         return Some(Box::new(TmuxAdapter));
     }
