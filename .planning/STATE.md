@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 1 complete — 13-01 merged (action.rs → domain/; ProcessPort/JiraPort/MultiplexerPort traits + extract_jira_key relocated). 49 tests + clippy green. 9 plans remain across 7 waves.
-last_updated: "2026-04-24T10:30:00Z"
+stopped_at: Phase 13 Wave 2 complete — 13-02 (is_cancellable + make arch-lint) + 13-03 (Effect/Prerequisite/Recipe + MetroPort+MetroHandle traits) merged in parallel. 73 tests green, clippy clean, arch-lint PASS. 7 plans remain across 6 waves.
+last_updated: "2026-04-24T10:50:00Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 13
-  percent: 59
+  completed_plans: 15
+  percent: 68
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Wave 1 complete (1/10 plans), Wave 2 next
+**Current focus:** Phase 13 IN-PROGRESS — Waves 1-2 complete (3/10 plans), Wave 3 next
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (1/10 plans executed)
-Plan: W1 complete (13-01); next up W2 parallel (13-02 + 13-03); remaining waves W3..W8
-Status: Wave 1 merged to main. src/action.rs relocated to src/domain/action.rs; src/domain/ports/{mod,process_port,jira_port,multiplexer_port}.rs scaffolded; src/domain/jira.rs now owns extract_jira_key. Guards G-02 (ui-no-infra-jira), G-10 (ports module exists), G-15 (action moved) pass. 49 tests + clippy --all-targets -- -D warnings green.
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (3/10 plans executed)
+Plan: W1 complete (13-01); W2 complete (13-02 + 13-03 parallel, merged via --no-ff); next W3 sequential (13-04 → 13-05, overlap on ports/mod.rs)
+Status: src/domain/command.rs has CommandSpec::is_cancellable() + 6 inline tests; Makefile has `arch-lint` target running 20 shape guards (G-03/G-12/G-16 gated as PENDING until their consumer plans land). src/domain/pipeline.rs has Prerequisite + Recipe + DependencyState (Recipe::expand() testable). src/domain/ports/metro_port.rs has MetroPort + MetroHandle traits; src/domain/metro.rs MetroManager now holds `Option<Box<dyn MetroHandle>>` (F-004 closed). src/app/effect.rs has Effect enum (17 variants, plain-data). Guards passing: G-02, G-07, G-08, G-09, G-10, G-14, G-15, G-17. Tests: 73 pass (70 lib + 2 metro + 1 pgid).
 Last activity: 2026-04-24
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
