@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 2 complete — 13-02 (is_cancellable + make arch-lint) + 13-03 (Effect/Prerequisite/Recipe + MetroPort+MetroHandle traits) merged in parallel. 73 tests green, clippy clean, arch-lint PASS. 7 plans remain across 6 waves.
-last_updated: "2026-04-24T10:50:00Z"
+stopped_at: Phase 13 Wave 3 complete — 13-04 (PortProbe/Worktree/Device ports + adapter shells) + 13-05 (CommandRunnerPort + TokioCommandRunner; F-101 closed — infra no longer imports Action). 73 tests green, clippy clean, arch-lint PASS. 5 plans remain across 5 waves.
+last_updated: "2026-04-24T11:05:00Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 15
-  percent: 68
+  completed_plans: 17
+  percent: 77
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Waves 1-2 complete (3/10 plans), Wave 3 next
+**Current focus:** Phase 13 IN-PROGRESS — Waves 1-3 complete (5/10 plans), Wave 4 next (structural app split)
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (3/10 plans executed)
-Plan: W1 complete (13-01); W2 complete (13-02 + 13-03 parallel, merged via --no-ff); next W3 sequential (13-04 → 13-05, overlap on ports/mod.rs)
-Status: src/domain/command.rs has CommandSpec::is_cancellable() + 6 inline tests; Makefile has `arch-lint` target running 20 shape guards (G-03/G-12/G-16 gated as PENDING until their consumer plans land). src/domain/pipeline.rs has Prerequisite + Recipe + DependencyState (Recipe::expand() testable). src/domain/ports/metro_port.rs has MetroPort + MetroHandle traits; src/domain/metro.rs MetroManager now holds `Option<Box<dyn MetroHandle>>` (F-004 closed). src/app/effect.rs has Effect enum (17 variants, plain-data). Guards passing: G-02, G-07, G-08, G-09, G-10, G-14, G-15, G-17. Tests: 73 pass (70 lib + 2 metro + 1 pgid).
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (5/10 plans executed)
+Plan: W1-W3 complete; next W4 (13-06 — split src/app.rs into src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs — F-200 structural lift)
+Status: All 8 domain ports now scaffolded (ProcessPort, JiraPort, MultiplexerPort, MetroPort, PortProbePort, WorktreePort, DevicePort, CommandRunnerPort). Adapter shells exist (LsofPortProbe, GitWorktreeAdapter, AdbXcrunDevices, TokioCommandRunner); rewiring of consumers lands in 13-08. F-101 closed — src/infra/command_runner.rs has zero imports of crate::domain::action::Action; CommandEvent→Action translation inlined at the single dispatch_command call site in src/app.rs. Guards passing: G-02, G-03, G-07, G-08, G-09, G-10, G-14, G-15, G-17. Tests: 73 pass; clippy --all-targets -D warnings clean; `make arch-lint` PASS.
 Last activity: 2026-04-24
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)

@@ -92,8 +92,8 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 13-01-PLAN.md — action.rs→domain; 3 trait relocations (ProcessPort/JiraPort/MultiplexerPort); extract_jira_key→domain (F-002+F-103+F-106+F-107+F-110+F-300+F-301) — 2026-04-24
   - [x] 13-02-PLAN.md — CommandSpec::is_cancellable() flat-enum predicate + make arch-lint target (REFACTOR-02) — 2026-04-24
   - [x] 13-03-PLAN.md — Effect enum + Recipe/Prerequisite/DependencyState + MetroPort/MetroHandle trait (F-201 type + F-204 type + F-203 trait + F-004) — 2026-04-24
-  - [ ] 13-04-PLAN.md — PortProbePort + WorktreePort + DevicePort + adapter shells (F-102+F-104+F-105)
-  - [ ] 13-05-PLAN.md — CommandRunnerPort + CommandEvent; remove Action import from infra (F-101)
+  - [x] 13-04-PLAN.md — PortProbePort + WorktreePort + DevicePort + adapter shells (F-102+F-104+F-105) — 2026-04-24
+  - [x] 13-05-PLAN.md — CommandRunnerPort + CommandEvent; remove Action import from infra (F-101) — 2026-04-24
   - [ ] 13-06-PLAN.md — F-200 structural split of src/app.rs into src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs
   - [ ] 13-07-PLAN.md — update() purity (F-201 consumer) + metro helpers→infra/metro.rs (F-203 consumer) + KEYBINDINGS registry + handle_key walker (F-208+F-400)
   - [ ] 13-08-PLAN.md — Adapters injection; effect_runner full impl; app/ infra-free (F-202 consumer + F-101 consumer)
