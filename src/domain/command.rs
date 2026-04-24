@@ -248,3 +248,81 @@ pub struct DeviceInfo {
     /// Human-readable display name (model name or simulator name).
     pub name: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // REFACTOR-02: `CommandSpec::is_cancellable()` returns false for git-porcelain
+    // variants (data-integrity risk on cancellation) and true for all other commands.
+    // One test per command family. Tests are pure — no tokio, no I/O.
+
+    #[test]
+    fn is_cancellable_git_variants_all_false() {
+        let git_variants = [
+            CommandSpec::GitResetHard,
+            CommandSpec::GitResetHardFetch,
+            CommandSpec::GitPull,
+            CommandSpec::GitPush,
+            CommandSpec::GitRebase { target: "main".into() },
+            CommandSpec::GitCheckout { branch: "main".into() },
+            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::GitFetch,
+        ];
+        for spec in &git_variants {
+            assert!(!spec.is_cancellable(), "git variant {:?} must NOT be cancellable", spec);
+        }
+    }
+
+    #[test]
+    fn is_cancellable_yarn_variants_all_true() {
+        let yarn_variants = [
+            CommandSpec::YarnInstall,
+            CommandSpec::YarnPodInstall,
+            CommandSpec::YarnUnitTests,
+            CommandSpec::YarnCheckTypes,
+            CommandSpec::YarnJest { filter: "".into() },
+            CommandSpec::YarnLint,
+        ];
+        for spec in &yarn_variants {
+            assert!(spec.is_cancellable(), "yarn variant {:?} must be cancellable", spec);
+        }
+    }
+
+    #[test]
+    fn is_cancellable_rn_run_variants_all_true() {
+        let rn_run_variants = [
+            CommandSpec::RnRunAndroid { device_id: "".into(), mode: None },
+            CommandSpec::RnRunIos { device_id: "".into() },
+            CommandSpec::RnRunIosDevice,
+            CommandSpec::RnReleaseBuild,
+        ];
+        for spec in &rn_run_variants {
+            assert!(spec.is_cancellable(), "rn-run variant {:?} must be cancellable", spec);
+        }
+    }
+
+    #[test]
+    fn is_cancellable_rn_clean_variants_all_true() {
+        let clean_variants = [
+            CommandSpec::RnCleanCocoapods,
+            CommandSpec::RnCleanAndroid,
+            CommandSpec::RmNodeModules,
+        ];
+        for spec in &clean_variants {
+            assert!(spec.is_cancellable(), "clean variant {:?} must be cancellable", spec);
+        }
+    }
+
+    #[test]
+    fn is_cancellable_adb_install_true() {
+        let spec = CommandSpec::AdbInstallApk;
+        assert!(spec.is_cancellable(), "adb install must be cancellable");
+    }
+
+    #[test]
+    fn is_cancellable_shell_true() {
+        let spec = CommandSpec::ShellCommand { command: "echo hi".into() };
+        assert!(spec.is_cancellable(), "shell command must be cancellable");
+    }
+}
