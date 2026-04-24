@@ -11,6 +11,7 @@ pub mod adapters;
 pub mod effect;
 pub mod effect_runner;
 pub mod handle_key;
+pub mod keybindings;
 pub mod runtime;
 pub mod state;
 pub mod update;
