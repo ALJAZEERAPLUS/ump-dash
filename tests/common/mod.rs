@@ -5,24 +5,45 @@
 //! those files without creating an independent `tests/common.rs` binary.
 //! (See https://doc.rust-lang.org/book/ch11-03-test-organization.html
 //!  § "Submodules in Integration Tests".)
+//!
+//! Plan 13-03: `MetroHandle` is now a trait. `fake_metro_handle` returns a
+//! `Box<dyn MetroHandle>` backed by a no-op `FakeMetroHandle` impl — no
+//! tokio channels required, so the helper can be called from plain `#[test]`
+//! functions (not just `#[tokio::test]`).
 
-use rn_dash::domain::metro::MetroHandle;
+use rn_dash::domain::ports::metro_port::MetroHandle;
 
-/// Build a dummy `MetroHandle` suitable for tests that only care about the
-/// `MetroManager::register() / is_running() / take_handle()` invariant —
-/// NOT for tests that interact with the stream_task or stdin_task.
+/// Minimal `MetroHandle` impl used by integration tests that only need
+/// `MetroManager::register / is_running / take_handle` semantics — NOT for
+/// tests that exercise stdin delivery or kill-path behavior.
+#[derive(Debug)]
+struct FakeMetroHandle {
+    pid: u32,
+    worktree_id: String,
+}
+
+impl MetroHandle for FakeMetroHandle {
+    fn pid(&self) -> u32 {
+        self.pid
+    }
+    fn worktree_id(&self) -> &str {
+        &self.worktree_id
+    }
+    fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn kill(self: Box<Self>) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+/// Build a dummy `Box<dyn MetroHandle>` for tests that exercise the
+/// `MetroManager::register` / `is_running` / `take_handle` invariant.
 ///
-/// SAFETY: this MUST run inside a tokio runtime (i.e. called from a
-/// `#[tokio::test]` function), because `tokio::spawn` requires one.
-pub fn fake_metro_handle(pid: u32, worktree: &str) -> MetroHandle {
-    let (stdin_tx, _stdin_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (kill_tx, _kill_rx) = tokio::sync::oneshot::channel();
-    MetroHandle {
+/// Synchronous — no tokio runtime required post-13-03.
+pub fn fake_metro_handle(pid: u32, worktree: &str) -> Box<dyn MetroHandle> {
+    Box::new(FakeMetroHandle {
         pid,
         worktree_id: worktree.to_string(),
-        stdin_tx,
-        stream_task: tokio::spawn(async {}),
-        stdin_task: tokio::spawn(async {}),
-        kill_tx: Some(kill_tx),
-    }
+    })
 }

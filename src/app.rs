@@ -1,6 +1,16 @@
 #![allow(dead_code)]
+
+// Phase 13 — submodules introduced before the F-200 split (Plan 13-06).
+// src/app.rs continues to host the flat update() body; submodule files live at
+// src/app/<name>.rs alongside it. `dispatch_tests` (already declared at file
+// bottom) uses the same pattern.
+pub mod effect;
+
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
+// MetroHandle is now a TRAIT (Plan 13-03). The `use` below resolves via the
+// re-export at src/domain/metro.rs. `Box<dyn MetroHandle>` is the runtime
+// shape; channels that carry handles use `UnboundedSender<Box<dyn MetroHandle>>`.
 use crate::domain::metro::MetroHandle;
 use futures::StreamExt;
 use ratatui::crossterm::event::{EventStream, KeyCode, KeyEventKind};
@@ -539,7 +549,7 @@ pub fn update(
     state: &mut AppState,
     action: Action,
     metro_tx: &tokio::sync::mpsc::UnboundedSender<Action>,
-    handle_tx: &tokio::sync::mpsc::UnboundedSender<MetroHandle>,
+    handle_tx: &tokio::sync::mpsc::UnboundedSender<Box<dyn MetroHandle>>,
 ) {
     // Clear pending_g on any action except SetPendingG
     if !matches!(action, Action::SetPendingG) {
@@ -621,12 +631,16 @@ pub fn update(
 
         Action::MetroStop => {
             state.palette_mode = None;
-            if let Some(mut handle) = state.metro.take_handle() {
+            if let Some(handle) = state.metro.take_handle() {
                 state.metro.set_stopping();
-                if let Some(kill_tx) = handle.kill_tx.take() {
-                    let _ = kill_tx.send(());
+                // Plan 13-03: kill() is the consuming trait method. The
+                // InAppMetroHandle bridge (defined further down in this file)
+                // performs the kill_tx send + stream/stdin task abort that
+                // previously lived inline here. Plan 13-07 replaces the
+                // bridge with TokioMetroAdapter in src/infra/metro.rs.
+                if let Err(e) = handle.kill() {
+                    tracing::warn!("metro handle kill failed: {e}");
                 }
-                handle.stdin_task.abort();
             }
         }
 
@@ -2073,7 +2087,9 @@ pub async fn run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<(
     let (metro_tx, mut metro_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
 
     // Channel for the spawn task to deliver the MetroHandle once spawning is complete.
-    let (handle_tx, mut handle_rx) = tokio::sync::mpsc::unbounded_channel::<MetroHandle>();
+    // Plan 13-03: MetroHandle is a trait; the channel now carries `Box<dyn MetroHandle>`.
+    let (handle_tx, mut handle_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Box<dyn MetroHandle>>();
 
     // Phase 5.1: multiplexer detection (replaces tmux_available bool)
     state.multiplexer = crate::infra::multiplexer::detect_multiplexer();
@@ -2182,17 +2198,22 @@ pub async fn run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<(
     // Cleanup: kill metro process group before exiting.
     // We kill by PGID directly instead of going through the async metro_process_task,
     // because aborting stream_task would race with the kill.
-    if let Some(mut handle) = state.metro.take_handle() {
+    //
+    // Plan 13-03: handle is now `Box<dyn MetroHandle>`; we capture `pid()` before
+    // consuming it via `kill()`. The trait's `kill(self: Box<Self>)` aborts the
+    // internal tokio tasks + signals kill_tx — the blocking PGID kill stays here
+    // as a safety net for shutdown (the in-app bridge's async kill_tx path may
+    // not flush before the runtime drops).
+    if let Some(handle) = state.metro.take_handle() {
+        let pid = handle.pid();
         // Kill the entire process group (yarn + node) so port 8081 is freed.
         // process_group(0) in spawn sets PGID = child PID, so -PID targets the group.
         let _ = std::process::Command::new("kill")
-            .args(["-9", &format!("-{}", handle.pid)])
+            .args(["-9", &format!("-{pid}")])
             .output();
-        handle.stream_task.abort();
-        handle.stdin_task.abort();
-        if let Some(kill_tx) = handle.kill_tx.take() {
-            let _ = kill_tx.send(());
-        }
+        // Consuming kill — aborts stream_task / stdin_task + signals kill_tx on
+        // the in-app bridge. Ignoring the result: shutdown is best-effort.
+        let _ = handle.kill();
     }
     if let Some(task) = state.command_task.take() {
         task.abort();
@@ -2205,11 +2226,61 @@ pub async fn run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<(
 // Async helpers — all run inside tokio::spawn, never blocking the event loop
 // ---------------------------------------------------------------------------
 
-/// Spawns the metro process and delivers a `MetroHandle` via `handle_tx`.
+/// Temporary bridge: `MetroHandle` impl backed by the same 4 tokio fields that
+/// the concrete `domain::metro::MetroHandle` struct previously held publicly.
+///
+/// Plan 13-03 introduces this to keep `spawn_metro_task` compiling after the
+/// struct → trait conversion. Plan 13-07 moves this logic into
+/// `src/infra/metro.rs::TokioMetroHandle` (the sole `MetroPort` adapter) and
+/// deletes this bridge.
+#[derive(Debug)]
+struct InAppMetroHandle {
+    pid: u32,
+    worktree_id: String,
+    stdin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    stream_task: tokio::task::JoinHandle<()>,
+    stdin_task: tokio::task::JoinHandle<()>,
+    /// Wrapped in Option so it can be taken exactly once via kill_tx.take().
+    kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl crate::domain::metro::MetroHandle for InAppMetroHandle {
+    fn pid(&self) -> u32 {
+        self.pid
+    }
+    fn worktree_id(&self) -> &str {
+        &self.worktree_id
+    }
+    fn send_stdin(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.stdin_tx
+            .send(bytes)
+            .map_err(|e| anyhow::anyhow!("metro stdin send failed: {e}"))?;
+        Ok(())
+    }
+    fn kill(mut self: Box<Self>) -> anyhow::Result<()> {
+        // Order mirrors the previous inline logic at the MetroStop + shutdown
+        // call sites: signal kill first, then abort the background tasks. The
+        // metro_process_task observes kill_rx and performs the PGID SIGKILL +
+        // port-free wait itself.
+        if let Some(kill_tx) = self.kill_tx.take() {
+            let _ = kill_tx.send(());
+        }
+        self.stream_task.abort();
+        self.stdin_task.abort();
+        Ok(())
+    }
+}
+
+/// Spawns the metro process and delivers a `Box<dyn MetroHandle>` via `handle_tx`.
+///
+/// Plan 13-03: constructs an `InAppMetroHandle` bridge (defined below) — the
+/// trait impl wraps the same 4 tokio fields the old concrete `MetroHandle`
+/// struct held. Plan 13-07 moves this logic into `TokioMetroAdapter` inside
+/// `src/infra/metro.rs` and removes the bridge.
 async fn spawn_metro_task(
     worktree_path: PathBuf,
     action_tx: tokio::sync::mpsc::UnboundedSender<Action>,
-    handle_tx: tokio::sync::mpsc::UnboundedSender<MetroHandle>,
+    handle_tx: tokio::sync::mpsc::UnboundedSender<Box<dyn MetroHandle>>,
 ) {
     use crate::domain::ports::process_port::ProcessPort;
     use crate::infra::process::TokioProcessClient;
@@ -2237,14 +2308,14 @@ async fn spawn_metro_task(
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
-            let handle = MetroHandle {
+            let handle: Box<dyn MetroHandle> = Box::new(InAppMetroHandle {
                 pid,
                 worktree_id,
                 stdin_tx,
                 stream_task,
                 stdin_task,
                 kill_tx: Some(kill_tx),
-            };
+            });
 
             let _ = handle_tx.send(handle);
         }

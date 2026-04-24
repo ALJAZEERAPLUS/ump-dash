@@ -5,6 +5,7 @@ pub mod action;
 pub mod command;
 pub mod jira;
 pub mod metro;
+pub mod pipeline;
 pub mod ports;
 pub mod refresh;
 pub mod worktree;

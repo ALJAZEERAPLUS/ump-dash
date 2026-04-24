@@ -2,15 +2,21 @@
 //
 // Metro domain types — single-instance invariant and status tracking.
 //
-// Architectural note: MetroHandle lives in domain/ but references tokio types
-// (UnboundedSender, JoinHandle). This is a deliberate trade-off: MetroHandle is an
-// infrastructure-bridging type whose sole purpose is to be held inside MetroManager's
-// Option<MetroHandle>. The domain invariant (only one metro instance at a time) is
-// enforced by MetroManager's Option wrapper at the TYPE level — you cannot hold two
-// MetroHandle values without explicitly constructing two MetroManagers, which nothing
-// in the codebase does. The tokio types used here (channels, JoinHandle) are inert
-// data — they carry no behavior until the infra layer acts on them. Domain/mod.rs does
-// NOT import infra, so ARCH-01 is maintained.
+// Plan 13-03: `MetroHandle` is now a TRAIT defined in
+// `src/domain/ports/metro_port.rs`. This module re-exports it for callers
+// that already import `crate::domain::metro::MetroHandle`. The tokio leak
+// flagged by audit F-004 is gone — the trait signature hides the channel
+// types, and the only concrete impls live infra-side (Plan 13-07:
+// `TokioMetroAdapter`) and temporarily inside `src/app.rs` (`InAppMetroHandle`
+// bridge, removed by Plan 13-07).
+//
+// Architectural note: `MetroManager.handle` is `Option<Box<dyn MetroHandle>>`.
+// The single-instance invariant still holds at the type level — you cannot
+// register a second handle without first taking the existing one.
+
+/// Re-export the `MetroHandle` trait from the ports module for convenience.
+/// Callers using `crate::domain::metro::MetroHandle` continue to resolve.
+pub use crate::domain::ports::metro_port::MetroHandle;
 
 /// Real-time activity state parsed from metro bundler stdout.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,31 +56,6 @@ pub enum MetroStatus {
     Stopping,
 }
 
-
-/// Live handle to a running metro process.
-///
-/// Owned exclusively by `MetroManager::handle` — never shared or cloned.
-/// Fields are pub so the infra layer (app.rs spawn logic in Plan 02) can construct
-/// and pass this struct across the domain boundary.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct MetroHandle {
-    /// OS process ID — used for status display and external-kill detection.
-    pub pid: u32,
-    /// Worktree this instance was started from — displayed in the metro pane.
-    pub worktree_id: String,
-    /// Sender half of the stdin channel. Infra stdin-writer task holds the receiver.
-    /// Drop this sender to signal the stdin task to stop.
-    pub stdin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    /// Background task that reads metro stdout/stderr and sends MetroLogLine actions.
-    pub stream_task: tokio::task::JoinHandle<()>,
-    /// Background task that writes bytes from stdin_tx channel to the child's stdin.
-    pub stdin_task: tokio::task::JoinHandle<()>,
-    /// Oneshot sender to signal the metro_process_task to kill the child.
-    /// Wrapped in Option so it can be taken exactly once via kill_tx.take().
-    pub kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
 /// Enforces the single-instance invariant: at most one metro process may run at a time.
 ///
 /// All metro state transitions go through MetroManager methods. The update() function
@@ -82,7 +63,10 @@ pub struct MetroHandle {
 #[derive(Debug)]
 pub struct MetroManager {
     /// Private — callers cannot bypass the single-instance check.
-    handle: Option<MetroHandle>,
+    ///
+    /// Owns a `Box<dyn MetroHandle>` trait object so the concrete type
+    /// (infra adapter or app-side bridge) stays invisible to the domain.
+    handle: Option<Box<dyn MetroHandle>>,
     /// Public read-only status for UI rendering.
     pub status: MetroStatus,
     /// Most recent activity parsed from metro stdout. None when metro is not running.
@@ -115,13 +99,13 @@ impl MetroManager {
     /// # Panics
     /// Panics if called while a handle already exists. Callers MUST call `take_handle()`
     /// and kill the process before registering a new one.
-    pub fn register(&mut self, handle: MetroHandle) {
+    pub fn register(&mut self, handle: Box<dyn MetroHandle>) {
         assert!(
             self.handle.is_none(),
             "BUG: MetroManager::register() called with an existing handle — kill first"
         );
-        let pid = handle.pid;
-        let worktree_id = handle.worktree_id.clone();
+        let pid = handle.pid();
+        let worktree_id = handle.worktree_id().to_string();
         self.handle = Some(handle);
         self.status = MetroStatus::Running { pid, worktree_id };
     }
@@ -136,13 +120,12 @@ impl MetroManager {
 
     /// Send a raw byte sequence to metro's stdin via the background stdin-writer task.
     ///
-    /// No-op if metro is not running.
+    /// No-op if metro is not running. Delegates to the handle's trait method — the
+    /// concrete impl owns the tokio channel.
     #[allow(dead_code)]
     pub fn send_stdin(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         if let Some(ref h) = self.handle {
-            h.stdin_tx
-                .send(bytes)
-                .map_err(|e| anyhow::anyhow!("metro stdin send failed: {e}"))?;
+            h.send_stdin(bytes)?;
         }
         Ok(())
     }
@@ -161,8 +144,9 @@ impl MetroManager {
     /// Take ownership of the handle for kill operations.
     ///
     /// Returns None if metro is not running. After this call is_running() returns false,
-    /// so register() can be called again once the kill completes.
-    pub fn take_handle(&mut self) -> Option<MetroHandle> {
+    /// so register() can be called again once the kill completes. Callers typically
+    /// follow up with `handle.kill()` on the returned `Box<dyn MetroHandle>`.
+    pub fn take_handle(&mut self) -> Option<Box<dyn MetroHandle>> {
         self.handle.take()
     }
 }
@@ -176,35 +160,51 @@ impl MetroManager {
 mod tests {
     use super::*;
 
-    /// Build a MetroHandle populated with dummy channels and already-resolved
-    /// JoinHandles. Must run inside a tokio runtime (tokio::spawn requires one),
-    /// hence the callers of this helper use `#[tokio::test]`.
-    fn dummy_handle(pid: u32) -> MetroHandle {
-        let (stdin_tx, _stdin_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (kill_tx, _kill_rx) = tokio::sync::oneshot::channel();
-        MetroHandle {
-            pid,
-            worktree_id: format!("wt-{pid}"),
-            stdin_tx,
-            stream_task: tokio::spawn(async {}),
-            stdin_task: tokio::spawn(async {}),
-            kill_tx: Some(kill_tx),
+    /// Minimal trait-object impl used only to exercise `MetroManager::register /
+    /// is_running / take_handle / clear`. The tokio channels that the production
+    /// adapter owns are deliberately absent — `send_stdin` / `kill` are no-ops.
+    #[derive(Debug)]
+    struct DummyHandle {
+        pid: u32,
+        worktree_id: String,
+    }
+
+    impl MetroHandle for DummyHandle {
+        fn pid(&self) -> u32 {
+            self.pid
+        }
+        fn worktree_id(&self) -> &str {
+            &self.worktree_id
+        }
+        fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn kill(self: Box<Self>) -> anyhow::Result<()> {
+            Ok(())
         }
     }
 
-    #[tokio::test]
+    fn dummy_handle(pid: u32) -> Box<dyn MetroHandle> {
+        Box::new(DummyHandle {
+            pid,
+            worktree_id: format!("wt-{pid}"),
+        })
+    }
+
+    #[test]
     #[should_panic(expected = "BUG: MetroManager::register() called with an existing handle")]
-    async fn register_twice_panics() {
+    fn register_twice_panics() {
         // COVER-01 — D-09 (a): the debug-assert on double-register is load-bearing.
         // Phase 13+ refactors that introduce a second MetroHandle construction path
-        // MUST fail here.
+        // MUST fail here. (No tokio runtime required post-13-03 — DummyHandle is
+        // synchronous, so the test is now a plain `#[test]`.)
         let mut mgr = MetroManager::new();
         mgr.register(dummy_handle(1));
         mgr.register(dummy_handle(2)); // must panic
     }
 
-    #[tokio::test]
-    async fn register_once_then_clear_allows_second_register() {
+    #[test]
+    fn register_once_then_clear_allows_second_register() {
         // Positive-case safety net — the test above only asserts panic on
         // double-register; this one asserts the legitimate sequence works.
         let mut mgr = MetroManager::new();

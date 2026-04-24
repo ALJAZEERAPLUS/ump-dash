@@ -321,11 +321,12 @@ mod palette_resolution {
 mod modal_dismissal {
     use super::*;
 
+    #[allow(clippy::type_complexity)]
     fn channels() -> (
         tokio::sync::mpsc::UnboundedSender<Action>,
         tokio::sync::mpsc::UnboundedReceiver<Action>,
-        tokio::sync::mpsc::UnboundedSender<crate::domain::metro::MetroHandle>,
-        tokio::sync::mpsc::UnboundedReceiver<crate::domain::metro::MetroHandle>,
+        tokio::sync::mpsc::UnboundedSender<Box<dyn crate::domain::metro::MetroHandle>>,
+        tokio::sync::mpsc::UnboundedReceiver<Box<dyn crate::domain::metro::MetroHandle>>,
     ) {
         let (a_tx, a_rx) = tokio::sync::mpsc::unbounded_channel();
         let (h_tx, h_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -514,11 +515,12 @@ mod modal_dismissal {
 mod command_queue {
     use super::*;
 
+    #[allow(clippy::type_complexity)]
     fn channels() -> (
         tokio::sync::mpsc::UnboundedSender<Action>,
         tokio::sync::mpsc::UnboundedReceiver<Action>,
-        tokio::sync::mpsc::UnboundedSender<crate::domain::metro::MetroHandle>,
-        tokio::sync::mpsc::UnboundedReceiver<crate::domain::metro::MetroHandle>,
+        tokio::sync::mpsc::UnboundedSender<Box<dyn crate::domain::metro::MetroHandle>>,
+        tokio::sync::mpsc::UnboundedReceiver<Box<dyn crate::domain::metro::MetroHandle>>,
     ) {
         let (a_tx, a_rx) = tokio::sync::mpsc::unbounded_channel();
         let (h_tx, h_rx) = tokio::sync::mpsc::unbounded_channel();
