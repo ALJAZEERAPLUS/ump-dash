@@ -88,7 +88,17 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   2. `CommandSpec::is_cancellable()` exists and returns `false` for all git-porcelain variants and `true` for all others; cancellation surface is type-driven, not convention
   3. Command prerequisites and action ordering are represented in domain code (either as a `Prerequisite` field on `CommandSpec` or a domain-level `Pipeline` / `Recipe` type); the dispatcher reads ordering from domain, not from inline `update()` logic
   4. All existing tests pass (`cargo test`, `cargo clippy -D warnings`) after refactors complete
-**Plans**: TBD
+**Plans**: 10 plans
+  - [ ] 13-01-PLAN.md — action.rs→domain; 3 trait relocations (ProcessPort/JiraPort/MultiplexerPort); extract_jira_key→domain (F-002+F-103+F-106+F-107+F-110+F-300+F-301)
+  - [ ] 13-02-PLAN.md — CommandSpec::is_cancellable() flat-enum predicate + make arch-lint target (REFACTOR-02)
+  - [ ] 13-03-PLAN.md — Effect enum + Recipe/Prerequisite/DependencyState + MetroPort/MetroHandle trait (F-201 type + F-204 type + F-203 trait + F-004)
+  - [ ] 13-04-PLAN.md — PortProbePort + WorktreePort + DevicePort + adapter shells (F-102+F-104+F-105)
+  - [ ] 13-05-PLAN.md — CommandRunnerPort + CommandEvent; remove Action import from infra (F-101)
+  - [ ] 13-06-PLAN.md — F-200 structural split of src/app.rs into src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs
+  - [ ] 13-07-PLAN.md — update() purity (F-201 consumer) + metro helpers→infra/metro.rs (F-203 consumer) + KEYBINDINGS registry + handle_key walker (F-208+F-400)
+  - [ ] 13-08-PLAN.md — Adapters injection; effect_runner full impl; app/ infra-free (F-202 consumer + F-101 consumer)
+  - [ ] 13-09-PLAN.md — Recipe consumer replaces 11 inline prereq sites; 3 flags deleted; exhaustive modal arms (F-204 consumer + F-205)
+  - [ ] 13-10-PLAN.md — AppState sub-struct regroup (F-209) + footer/help_overlay consume KEYBINDINGS (F-302+F-303) + Minor cleanup (F-108+F-112+verify F-003/F-005/F-006/F-100)
 
 ### Phase 14: Per-Worktree Task System Foundation
 **Goal**: Replace the three global task fields (`running_command`, `command_task`, `command_queue`) in `AppState` with a per-worktree task map, add `TaskId` and `TaskRecord` domain types, update `Action` routing so output lines and exit events carry `WorktreeId`, and enable parallel command execution across worktrees
