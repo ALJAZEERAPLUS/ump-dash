@@ -89,7 +89,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   3. Command prerequisites and action ordering are represented in domain code (either as a `Prerequisite` field on `CommandSpec` or a domain-level `Pipeline` / `Recipe` type); the dispatcher reads ordering from domain, not from inline `update()` logic
   4. All existing tests pass (`cargo test`, `cargo clippy -D warnings`) after refactors complete
 **Plans**: 10 plans
-  - [ ] 13-01-PLAN.md — action.rs→domain; 3 trait relocations (ProcessPort/JiraPort/MultiplexerPort); extract_jira_key→domain (F-002+F-103+F-106+F-107+F-110+F-300+F-301)
+  - [x] 13-01-PLAN.md — action.rs→domain; 3 trait relocations (ProcessPort/JiraPort/MultiplexerPort); extract_jira_key→domain (F-002+F-103+F-106+F-107+F-110+F-300+F-301) — 2026-04-24
   - [ ] 13-02-PLAN.md — CommandSpec::is_cancellable() flat-enum predicate + make arch-lint target (REFACTOR-02)
   - [ ] 13-03-PLAN.md — Effect enum + Recipe/Prerequisite/DependencyState + MetroPort/MetroHandle trait (F-201 type + F-204 type + F-203 trait + F-004)
   - [ ] 13-04-PLAN.md — PortProbePort + WorktreePort + DevicePort + adapter shells (F-102+F-104+F-105)

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
-status: planned
-stopped_at: Phase 13 planned — 10 PLAN.md files across 8 waves covering REFACTOR-01 (all 12 Critical+Major AUDIT findings), REFACTOR-02 (CommandSpec::is_cancellable flat-enum predicate), REFACTOR-03 (Prerequisite+Recipe domain types + dispatcher consumer). F-500 + F-501 deferred to Phase 14 per AUDIT-ADDENDUM. Ready to execute.
-last_updated: "2026-04-24T08:55:00Z"
+status: in-progress
+stopped_at: Phase 13 Wave 1 complete — 13-01 merged (action.rs → domain/; ProcessPort/JiraPort/MultiplexerPort traits + extract_jira_key relocated). 49 tests + clippy green. 9 plans remain across 7 waves.
+last_updated: "2026-04-24T10:30:00Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 12
-  percent: 33
+  completed_plans: 13
+  percent: 59
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 PLANNED (10 plans, 8 waves) — ready to execute
+**Current focus:** Phase 13 IN-PROGRESS — Wave 1 complete (1/10 plans), Wave 2 next
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — PLANNED (0/10 plans executed)
-Plan: 10 PLAN.md files created; wave topology: W1=[01], W2=[02,03], W3=[04,05], W4=[06], W5=[07], W6=[08], W7=[09], W8=[10]
-Status: Ready to execute. REFACTOR-01 (all 12 Critical+Major AUDIT findings) covered across 9 plans; REFACTOR-02 (is_cancellable flat-enum) in 13-02; REFACTOR-03 (Prerequisite+Recipe types in 13-03, consumer in 13-09). F-500 (WorktreeSlice) and F-501 (Command category-split) explicitly deferred to Phase 14 per AUDIT-ADDENDUM routing. 20 shape guards in make arch-lint will enforce architectural invariants throughout execution.
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (1/10 plans executed)
+Plan: W1 complete (13-01); next up W2 parallel (13-02 + 13-03); remaining waves W3..W8
+Status: Wave 1 merged to main. src/action.rs relocated to src/domain/action.rs; src/domain/ports/{mod,process_port,jira_port,multiplexer_port}.rs scaffolded; src/domain/jira.rs now owns extract_jira_key. Guards G-02 (ui-no-infra-jira), G-10 (ports module exists), G-15 (action moved) pass. 49 tests + clippy --all-targets -- -D warnings green.
 Last activity: 2026-04-24
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
