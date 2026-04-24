@@ -116,6 +116,26 @@ impl CommandSpec {
         )
     }
 
+    /// Returns false for git-porcelain commands (data-integrity risk on cancellation);
+    /// true for all other commands (yarn, rn, rm, adb, shell).
+    ///
+    /// REFACTOR-02: Type-driven cancellability. Git variants are closed by construction —
+    /// adding a new `Git*` variant requires explicit opt-in here (compile-error would be
+    /// ideal; today this is a flat-enum predicate per AUDIT-ADDENDUM F-501 DEFERRED decision).
+    pub fn is_cancellable(&self) -> bool {
+        !matches!(
+            self,
+            CommandSpec::GitResetHard
+                | CommandSpec::GitResetHardFetch
+                | CommandSpec::GitPull
+                | CommandSpec::GitPush
+                | CommandSpec::GitRebase { .. }
+                | CommandSpec::GitCheckout { .. }
+                | CommandSpec::GitCheckoutNew { .. }
+                | CommandSpec::GitFetch
+        )
+    }
+
     /// Returns true for commands that need a user-supplied text string before running.
     pub fn needs_text_input(&self) -> bool {
         match self {
