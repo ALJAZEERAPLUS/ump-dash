@@ -611,7 +611,12 @@ pub fn update(
             let tx = metro_tx.clone();
             tokio::spawn(async move {
                 if let Some(info) = crate::infra::port::detect_external_metro(8081).await {
-                    let _ = tx.send(Action::ExternalMetroDetected(info));
+                    let _ = tx.send(Action::ExternalMetroDetected(
+                        crate::domain::ports::port_probe_port::ExternalProcessInfo {
+                            pid: info.pid,
+                            working_dir: info.working_dir,
+                        },
+                    ));
                 } else {
                     let _ = tx.send(Action::MetroStartConfirmed);
                 }
@@ -2136,7 +2141,12 @@ pub async fn run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<(
         let startup_tx = metro_tx.clone();
         tokio::spawn(async move {
             if let Some(info) = crate::infra::port::detect_external_metro(8081).await {
-                let _ = startup_tx.send(Action::ExternalMetroDetected(info));
+                let _ = startup_tx.send(Action::ExternalMetroDetected(
+                    crate::domain::ports::port_probe_port::ExternalProcessInfo {
+                        pid: info.pid,
+                        working_dir: info.working_dir,
+                    },
+                ));
             }
         });
     }

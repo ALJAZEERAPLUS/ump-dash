@@ -346,3 +346,51 @@ pub async fn list_worktrees(repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
     let text = String::from_utf8(output.stdout)?;
     parse_worktree_porcelain(&text)
 }
+
+/// F-104 adapter: wraps the existing async worktree free fns behind the
+/// `WorktreePort` trait. Consumers after Plan 13-08 receive this as
+/// `Arc<dyn WorktreePort>`; until then the free fns above remain the primary
+/// call path.
+pub struct GitWorktreeAdapter;
+
+#[async_trait::async_trait]
+impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
+    async fn list(
+        &self,
+        repo_root: &std::path::Path,
+    ) -> anyhow::Result<Vec<crate::domain::worktree::Worktree>> {
+        list_worktrees(repo_root).await
+    }
+
+    async fn remove(
+        &self,
+        repo_root: &std::path::Path,
+        worktree_path: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        remove_worktree(repo_root, worktree_path).await
+    }
+
+    async fn add(
+        &self,
+        repo_root: &std::path::Path,
+        branch_name: &str,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        add_worktree(repo_root, branch_name).await
+    }
+
+    async fn add_new_branch(
+        &self,
+        repo_root: &std::path::Path,
+        new_branch: &str,
+        base_branch: &str,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        add_worktree_new_branch(repo_root, new_branch, base_branch).await
+    }
+
+    async fn list_remote_branches(
+        &self,
+        repo_root: &std::path::Path,
+    ) -> anyhow::Result<Vec<String>> {
+        list_remote_branches(repo_root).await
+    }
+}

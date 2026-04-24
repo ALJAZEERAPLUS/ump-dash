@@ -122,7 +122,7 @@ pub enum Action {
     CommandOutputScrollDown,// j in CommandOutput pane — scroll down
 
     // Phase 5.2: External metro conflict detection
-    ExternalMetroDetected(crate::infra::port::ExternalMetroInfo), // port 8081 occupied by external process
+    ExternalMetroDetected(crate::domain::ports::port_probe_port::ExternalProcessInfo), // port 8081 occupied by external process
     KillExternalMetro(u32),        // user chose "Kill it" with PID to kill
     MetroStartConfirmed,           // detection passed — proceed with actual metro spawn
 

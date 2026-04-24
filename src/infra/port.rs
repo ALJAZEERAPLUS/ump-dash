@@ -64,3 +64,33 @@ pub async fn kill_process(pid: u32) -> anyhow::Result<()> {
         .await?;
     Ok(())
 }
+
+/// F-102 adapter: wraps the existing free fns behind the `PortProbePort` trait.
+///
+/// Consumers after Plan 13-08 receive this as `Arc<dyn PortProbePort>` and see
+/// only the trait surface. Until then the free fns above remain the primary
+/// call path (app.rs still calls them directly).
+pub struct LsofPortProbe;
+
+#[async_trait::async_trait]
+impl crate::domain::ports::port_probe_port::PortProbePort for LsofPortProbe {
+    fn port_is_free(&self, port: u16) -> bool {
+        port_is_free(port)
+    }
+
+    async fn detect_external(
+        &self,
+        port: u16,
+    ) -> Option<crate::domain::ports::port_probe_port::ExternalProcessInfo> {
+        detect_external_metro(port).await.map(|info| {
+            crate::domain::ports::port_probe_port::ExternalProcessInfo {
+                pid: info.pid,
+                working_dir: info.working_dir,
+            }
+        })
+    }
+
+    async fn kill_process(&self, pid: u32) -> anyhow::Result<()> {
+        kill_process(pid).await
+    }
+}

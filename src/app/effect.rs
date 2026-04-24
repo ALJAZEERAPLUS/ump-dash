@@ -10,18 +10,9 @@
 #![allow(dead_code)]
 
 use crate::domain::command::CommandSpec;
+use crate::domain::ports::device_port::DeviceKind;
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-/// Device family enum for the LoadDevices effect.
-///
-/// Stub — Plan 13-04 moves this to `crate::domain::ports::device_port::DeviceKind`.
-/// When 13-04 lands, delete this definition and replace with an import.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DeviceKind {
-    Android,
-    Ios,
-}
 
 /// App-tier effect grammar — describes every side-effecting operation that
 /// update() can dispatch. Each variant maps to one or more current

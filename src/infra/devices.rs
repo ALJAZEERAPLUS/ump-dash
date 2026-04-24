@@ -271,3 +271,27 @@ pub async fn list_ios_physical_devices() -> anyhow::Result<Vec<DeviceInfo>> {
     let text = String::from_utf8_lossy(&output.stdout).to_string();
     Ok(parse_xctrace_devices(&text))
 }
+
+/// F-105 adapter: dispatches by `DeviceKind` to the existing free fns
+/// (`list_android_devices` / `list_ios_simulators`).
+///
+/// Physical iOS devices (`list_ios_physical_devices`) are not yet part of the
+/// trait surface — the current app only consumes the simulator list for the
+/// iOS family. A future extension can add a `DeviceKind::IosPhysical` variant
+/// and dispatch accordingly without breaking existing consumers.
+pub struct AdbXcrunDevices;
+
+#[async_trait::async_trait]
+impl crate::domain::ports::device_port::DevicePort for AdbXcrunDevices {
+    async fn list(
+        &self,
+        kind: crate::domain::ports::device_port::DeviceKind,
+    ) -> anyhow::Result<Vec<DeviceInfo>> {
+        match kind {
+            crate::domain::ports::device_port::DeviceKind::Android => {
+                list_android_devices().await
+            }
+            crate::domain::ports::device_port::DeviceKind::Ios => list_ios_simulators().await,
+        }
+    }
+}
