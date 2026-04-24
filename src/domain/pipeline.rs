@@ -14,7 +14,130 @@
 
 use crate::domain::command::{CleanOptions, CommandSpec};
 
-// ==== Types filled in the feat commit ====
+/// Precondition that a `CommandSpec` requires before it can run.
+///
+/// Replaces the inline `needs_metro()` / `spec.needs_metro()` checks scattered
+/// across `update()` at app.rs:890, 1014, 1713 (see AUDIT F-204 line list).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Prerequisite {
+    /// Metro bundler must be running before this command can dispatch.
+    MetroRunning,
+    /// Worktree dependencies must be fresh — `yarn` if true, `pod install` if true.
+    /// Dispatcher inspects these flags to decide whether to front-load a sync step.
+    DependenciesFresh { yarn: bool, pods: bool },
+}
+
+impl CommandSpec {
+    /// Derive prerequisites from the variant. Replaces the per-site `needs_metro()`
+    /// inline checks — callers should prefer `prerequisites()` going forward.
+    ///
+    /// `needs_metro()` stays as a thin wrapper for backward compatibility.
+    pub fn prerequisites(&self) -> Vec<Prerequisite> {
+        match self {
+            CommandSpec::RnRunAndroid { .. }
+            | CommandSpec::RnRunIos { .. }
+            | CommandSpec::RnRunIosDevice
+            | CommandSpec::RnReleaseBuild => vec![Prerequisite::MetroRunning],
+            // Sync prerequisites come from Recipe::SyncThenRun — not per-variant.
+            _ => vec![],
+        }
+    }
+}
+
+/// A single-command or multi-step dispatch unit. The dispatcher reads `Recipe`
+/// and calls `expand()`; it NEVER branches on inline boolean flags.
+///
+/// Replaces the 11 inline prereq sites in `update()` enumerated by AUDIT F-204.
+#[derive(Debug, Clone)]
+pub enum Recipe {
+    /// Dispatch one command, nothing before or after.
+    Single(CommandSpec),
+    /// Dispatch a fixed ordered list.
+    Sequence(Vec<CommandSpec>),
+    /// Clean palette expansion — honours CleanOptions toggles + optional sync_after.
+    Clean(CleanOptions),
+    /// Front-load yarn/pod sync steps if stale, then run the given command.
+    /// iOS-only for pods per F-204 rule.
+    SyncThenRun(CommandSpec),
+    /// Front-load yarn/pod sync steps if stale, then start metro.
+    /// Pods included when stale regardless of target (metro is platform-agnostic).
+    SyncThenStartMetro,
+    /// `RnReleaseBuild` followed by `AdbInstallApk`.
+    ReleaseBuildAndInstall,
+    /// `GitFetch` followed by `GitResetHard`.
+    GitFetchThenReset,
+}
+
+/// Staleness snapshot used by `Recipe::expand` to decide which sync commands
+/// front-load the dispatched sequence.
+///
+/// Copy-by-value — tiny struct, no heap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DependencyState {
+    /// `yarn.lock` is newer than `node_modules/.yarn-integrity` (or missing).
+    pub stale_yarn: bool,
+    /// `Podfile.lock` is newer than `ios/Pods/Manifest.lock` (or missing).
+    pub stale_pods: bool,
+    /// True if the target about to run is iOS (affects whether pod install runs).
+    pub is_ios_target: bool,
+}
+
+impl Recipe {
+    /// Expand the recipe into a linear sequence of `CommandSpec` — the dispatcher
+    /// calls this once per recipe and enqueues every item in order.
+    ///
+    /// Pure — no I/O, no tokio. Testable without a runtime.
+    pub fn expand(&self, deps: &DependencyState) -> Vec<CommandSpec> {
+        match self {
+            Recipe::Single(cmd) => vec![cmd.clone()],
+            Recipe::Sequence(cmds) => cmds.clone(),
+            Recipe::Clean(opts) => {
+                let mut v = Vec::new();
+                if opts.pods {
+                    v.push(CommandSpec::RnCleanCocoapods);
+                }
+                if opts.android {
+                    v.push(CommandSpec::RnCleanAndroid);
+                }
+                if opts.node_modules {
+                    v.push(CommandSpec::RmNodeModules);
+                }
+                if opts.sync_after {
+                    v.push(CommandSpec::YarnInstall);
+                    v.push(CommandSpec::YarnPodInstall);
+                }
+                v
+            }
+            Recipe::SyncThenRun(cmd) => {
+                let mut v = Vec::new();
+                if deps.stale_yarn {
+                    v.push(CommandSpec::YarnInstall);
+                }
+                if deps.stale_pods && deps.is_ios_target {
+                    v.push(CommandSpec::YarnPodInstall);
+                }
+                v.push(cmd.clone());
+                v
+            }
+            Recipe::SyncThenStartMetro => {
+                let mut v = Vec::new();
+                if deps.stale_yarn {
+                    v.push(CommandSpec::YarnInstall);
+                }
+                if deps.stale_pods {
+                    v.push(CommandSpec::YarnPodInstall);
+                }
+                v // dispatcher follows with MetroStart
+            }
+            Recipe::ReleaseBuildAndInstall => {
+                vec![CommandSpec::RnReleaseBuild, CommandSpec::AdbInstallApk]
+            }
+            Recipe::GitFetchThenReset => {
+                vec![CommandSpec::GitFetch, CommandSpec::GitResetHard]
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
