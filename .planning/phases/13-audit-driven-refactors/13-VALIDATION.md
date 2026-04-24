@@ -49,7 +49,7 @@ Phase 13 is a refactor phase. Behavior preservation is guarded by the 49 existin
 | G-03 | `! rg 'crate::action::Action' src/infra/` | infra/ does not know domain Action grammar | F-101 | 0 hits after 13-08 |
 | G-04 | `! rg 'tokio::spawn\|spawn_blocking' src/app/update.rs` | update() is pure — no effect dispatch | F-201 | 0 hits after 13-07 |
 | G-05 | `! rg 'reqwest\|tokio::process' src/app/` | Heavy infra crates not imported by app/ | F-203 | 0 hits after 13-07 |
-| G-06 | `! rg 'pending_restart\|pending_switch_path\|pending_metro_run\|pending_metro_after_sync\|skip_external_metro_check' src/app/state.rs` | Coordinating flags collapsed into Recipe | F-204 | 0 hits after 13-09 |
+| G-06 | `! rg 'pending_metro_run\|pending_metro_after_sync\|pending_switch_path' src/app/state.rs` | Recipe-subsumable prereq flags collapsed into Recipe variant data | F-204 | 0 hits after 13-09 (survivors `pending_restart` + `skip_external_metro_check` stay — metro-lifecycle state per 13-RESEARCH Pitfall 3) |
 | G-07 | `rg 'pub fn is_cancellable' src/domain/command.rs \| wc -l` ≥ 1 | REFACTOR-02 predicate exists | REFACTOR-02 | ≥1 after 13-02 |
 | G-08 | `rg 'pub enum Recipe\|pub enum Prerequisite' src/domain/ \| wc -l` ≥ 2 | REFACTOR-03 domain types exist | REFACTOR-03, F-204 | ≥2 after 13-03 |
 | G-09 | `rg 'pub enum Effect' src/app/effect.rs \| wc -l` ≥ 1 | Effect enum exists | F-201 | ≥1 after 13-03 |

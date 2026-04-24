@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
-status: executing
-stopped_at: Completed 12-04-PLAN.md (COVER-04 baseline coverage — BASELINE-COVERAGE.json + BASELINE-COVERAGE.md + COVERAGE-THRESHOLDS.md committed at 5cc75ae; 27 src/ files, 12.84% line / 20.82% function / 9.89% region coverage; per-row floor(baseline,5) thresholds); Phase 12 COMPLETE — all 4 COVER-NN green
-last_updated: "2026-04-23T19:02:42Z"
-last_activity: 2026-04-23
+status: planned
+stopped_at: Phase 13 planned — 10 PLAN.md files across 8 waves covering REFACTOR-01 (all 12 Critical+Major AUDIT findings), REFACTOR-02 (CommandSpec::is_cancellable flat-enum predicate), REFACTOR-03 (Prerequisite+Recipe domain types + dispatcher consumer). F-500 + F-501 deferred to Phase 14 per AUDIT-ADDENDUM. Ready to execute.
+last_updated: "2026-04-24T08:55:00Z"
+last_activity: 2026-04-24
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 12
+  total_plans: 22
   completed_plans: 12
   percent: 33
 ---
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 12 complete — COVER gate green; Phase 13 (audit-driven refactors) is next
+**Current focus:** Phase 13 PLANNED (10 plans, 8 waves) — ready to execute
 
 ## Current Position
 
-Phase: 12 (coverage-gate) — COMPLETE (5/5 plans; all four COVER-NN green)
-Plan: 5 of 5 complete (12-00 scaffolding, 12-01 metro, 12-02 process-group, 12-03 dispatch, 12-04 baseline)
-Status: Phase 12 COMPLETE. All four COVER-NN requirements green. Baseline locked at 12.84% line / 20.82% function / 9.89% region total coverage; 27-row per-file ratchet recorded in COVERAGE-THRESHOLDS.md (floor-to-5 policy, D-04). Phase 13 (audit-driven refactors) can now begin.
-Last activity: 2026-04-23
+Phase: 13 (audit-driven-refactors) — PLANNED (0/10 plans executed)
+Plan: 10 PLAN.md files created; wave topology: W1=[01], W2=[02,03], W3=[04,05], W4=[06], W5=[07], W6=[08], W7=[09], W8=[10]
+Status: Ready to execute. REFACTOR-01 (all 12 Critical+Major AUDIT findings) covered across 9 plans; REFACTOR-02 (is_cancellable flat-enum) in 13-02; REFACTOR-03 (Prerequisite+Recipe types in 13-03, consumer in 13-09). F-500 (WorktreeSlice) and F-501 (Command category-split) explicitly deferred to Phase 14 per AUDIT-ADDENDUM routing. 20 shape guards in make arch-lint will enforce architectural invariants throughout execution.
+Last activity: 2026-04-24
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
 
