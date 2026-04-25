@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 — ALL 10 PLANS EXECUTED. Wave 8 (13-10) complete: AppState regrouped into 6 sub-structs (MetroState/WorktreeBrowserState/CommandRunnerState/ModalStackState/PendingFlags/AppConfigState); footer.rs + help_overlay.rs consume KEYBINDINGS registry; F-108 (tmux.rs deleted, is_inside_tmux relocated to multiplexer.rs) + F-112 + minor verifications closed. 79 tests green, clippy clean, ALL 20 shape guards in `make arch-lint` ACTIVE. Awaiting phase verification.
-last_updated: "2026-04-25T10:30:00Z"
+stopped_at: Phase 13 COMPLETE + VERIFIED — 4/4 success criteria passed; 23 Critical/Major AUDIT findings closed (5 Critical + 18 Major); 2 Addendum Major findings explicitly deferred with rationale (F-500 → Phase 14, F-501 → backlog). REFACTOR-01/02/03 all delivered. ALL 20 shape guards ACTIVE in `make arch-lint`. 79 tests green, clippy clean. Phase 14 (Per-Worktree Task System Foundation) unblocked.
+last_updated: "2026-04-25T10:45:00Z"
 last_activity: 2026-04-25
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 22
   completed_plans: 22
-  percent: 100
+  percent: 50
 ---
 
 # Project State
@@ -21,16 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 EXECUTION COMPLETE — 10/10 plans landed across 8 waves; awaiting phase verification
+**Current focus:** Phase 13 VERIFIED + COMPLETE — Phase 14 (Per-Worktree Task System Foundation) is unblocked
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — EXECUTION COMPLETE (10/10 plans)
-Plan: All waves 1-8 merged to main. Final HEAD: 2e91a66 (`docs(13-10): complete Phase 13 final plan summary`).
-Status: Phase 13 executed end-to-end. AUDIT findings closed: F-002 (action.rs→domain), F-101 (infra-no-Action), F-102/F-103/F-104/F-105/F-106 (8 domain ports scaffolded + adapter shells), F-107/F-108/F-110/F-300/F-301 (UI/infra leak fixes), F-200 (src/app.rs split), F-201 (TEA purity, update→Vec<Effect>), F-202 (Adapters hexagonal injection), F-203 (TokioMetroAdapter), F-204 (Recipe::expand consumer), F-205 (exhaustive ModalState), F-208/F-302/F-303/F-400 (KEYBINDINGS registry + UI rewire), F-209 (AppState sub-structs), F-112 (cleanup). REFACTOR-01 + REFACTOR-02 + REFACTOR-03 all delivered. ALL 20 shape guards in `make arch-lint` ACTIVE: G-01 through G-20 every one passing. Tests: 79 pass (76 lib + 2 metro + 1 pgid); clippy --all-targets -D warnings clean. Next: spawn gsd-verifier for phase goal verification, then update_roadmap + evolve PROJECT.md.
-Last activity: 2026-04-25
+Phase: 13 (audit-driven-refactors) — COMPLETE (10/10 plans, verified 2026-04-25)
+Plan: 13-VERIFICATION.md status: passed (4/4 success criteria); 23 of 25 findings closed in code, 2 Addendum Major findings explicitly deferred with written rationale per AUDIT-ADDENDUM routing.
+Status: Phase 13 closed. AUDIT findings closed in code: F-002, F-004, F-101, F-102, F-103, F-104, F-105, F-106, F-107, F-108, F-110, F-200, F-201, F-202, F-203, F-204, F-205, F-208, F-209, F-300, F-301, F-302, F-303, F-400. Deferred: F-500 (WorktreeSlice) → Phase 14; F-501 (Command category-split) → backlog (flat-enum chosen). REFACTOR-01 + REFACTOR-02 + REFACTOR-03 all delivered. ALL 20 shape guards in `make arch-lint` ACTIVE and passing. Tests: 79 pass (76 lib + 2 metro + 1 pgid); clippy --all-targets -D warnings clean. Final HEAD: cd47bea.
 
-Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
+Next phase: Phase 14 — Per-Worktree Task System Foundation (depends on Phase 13 — now satisfied).
+
+Progress: [#####     ] 50% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5; Phase 13 complete 10/10)
 
 ## Performance Metrics
 
