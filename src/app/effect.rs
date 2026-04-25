@@ -1,11 +1,14 @@
-//! App-tier effect grammar (F-201 type half — Plan 13-03).
+//! App-tier effect grammar (F-201 type half — Plan 13-03; Plan 13-08 expansion).
 //!
 //! `Effect` is plain data — every variant is constructable without closures or
-//! tokio handles. Plan 13-07 rewrites update() to return `Vec<Effect>`; the
-//! eventual effect_runner.rs interprets them into tokio::spawn calls at a
-//! single boundary.
+//! tokio handles. Plan 13-07 rewrote update() to return `Vec<Effect>`; Plan
+//! 13-08 routes every variant through trait objects on the `Adapters` struct
+//! (no more direct `infra::*` calls in `effect_runner`).
 //!
-//! This module is TYPE-DEFINITION only — it has no consumers yet.
+//! Plan 13-08: variants that need repo_root context now carry it explicitly.
+//! Pre-13-08 effect_runner.rs grabbed `std::env::current_dir()` as a fallback;
+//! after 13-08 the caller (update()) supplies the right path from
+//! `state.repo_root`.
 
 #![allow(dead_code)]
 
@@ -15,55 +18,36 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// App-tier effect grammar — describes every side-effecting operation that
-/// update() can dispatch. Each variant maps to one or more current
-/// `tokio::spawn` call sites (see AUDIT.md F-201, lines 379-420).
-///
-/// Invariant: every variant is plain data. No closures, no `Box<dyn Fn>`,
-/// no tokio handles. The effect_runner interprets variants into spawns.
+/// update() can dispatch.
 #[derive(Debug)]
 pub enum Effect {
     // Metro lifecycle
-    /// Replaces the detect-external spawn at app.rs:602.
     DetectExternalMetro { port: u16 },
-    /// Replaces the spawn_metro_task call at app.rs:619.
     SpawnMetro { worktree: PathBuf },
-    /// Replaces the http_post calls at app.rs:636, 649 (reload, open debugger).
     MetroHttpPost { url: String, body: String },
-    /// Replaces the kill-external-metro spawn at app.rs:709.
     KillProcess { pid: u32 },
 
     // Commands
-    /// Replaces the command spawn at app.rs:524 (dispatch_command helper body).
     SpawnCommand {
         spec: CommandSpec,
         cwd: PathBuf,
         branch: String,
     },
-    /// Replaces the device-load spawn at app.rs:929.
     LoadDevices { kind: DeviceKind },
 
-    // Worktrees
-    /// Replaces the list-worktrees spawns at app.rs:817, 993, 1863, 1903, 2042, 2107.
-    ListWorktrees,
-    /// Replaces the remove-worktree spawn at app.rs:1101.
-    RemoveWorktree { path: PathBuf },
-    /// Replaces the add-worktree spawn at app.rs:1205.
-    AddWorktree { branch: String },
-    /// Replaces the add-worktree-new-branch spawn at app.rs:1186.
-    AddWorktreeNewBranch { new: String, base: String },
-    /// Replaces the list-remote-branches spawn at app.rs:1928.
-    ListRemoteBranches,
+    // Worktrees — Plan 13-08: variants now carry repo_root from update().
+    ListWorktrees { repo_root: PathBuf },
+    RemoveWorktree { repo_root: PathBuf, path: PathBuf },
+    AddWorktree { repo_root: PathBuf, branch: String },
+    AddWorktreeNewBranch { repo_root: PathBuf, new: String, base: String },
+    ListRemoteBranches { repo_root: PathBuf },
 
-    // Persistence (spawn_blocking sites)
-    /// Replaces the save-jira-cache spawn at app.rs:1564.
+    // Persistence (spawn_blocking sites — F-111 PersistencePort deferred)
     SaveJiraCache(HashMap<String, String>),
-    /// Replaces the save-android-mode spawns at app.rs:1170, 1339, 1362, 1392, 1413.
     SaveAndroidMode(String),
-    /// Replaces the record-sim-used spawn at app.rs:1678.
     RecordSimUsed(String),
 
     // External processes
-    /// Replaces the open-in-multiplexer spawns at app.rs:1236, 1548.
     OpenInMultiplexer {
         worktree: PathBuf,
         name: String,
@@ -71,11 +55,9 @@ pub enum Effect {
     },
 
     // JIRA
-    /// Replaces the fetch-jira-titles spawns at app.rs:708, 794.
     FetchJiraTitles { keys: Vec<String> },
 
-    // Recursive self-dispatch (absorbs F-206 — the 7+ `update(state, next_action, ..)`
-    // recursive call sites collapse into Effect::ScheduleAction post-F-201).
+    // Recursive self-dispatch
     ScheduleAction(crate::domain::action::Action),
 }
 
@@ -85,12 +67,9 @@ mod tests {
 
     #[test]
     fn effect_variants_compile() {
-        // Compilation-only: ensures every variant has a valid data shape.
-        // A handful of representative variants are exercised; the full set is
-        // implicitly validated by the match-arm shape below.
         let _ = Effect::DetectExternalMetro { port: 8081 };
-        let _ = Effect::ListWorktrees;
-        let _ = Effect::ListRemoteBranches;
+        let _ = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
+        let _ = Effect::ListRemoteBranches { repo_root: PathBuf::from(".") };
         let _ = Effect::SaveAndroidMode("release".into());
         let _ = Effect::KillProcess { pid: 999 };
         let _ = Effect::LoadDevices {
@@ -107,9 +86,6 @@ mod tests {
 
     #[test]
     fn effect_has_at_least_fifteen_variants() {
-        // G-09 shape guard: ensure the enum has ≥15 variants by exhaustively
-        // matching — if a variant is added/removed the compiler forces an
-        // update here, and the branch count is visibly ≥15.
         fn variant_index(e: &Effect) -> u32 {
             match e {
                 Effect::DetectExternalMetro { .. } => 0,
@@ -118,11 +94,11 @@ mod tests {
                 Effect::KillProcess { .. } => 3,
                 Effect::SpawnCommand { .. } => 4,
                 Effect::LoadDevices { .. } => 5,
-                Effect::ListWorktrees => 6,
+                Effect::ListWorktrees { .. } => 6,
                 Effect::RemoveWorktree { .. } => 7,
                 Effect::AddWorktree { .. } => 8,
                 Effect::AddWorktreeNewBranch { .. } => 9,
-                Effect::ListRemoteBranches => 10,
+                Effect::ListRemoteBranches { .. } => 10,
                 Effect::SaveJiraCache(_) => 11,
                 Effect::SaveAndroidMode(_) => 12,
                 Effect::RecordSimUsed(_) => 13,
@@ -131,7 +107,7 @@ mod tests {
                 Effect::ScheduleAction(_) => 16,
             }
         }
-        let e = Effect::ListWorktrees;
+        let e = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
         assert_eq!(variant_index(&e), 6);
     }
 }

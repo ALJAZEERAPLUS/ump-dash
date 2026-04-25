@@ -292,7 +292,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
 
             // Phase 4: fetch titles for uncached branches
-            if state.jira_client.is_some() {
+            if state.jira_available {
                 let keys_to_fetch: Vec<String> = state.worktrees.iter()
                     .filter_map(|wt| {
                         let key = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)?;
@@ -312,7 +312,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 tracing::debug!("skipping periodic refresh — worktree op in flight");
                 return effects;
             }
-            effects.push(Effect::ListWorktrees);
+            effects.push(Effect::ListWorktrees { repo_root: state.repo_root.clone() });
         }
 
         // --- Phase 3: Command dispatch ---
@@ -342,7 +342,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     let pods_stale = if is_ios {
                         let idx = state.worktree_table_state.selected().unwrap_or(0);
                         let wt_path = &state.worktrees[idx.min(state.worktrees.len() - 1)].path;
-                        crate::infra::worktrees::check_stale_pods(wt_path)
+                        crate::domain::staleness::check_stale_pods(wt_path)
                     } else {
                         false
                     };
@@ -473,13 +473,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if refresh.worktrees {
                     // Full worktree reload (also re-checks staleness and triggers JIRA fetch
                     // via WorktreesLoaded handler when branch names change)
-                    effects.push(Effect::ListWorktrees);
+                    effects.push(Effect::ListWorktrees { repo_root: state.repo_root.clone() });
                 } else if refresh.staleness {
                     // Staleness refresh: re-check ALL worktrees (cheap I/O, ensures
                     // correct state even if user changed selection during command)
                     for wt in state.worktrees.iter_mut() {
-                        wt.stale = crate::infra::worktrees::check_stale(&wt.path);
-                        wt.stale_pods = crate::infra::worktrees::check_stale_pods(&wt.path);
+                        wt.stale = crate::domain::staleness::check_stale(&wt.path);
+                        wt.stale_pods = crate::domain::staleness::check_stale_pods(&wt.path);
                     }
                 }
             }
@@ -574,7 +574,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 // Emit the async removal effect
                 state.worktree_op_in_flight = true;
-                effects.push(Effect::RemoveWorktree { path: wt_path });
+                effects.push(Effect::RemoveWorktree { repo_root: state.repo_root.clone(), path: wt_path });
                 return effects;
             }
 
@@ -651,6 +651,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             };
                             state.worktree_op_in_flight = true;
                             effects.push(Effect::AddWorktreeNewBranch {
+                                repo_root: state.repo_root.clone(),
                                 new: new_branch_name,
                                 base: base_branch,
                             });
@@ -661,7 +662,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 return effects;
                             }
                             state.worktree_op_in_flight = true;
-                            effects.push(Effect::AddWorktree { branch: branch_name });
+                            effects.push(Effect::AddWorktree { repo_root: state.repo_root.clone(), branch: branch_name });
                         } else if let Some(wt_id) = state.pending_claude_open.take() {
                             // Claude tab name modal submit
                             let suffix = if buffer.trim().is_empty() {
@@ -879,7 +880,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         // Sort iOS simulators by last-used from sim_history
                         let mut sorted_devices = devices;
                         if matches!(spec, CommandSpec::RnRunIos { .. }) {
-                            let history = crate::infra::sim_history::load_sim_history();
+                            // Plan 13-08: sim_history is loaded into AppState at startup
+                            // (src/main.rs) so update() never crosses the infra boundary.
+                            let history = &state.sim_history;
                             sorted_devices.sort_by_key(|d| {
                                 history.iter().position(|h| h == &d.id)
                                     .unwrap_or(usize::MAX)
@@ -960,7 +963,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::OpenClaudeCode => {
-            if state.multiplexer.is_none() {
+            if !state.multiplexer_available {
                 state.error_state = Some(ErrorState {
                     message: "Cannot open Claude Code: not inside a tmux or zellij session".into(),
                     can_retry: false,
@@ -989,7 +992,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::OpenShellTab => {
-            if state.multiplexer.is_none() {
+            if !state.multiplexer_available {
                 state.error_state = Some(ErrorState {
                     message: "Cannot open shell tab: not inside a tmux or zellij session".into(),
                     can_retry: false,
@@ -1317,7 +1320,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             tracing::info!("worktree removed: {}", path_str);
             state.worktree_op_in_flight = false;
             // Refresh the worktree list to reflect the removal
-            effects.push(Effect::ListWorktrees);
+            effects.push(Effect::ListWorktrees { repo_root: state.repo_root.clone() });
         }
 
         Action::WorktreeRemoveFailed(err) => {
@@ -1345,7 +1348,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::WorktreeAdded(path_str) => {
             tracing::info!("worktree added: {}", path_str);
             state.worktree_op_in_flight = false;
-            effects.push(Effect::ListWorktrees);
+            effects.push(Effect::ListWorktrees { repo_root: state.repo_root.clone() });
         }
 
         Action::WorktreeAddFailed(err) => {
@@ -1360,7 +1363,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::WorktreeAddNewBranch => {
             state.palette_mode = None;
-            effects.push(Effect::ListRemoteBranches);
+            effects.push(Effect::ListRemoteBranches { repo_root: state.repo_root.clone() });
         }
 
         Action::BranchesLoaded(branches) => {
@@ -1462,7 +1465,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::WorktreeNewBranchCreated(path_str) => {
             tracing::info!("worktree with new branch created: {}", path_str);
             state.worktree_op_in_flight = false;
-            effects.push(Effect::ListWorktrees);
+            effects.push(Effect::ListWorktrees { repo_root: state.repo_root.clone() });
         }
 
         Action::WorktreeNewBranchFailed(err) => {
