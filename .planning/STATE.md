@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 5 complete — 13-07 (TEA purity restored: update() now `pub fn update(&mut AppState, Action) -> Vec<Effect>`; 7 async metro helpers relocated to src/infra/metro.rs::TokioMetroAdapter; KEYBINDINGS registry with 118 entries; handle_key walks registry with palette fallback preserved). 79 tests green (76 lib + 2 metro + 1 pgid), clippy clean, arch-lint PASS. G-04 + G-05 active. 3 plans remain across 3 waves.
-last_updated: "2026-04-25T08:30:00Z"
+stopped_at: Phase 13 Wave 6 complete — 13-08 (hexagonal injection: Adapters struct holds Arc<dyn Port> for all 7 ports; main.rs is sole composition root; effect_runner dispatches every Effect via adapters; AppState no longer holds Jira/Multiplexer ports; DashConfig+staleness moved to domain). 79 tests green, clippy clean, arch-lint PASS. G-01 + G-13 active. 2 plans remain across 2 waves.
+last_updated: "2026-04-25T09:30:00Z"
 last_activity: 2026-04-25
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 19
-  percent: 86
+  completed_plans: 20
+  percent: 91
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Waves 1-5 complete (7/10 plans), Wave 6 next (hexagonal injection)
+**Current focus:** Phase 13 IN-PROGRESS — Waves 1-6 complete (8/10 plans), Wave 7 next (Recipe consumer + exhaustive modals)
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (7/10 plans executed)
-Plan: W1-W5 complete; next W6 (13-08 — Adapters struct with Arc<dyn Port>; effect_runner full impl dispatching every Effect via adapters; remove all crate::infra imports from src/app/; F-202 + F-101 consumer — also wires JiraPort to close the FetchJiraTitles stub deferred from 13-07)
-Status: TEA purity is in. update.rs is pure (no tokio::spawn / spawn_blocking — G-04 active); src/app/ has zero reqwest / tokio::process imports (G-05 active). KEYBINDINGS = 118 entries in src/app/keybindings.rs; handle_key walks the registry with palette context-fallback preserved (Pitfall 4). 7 async metro helpers (spawn_metro_task, metro_process_task, parse_metro_line, extract_percent, drain_metro_output, stdin_writer, metro_http_post) now live in src/infra/metro.rs::TokioMetroAdapter implementing MetroPort. Two deferrals to 13-08: (1) Effect::FetchJiraTitles stub awaiting Adapters.jira; (2) MetroExited natural-crash callback. Guards passing: G-02, G-03, G-04, G-05, G-07, G-08, G-09, G-10, G-14, G-15, G-17. PENDING for 13-08+: G-01, G-06, G-11, G-12, G-13, G-16, G-18, G-20. Tests: 79 pass (76 lib + 2 metro + 1 pgid); clippy clean; arch-lint PASS.
-Last activity: 2026-04-24
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (8/10 plans executed)
+Plan: W1-W6 complete; next W7 (13-09 — replace 11 inline prereq sites in update.rs with Recipe::expand; delete pending_metro_run/pending_metro_after_sync/pending_switch_path flags; replace `_ => {}` catch-alls with exhaustive ModalState enumeration — F-204 consumer + F-205)
+Status: Hexagonal injection complete. src/app/ has zero `crate::infra::*` imports (G-01 active). pub struct Adapters with Arc<dyn Port> for all 7 ports (5 required + 2 optional) lives in src/app/adapters.rs (G-13 active). main.rs is the sole composition root. EffectRunner dispatches every Effect variant via Adapters. AppState dropped Jira/Multiplexer port fields (replaced with availability bools + sim_history field). Two 13-07 deferrals closed: FetchJiraTitles wired through Adapters.jira; MetroExited natural-crash signaling via on_activity callback. Bonus scope: DashConfig + staleness checks (check_stale, check_stale_pods) moved to crate::domain (pure data + pure FS reads). Guards passing: G-01, G-02, G-03, G-04, G-05, G-07, G-08, G-09, G-10, G-13, G-14, G-15, G-17. PENDING for 13-09+: G-06, G-12, G-18, G-20 (also G-11 + G-16 — see 13-08 SUMMARY for nuance). Tests: 79 pass; clippy clean; arch-lint PASS.
+Last activity: 2026-04-25
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
 
