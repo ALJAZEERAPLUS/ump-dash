@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 6 complete — 13-08 (hexagonal injection: Adapters struct holds Arc<dyn Port> for all 7 ports; main.rs is sole composition root; effect_runner dispatches every Effect via adapters; AppState no longer holds Jira/Multiplexer ports; DashConfig+staleness moved to domain). 79 tests green, clippy clean, arch-lint PASS. G-01 + G-13 active. 2 plans remain across 2 waves.
-last_updated: "2026-04-25T09:30:00Z"
+stopped_at: Phase 13 Wave 7 complete — 13-09 (F-204+F-205 consumers: 11 inline prereq sites in update.rs replaced by Recipe::expand(&DependencyState); 3 pending flags deleted from AppState; `_ => {}` catch-alls in handle_key.rs replaced with exhaustive ModalState arms). 79 tests green, clippy clean, arch-lint PASS. G-06 + G-18 active. 1 plan remains in Wave 8.
+last_updated: "2026-04-25T10:00:00Z"
 last_activity: 2026-04-25
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 20
-  percent: 91
+  completed_plans: 21
+  percent: 95
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Waves 1-6 complete (8/10 plans), Wave 7 next (Recipe consumer + exhaustive modals)
+**Current focus:** Phase 13 IN-PROGRESS — Waves 1-7 complete (9/10 plans), Wave 8 final (state grouping + UI rewire)
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (8/10 plans executed)
-Plan: W1-W6 complete; next W7 (13-09 — replace 11 inline prereq sites in update.rs with Recipe::expand; delete pending_metro_run/pending_metro_after_sync/pending_switch_path flags; replace `_ => {}` catch-alls with exhaustive ModalState enumeration — F-204 consumer + F-205)
-Status: Hexagonal injection complete. src/app/ has zero `crate::infra::*` imports (G-01 active). pub struct Adapters with Arc<dyn Port> for all 7 ports (5 required + 2 optional) lives in src/app/adapters.rs (G-13 active). main.rs is the sole composition root. EffectRunner dispatches every Effect variant via Adapters. AppState dropped Jira/Multiplexer port fields (replaced with availability bools + sim_history field). Two 13-07 deferrals closed: FetchJiraTitles wired through Adapters.jira; MetroExited natural-crash signaling via on_activity callback. Bonus scope: DashConfig + staleness checks (check_stale, check_stale_pods) moved to crate::domain (pure data + pure FS reads). Guards passing: G-01, G-02, G-03, G-04, G-05, G-07, G-08, G-09, G-10, G-13, G-14, G-15, G-17. PENDING for 13-09+: G-06, G-12, G-18, G-20 (also G-11 + G-16 — see 13-08 SUMMARY for nuance). Tests: 79 pass; clippy clean; arch-lint PASS.
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (9/10 plans executed)
+Plan: W1-W7 complete; next W8 (13-10 — extract MetroState/WorktreeBrowserState/CommandRunnerState/ModalStackState/PendingFlags/AppConfigState sub-structs in AppState; rewire src/ui/footer.rs + src/ui/help_overlay.rs to consume KEYBINDINGS registry; close minor F-NNN findings — F-209+F-302+F-303+F-108+F-112)
+Status: Recipe consumer landed. update.rs has 21 references to Recipe (11 prereq sites refactored to Recipe::expand + supporting calls). Three pending boolean flags deleted from AppState (pending_metro_run/pending_metro_after_sync/pending_switch_path); pending_restart + skip_external_metro_check survive (Pitfall 3). handle_key.rs outer match on ModalState is now exhaustive (5 explicit + 3 char-consumer arms with inner if-let on KeyCode). post_drain_action: Option<Box<Action>> introduced to support deferred-spec via command_queue.push_front. command_queue semantics preserved. Guards passing: G-01, G-02, G-03, G-04, G-05, G-06, G-07, G-08, G-09, G-10, G-13, G-14, G-15, G-17, G-18. PENDING for 13-10: G-12 (footer hand-coded rows), G-20 (AppState sub-structs). Tests: 79 pass; clippy clean; arch-lint PASS.
 Last activity: 2026-04-25
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
