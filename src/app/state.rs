@@ -77,10 +77,11 @@ pub struct AppState {
 
     // Set to true when worktree-switch triggers a stop-first-then-start sequence.
     // When MetroExited fires and this is true, a new MetroStart is auto-dispatched.
+    //
+    // Plan 13-09 (Pitfall 3): SURVIVOR — this is metro-lifecycle state, not
+    // prereq ordering. Recipe::expand handles prereq ordering; pending_restart
+    // coordinates the stop-then-start handoff observed by `MetroExited`.
     pub pending_restart: bool,
-
-    // Phase 5: captured target worktree path during worktree switch (consumed by MetroExited)
-    pub pending_switch_path: Option<std::path::PathBuf>,
 
     // --- Phase 3 fields ---
 
@@ -167,18 +168,24 @@ pub struct AppState {
     /// True when the pending TextInput modal is for a new-branch worktree (not a regular worktree add).
     pub pending_new_branch_worktree: bool,
 
-    // Quick-260405-ijq: RN run command waiting for metro to become Ready before dispatch.
-    pub pending_metro_run: Option<crate::domain::command::CommandSpec>,
-
     // Phase 08-04: skip external metro detection when restarting our own metro (worktree switch).
     // Set true in MetroExited when pending_restart was true; consumed (reset) in MetroStart.
+    //
+    // Plan 13-09 (Pitfall 3): SURVIVOR — metro-lifecycle state, not prereq.
+    // May migrate to a `MetroState` sub-struct in Plan 13-10 (F-209).
     pub skip_external_metro_check: bool,
 
     // Quick-260407-cq5: Guard against periodic refresh during worktree mutations.
     pub worktree_op_in_flight: bool,
 
-    // Quick-260410-mu7: metro start pending after sync commands drain
-    pub pending_metro_after_sync: bool,
+    // Plan 13-09: post-queue-drain Action slot. Generalizes the older
+    // sync-then-metro coordination bool — the sync-then-metro flow stores
+    // `Some(Action::MetroStart)` here; arbitrary future post-drain actions
+    // can reuse the same mechanism without growing AppState.
+    //
+    // Consumed in CommandExited's empty-queue branch. Cleared in CommandCancel
+    // and MetroSpawnFailed.
+    pub post_drain_action: Option<Box<crate::domain::action::Action>>,
 }
 
 impl Default for AppState {
@@ -193,7 +200,6 @@ impl Default for AppState {
             metro: crate::domain::metro::MetroManager::new(),
             active_worktree_path: None,
             pending_restart: false,
-            pending_switch_path: None,
             // Phase 3
             worktrees: Vec::new(),
             worktree_table_state,
@@ -230,8 +236,6 @@ impl Default for AppState {
             android_mode: Some("debugOptimized".to_string()),
             // Quick-260403-dmz
             pending_worktree_add: false,
-            // Quick-260405-ijq
-            pending_metro_run: None,
             // Phase 08-02
             pending_new_branch_base: None,
             pending_new_branch_worktree: false,
@@ -239,8 +243,8 @@ impl Default for AppState {
             skip_external_metro_check: false,
             // Quick-260407-cq5
             worktree_op_in_flight: false,
-            // Quick-260410-mu7
-            pending_metro_after_sync: false,
+            // Plan 13-09: post-queue-drain Action slot
+            post_drain_action: None,
         }
     }
 }

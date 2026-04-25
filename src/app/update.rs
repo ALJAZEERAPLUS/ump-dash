@@ -15,7 +15,25 @@ use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
+use crate::domain::pipeline::{DependencyState, Recipe};
 use std::path::PathBuf;
+
+// Plan 13-09 (F-204 consumer): the 11 inline prereq sites are rewritten to
+// build a `Recipe` and call `Recipe::expand(&deps)` — the dispatcher never
+// inlines prereq ordering. The boolean coordination flags
+// `pending_metro_run`, `pending_metro_after_sync`, and `pending_switch_path`
+// are deleted; their semantics are absorbed into the command_queue front-push
+// pattern (deferred run waits for metro Ready), `post_drain_action` (post-
+// queue-drain action), and direct `active_worktree_path` updates respectively.
+//
+// Site → Recipe variant mapping:
+//   SyncBeforeRunAccept (auto-sync fast path + modal accept) → Recipe::SyncThenRun
+//   SyncBeforeMetroAccept (modal accept) + WorktreeSwitch auto-sync → Recipe::SyncThenStartMetro
+//   CleanConfirm                                                    → Recipe::Clean
+//   RnReleaseBuild dispatch                                         → Recipe::ReleaseBuildAndInstall
+//   GitResetHardFetch dispatch                                      → Recipe::GitFetchThenReset
+//   needs_metro pre-dispatch (3 sites: CommandRun / CommandExited drain / SyncBeforeRunDecline)
+//                                                                   → command_queue.push_front + MetroStart
 
 /// Directly dispatches a command without going through the pre-processing pipeline.
 /// Used by ModalConfirm to run confirmed destructive commands, and internally after
@@ -172,15 +190,20 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::MetroExited => {
-            // Clear pending run command if metro exited unexpectedly
-            state.pending_metro_run = None;
+            // Plan 13-09: pending_metro_run is gone — the deferred run command
+            // (if any) sits in command_queue.front() and is drained on the
+            // next MetroActivityUpdate(Ready). If metro exited unexpectedly,
+            // clear the queue so a stale deferred command doesn't fire on the
+            // next successful start.
+            if !state.pending_restart {
+                state.command_queue.clear();
+                state.post_drain_action = None;
+            }
             state.metro.clear();
             if state.pending_restart {
                 state.pending_restart = false;
-                // Consume pending_switch_path if set (worktree switch takes priority)
-                if let Some(path) = state.pending_switch_path.take() {
-                    state.active_worktree_path = Some(path);
-                }
+                // active_worktree_path is already updated synchronously at the
+                // worktree-switch call site (Plan 13-09 — no pending_switch_path).
                 // Signal MetroStart to skip external detection — the port may still be
                 // releasing from our just-killed process, not an external conflict.
                 state.skip_external_metro_check = true;
@@ -191,11 +214,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::MetroSpawnFailed(msg) => {
-            state.pending_metro_run = None;
+            // Plan 13-09: clear queue + post-drain action; pending flags gone.
+            state.command_queue.clear();
+            state.post_drain_action = None;
             state.metro.clear();
             state.pending_restart = false;
-            state.pending_switch_path = None;
-            state.pending_metro_after_sync = false;
             state.error_state = Some(ErrorState {
                 message: format!("Metro failed to start: {msg}"),
                 can_retry: true,
@@ -204,11 +227,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroActivityUpdate(activity) => {
             state.metro.activity = Some(activity.clone());
-            // Auto-dispatch pending RN run command when metro becomes Ready
+            // Plan 13-09: pending_metro_run absorbed into command_queue. When
+            // metro becomes Ready and nothing is currently running, drain the
+            // queue front via CommandRun (preserves the full pipeline:
+            // sync-check, device selection, etc.). The push_front-on-defer
+            // pattern at the dispatch sites guarantees the awaited spec sits
+            // at the head of the queue.
             if matches!(activity, crate::domain::metro::MetroActivity::Ready)
-                && let Some(run_spec) = state.pending_metro_run.take() {
-                    // Re-enter the full CommandRun pipeline (sync check, device selection, etc.)
-                    effects.extend(update(state, Action::CommandRun(run_spec)));
+                && state.running_command.is_none()
+                && let Some(spec) = state.command_queue.pop_front() {
+                    effects.extend(update(state, Action::CommandRun(spec)));
                 }
         }
 
@@ -349,15 +377,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                     if *yarn_stale || pods_stale {
                         if state.config.as_ref().is_some_and(|c| c.auto_sync) {
-                            // Auto-sync: skip modal, execute sync+run directly
-                            let mut sequence: Vec<CommandSpec> = Vec::new();
-                            if *yarn_stale {
-                                sequence.push(CommandSpec::YarnInstall);
-                            }
-                            if pods_stale {
-                                sequence.push(CommandSpec::YarnPodInstall);
-                            }
-                            sequence.push(spec);
+                            // Plan 13-09 (F-204 site 1): Recipe::SyncThenRun replaces
+                            // the inline yarn/pod sequencing. Auto-sync fast path —
+                            // skip the modal, expand the recipe, queue + dispatch.
+                            let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
+                            let mut sequence = Recipe::SyncThenRun(spec).expand(&deps);
                             let first = sequence.remove(0);
                             for cmd in sequence {
                                 state.command_queue.push_back(cmd);
@@ -378,10 +402,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                 }
 
-            // Metro prerequisite: RN run commands need metro running first
+            // Plan 13-09 (F-204 site 2): Metro prerequisite — RN run commands
+            // need metro running first. The deferred spec is pushed to the
+            // FRONT of the command_queue; on `MetroActivityUpdate(Ready)` the
+            // queue is drained head-first via CommandRun (preserves the full
+            // pipeline). Replaces the deleted `pending_metro_run` field.
             if spec.needs_metro() && !state.metro.is_running() {
-                // Store the run command — will be dispatched when metro reports Ready
-                state.pending_metro_run = Some(spec);
+                state.command_queue.push_front(spec);
                 effects.extend(update(state, Action::MetroStart));
                 return effects;
             }
@@ -425,19 +452,29 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return effects;
             }
 
-            // Android release build: queue adb install to run after assembleRelease completes
+            // Plan 13-09 (F-204 site 3): RnReleaseBuild → Recipe::ReleaseBuildAndInstall
+            // Android release build: queue adb install to run after assembleRelease completes.
             if matches!(spec, CommandSpec::RnReleaseBuild) {
-                state.command_queue.push_back(CommandSpec::AdbInstallApk);
-                if let Some(eff) = dispatch_command(state, spec) {
+                let mut sequence = Recipe::ReleaseBuildAndInstall.expand(&DependencyState::new(false, false, false));
+                let first = sequence.remove(0);
+                for cmd in sequence {
+                    state.command_queue.push_back(cmd);
+                }
+                if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
                 return effects;
             }
 
-            // GitResetHardFetch: two-step — dispatch fetch, queue reset --hard origin/<branch>
+            // Plan 13-09 (F-204 site 4): GitResetHardFetch → Recipe::GitFetchThenReset
+            // Two-step — dispatch fetch, queue reset --hard origin/<branch>.
             if matches!(spec, CommandSpec::GitResetHardFetch) {
-                state.command_queue.push_back(CommandSpec::GitResetHard);
-                if let Some(eff) = dispatch_command(state, CommandSpec::GitFetch) {
+                let mut sequence = Recipe::GitFetchThenReset.expand(&DependencyState::new(false, false, false));
+                let first = sequence.remove(0);
+                for cmd in sequence {
+                    state.command_queue.push_back(cmd);
+                }
+                if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
                 return effects;
@@ -485,20 +522,24 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
 
             // Drain command queue — pop_front and dispatch if non-empty.
-            // Route through CommandRun (not dispatch_command) for commands that need
-            // metro but metro isn't running — so pending_metro_run + MetroStart fires.
-            // This matters for the sync-before-run flow: after yarn install, the queued
-            // run_command needs metro to be started before dispatching.
+            // Plan 13-09 (F-204 site 5): for specs that need metro but metro
+            // isn't running, push the spec BACK to the front and dispatch
+            // MetroStart. The queue acts as the deferred-spec store
+            // (replacing `pending_metro_run`); MetroActivityUpdate(Ready)
+            // drains the head when metro is up.
             if let Some(next_spec) = state.command_queue.pop_front() {
                 if next_spec.needs_metro() && !state.metro.is_running() {
-                    effects.extend(update(state, Action::CommandRun(next_spec)));
+                    state.command_queue.push_front(next_spec);
+                    effects.extend(update(state, Action::MetroStart));
                 } else if let Some(eff) = dispatch_command(state, next_spec) {
                     effects.push(eff);
                 }
-            } else if state.pending_metro_after_sync {
-                // Sync commands finished — start metro in the (already switched) worktree
-                state.pending_metro_after_sync = false;
-                effects.extend(update(state, Action::MetroStart));
+            } else if let Some(action) = state.post_drain_action.take() {
+                // Plan 13-09: replaces `pending_metro_after_sync` with a
+                // generalized post-queue-drain action. Sync-then-metro flow
+                // stores Some(MetroStart) here; future post-drain coordination
+                // can reuse the same slot.
+                effects.extend(update(state, *action));
             }
         }
 
@@ -516,7 +557,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.running_command = None;
             // Also clear pending queue items — cancel is all-or-nothing
             state.command_queue.clear();
-            state.pending_metro_after_sync = false;
+            // Plan 13-09: clear post-drain action so a cancel mid-sync doesn't
+            // silently fire metro after the user explicitly cancelled.
+            state.post_drain_action = None;
             if let Some(id) = active_worktree_id(state) {
                 let output = state.command_output_by_worktree.entry(id).or_default();
                 output.push_back("[cancelled]".into());
@@ -927,7 +970,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 && wt.stale
             {
                 if state.config.as_ref().is_some_and(|c| c.auto_sync) {
-                    // Auto-sync: skip modal, execute yarn install + metro directly
+                    // Plan 13-09 (F-204 site 10a): auto-sync fast path uses
+                    // Recipe::SyncThenStartMetro. Set active_worktree_path
+                    // synchronously (replaces pending_switch_path).
                     if let Some(path) = target_path {
                         state.active_worktree_path = Some(path);
                     }
@@ -935,29 +980,45 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         state.pending_restart = false;
                         effects.extend(update(state, Action::MetroStop));
                     }
-                    state.pending_metro_after_sync = true;
-                    if let Some(eff) = dispatch_command(state, CommandSpec::YarnInstall) {
+                    let deps = DependencyState::new(true, false, false);
+                    let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
+                    // post_drain_action replaces pending_metro_after_sync.
+                    state.post_drain_action = Some(Box::new(Action::MetroStart));
+                    if sequence.is_empty() {
+                        state.post_drain_action = None;
+                        effects.extend(update(state, Action::MetroStart));
+                        return effects;
+                    }
+                    let first = sequence.remove(0);
+                    for cmd in sequence {
+                        state.command_queue.push_back(cmd);
+                    }
+                    if let Some(eff) = dispatch_command(state, first) {
                         effects.push(eff);
                     }
                     return effects;
                 }
-                // Store target path for use after sync completes
-                state.pending_switch_path = target_path;
+                // Plan 13-09 (F-204 site 10b): set active_worktree_path NOW so the
+                // SyncBeforeMetro modal accept/decline paths don't need a stash.
+                if let Some(path) = target_path {
+                    state.active_worktree_path = Some(path);
+                }
                 state.modal = Some(ModalState::SyncBeforeMetro { needs_yarn: true, needs_pods: false });
                 return effects;
             }
 
-            // Original logic (unchanged) — only reached when deps are fresh
+            // Original logic — only reached when deps are fresh.
+            // Plan 13-09: set active_worktree_path immediately; pending_restart
+            // alone signals the MetroExited handler to dispatch MetroStart.
+            if let Some(path) = target_path {
+                state.active_worktree_path = Some(path);
+            }
             if state.metro.is_running() {
-                // Kill current → wait for port free → start in new worktree
-                state.pending_switch_path = target_path;
+                // Kill current → MetroExited → MetroStart in (already-updated) worktree
                 state.pending_restart = true;
                 effects.extend(update(state, Action::MetroStop));
             } else {
                 // Not running — just start directly in selected worktree
-                if let Some(path) = target_path {
-                    state.active_worktree_path = Some(path);
-                }
                 effects.extend(update(state, Action::MetroStart));
             }
         }
@@ -1076,24 +1137,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(ModalState::CleanToggle { options }) = state.modal.take() {
                 state.palette_mode = None;
 
-                // Build command sequence from checked options.
-                // Order matters: react-native clean first, node_modules last —
-                // removing node_modules before `react-native clean` breaks the
-                // RN clean scripts that depend on packages under node_modules.
-                let mut cmds: Vec<CommandSpec> = Vec::new();
-                if options.pods {
-                    cmds.push(CommandSpec::RnCleanCocoapods);
-                }
-                if options.android {
-                    cmds.push(CommandSpec::RnCleanAndroid);
-                }
-                if options.node_modules {
-                    cmds.push(CommandSpec::RmNodeModules);
-                }
-                if options.sync_after {
-                    cmds.push(CommandSpec::YarnInstall);
-                    cmds.push(CommandSpec::YarnPodInstall);
-                }
+                // Plan 13-09 (F-204 site 6): Recipe::Clean replaces inline
+                // option-to-command sequencing. Order is enforced by
+                // Recipe::expand: react-native clean first, node_modules last,
+                // sync_after appended (preserves the comment's hard ordering
+                // rule).
+                let mut cmds = Recipe::Clean(options).expand(&DependencyState::new(false, false, false));
 
                 if cmds.is_empty() {
                     return effects;
@@ -1142,16 +1191,15 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::SyncBeforeRunAccept => {
             if let Some(ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods }) = state.modal.take() {
-                // Build sequence: [yarn install?, pod install?, run_command]
-                // Dispatch the first, queue the rest.
-                let mut sequence: Vec<CommandSpec> = Vec::new();
-                if needs_yarn {
-                    sequence.push(CommandSpec::YarnInstall);
-                }
-                if needs_pods {
-                    sequence.push(CommandSpec::YarnPodInstall);
-                }
-                sequence.push(*run_command);
+                // Plan 13-09 (F-204 site 7): Recipe::SyncThenRun expansion.
+                // The modal already encodes the staleness decision in
+                // (needs_yarn, needs_pods); rebuild a DependencyState that
+                // reproduces the same expansion. The is_ios_target flag is
+                // derived from needs_pods being meaningful — only iOS run
+                // commands ever set needs_pods=true at the modal-construction
+                // site (CommandRun stale check).
+                let deps = DependencyState::new(needs_yarn, needs_pods, needs_pods);
+                let mut sequence = Recipe::SyncThenRun(*run_command).expand(&deps);
 
                 // Guaranteed non-empty: we only get here from the modal which only
                 // appears when needs_yarn || needs_pods, so sequence has ≥2 elements.
@@ -1166,13 +1214,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::SyncBeforeRunDecline => {
             if let Some(ModalState::SyncBeforeRun { run_command, .. }) = state.modal.take() {
-                // Skip sync. Since the stale check now runs before the metro check,
-                // metro may still need to be started. Route through CommandRun so the
-                // metro auto-start via pending_metro_run fires. The stale check won't
-                // re-trigger because the user just declined it.
+                // Plan 13-09 (F-204 site 8): skip sync. Metro may still need to
+                // start — push the spec onto command_queue front and trigger
+                // MetroStart (replaces `pending_metro_run`). The stale check
+                // won't re-trigger because the user just declined it.
                 let spec = *run_command;
                 if spec.needs_metro() && !state.metro.is_running() {
-                    state.pending_metro_run = Some(spec);
+                    state.command_queue.push_front(spec);
                     effects.extend(update(state, Action::MetroStart));
                 } else if let Some(eff) = dispatch_command(state, spec) {
                     effects.push(eff);
@@ -1182,10 +1230,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::SyncBeforeMetroAccept => {
             if let Some(ModalState::SyncBeforeMetro { needs_yarn, needs_pods }) = state.modal.take() {
-                // Switch active worktree to the target (consume pending_switch_path set in stale check)
-                if let Some(path) = state.pending_switch_path.take() {
-                    state.active_worktree_path = Some(path);
-                }
+                // Plan 13-09: pending_switch_path deleted. The active_worktree_path
+                // was already updated synchronously at the WorktreeSwitchToSelected
+                // call site when the SyncBeforeMetro modal was constructed.
 
                 // Stop metro if running (no auto-restart — sync must finish first)
                 if state.metro.is_running() {
@@ -1193,18 +1240,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     effects.extend(update(state, Action::MetroStop));
                 }
 
-                // Build sync sequence and dispatch
-                let mut sequence: Vec<CommandSpec> = Vec::new();
-                if needs_yarn {
-                    sequence.push(CommandSpec::YarnInstall);
-                }
-                if needs_pods {
-                    sequence.push(CommandSpec::YarnPodInstall);
+                // Plan 13-09 (F-204 site 9): Recipe::SyncThenStartMetro expansion.
+                // is_ios_target is irrelevant for SyncThenStartMetro (pods always
+                // included when stale per the metro-platform-agnostic rule).
+                let deps = DependencyState::new(needs_yarn, needs_pods, false);
+                let sequence = Recipe::SyncThenStartMetro.expand(&deps);
+
+                // Plan 13-09: replaces `pending_metro_after_sync = true`.
+                // After the queue drains, dispatch MetroStart.
+                state.post_drain_action = Some(Box::new(Action::MetroStart));
+
+                if sequence.is_empty() {
+                    // No sync needed (modal arose from a different stale signal,
+                    // both flags now false) — start metro directly.
+                    state.post_drain_action = None;
+                    effects.extend(update(state, Action::MetroStart));
+                    return effects;
                 }
 
-                // Flag: after sync queue drains, start metro
-                state.pending_metro_after_sync = true;
-
+                let mut sequence = sequence;
                 let first = sequence.remove(0);
                 for cmd in sequence {
                     state.command_queue.push_back(cmd);
@@ -1217,17 +1271,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::SyncBeforeMetroDecline => {
             if let Some(ModalState::SyncBeforeMetro { .. }) = state.modal.take() {
-                // Consume pending_switch_path and proceed with original worktree switch logic
-                let target_path = state.pending_switch_path.take();
-
+                // Plan 13-09: active_worktree_path is already set at the
+                // WorktreeSwitchToSelected call site (no pending_switch_path).
                 if state.metro.is_running() {
-                    state.pending_switch_path = target_path;
                     state.pending_restart = true;
                     effects.extend(update(state, Action::MetroStop));
                 } else {
-                    if let Some(path) = target_path {
-                        state.active_worktree_path = Some(path);
-                    }
                     effects.extend(update(state, Action::MetroStart));
                 }
             }

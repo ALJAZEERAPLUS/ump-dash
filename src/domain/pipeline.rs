@@ -82,6 +82,15 @@ pub struct DependencyState {
     pub is_ios_target: bool,
 }
 
+impl DependencyState {
+    /// Convenience constructor for the call sites in `src/app/update.rs`.
+    /// The data projection from `AppState` is small but repeated — this keeps
+    /// the call-site noise low. Pure data — no I/O, callable from tests.
+    pub fn new(stale_yarn: bool, stale_pods: bool, is_ios_target: bool) -> Self {
+        Self { stale_yarn, stale_pods, is_ios_target }
+    }
+}
+
 impl Recipe {
     /// Expand the recipe into a linear sequence of `CommandSpec` — the dispatcher
     /// calls this once per recipe and enqueues every item in order.
