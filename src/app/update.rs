@@ -1,25 +1,29 @@
 //! TEA reducer — `pub fn update` is the ONLY place `AppState` is mutated.
 //!
-//! Plan 13-07 will rewrite `update()` to return `Vec<Effect>` instead of
-//! directly calling `tokio::spawn`. For Plan 13-06 this is a verbatim lift
-//! from src/app.rs — signature and body are unchanged.
+//! Plan 13-07 (F-201 consumer): `update()` is now a PURE function —
+//! `pub fn update(state: &mut AppState, action: Action) -> Vec<Effect>`.
+//! Every side-effect that used to be an inline async spawn is now an
+//! `Effect` variant pushed onto the returned `Vec<Effect>`. The event loop
+//! (`src/app/runtime.rs`) calls `runner.run_effects(effects).await` after
+//! every invocation.
+//!
+//! Grep invariants (enforced by `make arch-lint` G-04 / G-05):
+//! - no async spawn primitives in this file (G-04)
+//! - no HTTP client or process-launch imports anywhere under src/app/ (G-05)
 
+use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
-use crate::domain::metro::MetroHandle;
 use std::path::PathBuf;
 
 /// Directly dispatches a command without going through the pre-processing pipeline.
 /// Used by ModalConfirm to run confirmed destructive commands, and internally after
 /// text-input and device-picker modals complete.
 ///
-/// Appends separator to per-worktree output, sets running_command, spawns the process task.
-fn dispatch_command(
-    state: &mut AppState,
-    spec: CommandSpec,
-    metro_tx: &tokio::sync::mpsc::UnboundedSender<Action>,
-) {
+/// Appends separator to per-worktree output, sets running_command, and returns the
+/// Effect::SpawnCommand that the effect_runner will consume.
+fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
     let wt = if !state.worktrees.is_empty() {
         let idx = state.worktree_table_state.selected().unwrap_or(0);
         let idx = idx.min(state.worktrees.len() - 1);
@@ -27,7 +31,7 @@ fn dispatch_command(
     } else {
         // No worktrees loaded yet — can't dispatch; log to a fallback message (no per-worktree key)
         tracing::warn!("dispatch_command: no worktree selected, dropping command {:?}", spec.label());
-        return;
+        return None;
     };
 
     // Append a separator line to per-worktree output — output persists, not cleared on new command
@@ -48,45 +52,24 @@ fn dispatch_command(
         task.abort();
     }
 
-    let tx = metro_tx.clone();
-    let path = wt.path.clone();
-    let branch = wt.branch.clone();
-    let spec_for_task = spec.clone();
-
-    // F-101: infra::command_runner is now ignorant of Action — it emits typed
-    // CommandEvents. Translate CommandEvent → Action at this app-side boundary.
-    // Plan 13-08 will move this translation into effect_runner once Adapters
-    // injection lands; for 13-05 we keep it inline at the only call site.
-    use crate::domain::ports::command_runner_port::{CommandEvent, CommandRunnerPort};
-    let runner = crate::infra::command_runner::TokioCommandRunner;
-    let mut rx = runner.spawn(spec_for_task, path, branch);
-    let handle = tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
-            let action = match ev {
-                CommandEvent::OutputLine(line) => Action::CommandOutputLine(line),
-                CommandEvent::Exited(_status) => Action::CommandExited,
-            };
-            if tx.send(action).is_err() {
-                break;
-            }
-        }
-    });
-    state.command_task = Some(handle);
+    // F-201: return Effect::SpawnCommand — effect_runner owns the actual
+    // async task + CommandEvent -> Action translation.
+    Some(Effect::SpawnCommand {
+        spec,
+        cwd: wt.path.clone(),
+        branch: wt.branch.clone(),
+    })
 }
 
 /// TEA update function — the ONLY place AppState is mutated.
 ///
-/// `metro_tx` and `handle_tx` are channels that connect update() to the async runtime:
-/// - `metro_tx`: background tasks send Action events back to the loop
-/// - `handle_tx`: spawn task sends the MetroHandle back so it can be registered in AppState
-///
-/// Async operations are always dispatched via tokio::spawn — update() never awaits.
-pub fn update(
-    state: &mut AppState,
-    action: Action,
-    metro_tx: &tokio::sync::mpsc::UnboundedSender<Action>,
-    handle_tx: &tokio::sync::mpsc::UnboundedSender<Box<dyn MetroHandle>>,
-) {
+/// Post-F-201 (Plan 13-07) signature: pure `(state, action) -> Vec<Effect>`.
+/// Every async dispatch / channel send / recursive self-dispatch is
+/// expressed as an Effect variant pushed onto the returned vec. The event
+/// loop interprets effects via `EffectRunner::run_effects`.
+pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
+    let mut effects: Vec<Effect> = Vec::new();
+
     // Clear pending_g on any action except SetPendingG
     if !matches!(action, Action::SetPendingG) {
         state.pending_g = false;
@@ -133,52 +116,35 @@ pub fn update(
             state.palette_mode = None;
             if state.metro.is_running() {
                 state.pending_restart = true;
-                update(state, Action::MetroStop, metro_tx, handle_tx);
-                return;
+                effects.extend(update(state, Action::MetroStop));
+                return effects;
             }
             // Skip external detection when restarting our own metro (worktree switch or restart).
             // The port may still be releasing from our just-killed process — not an external conflict.
             if state.skip_external_metro_check {
                 state.skip_external_metro_check = false;
-                let _ = metro_tx.send(Action::MetroStartConfirmed);
-                return;
+                effects.push(Effect::ScheduleAction(Action::MetroStartConfirmed));
+                return effects;
             }
-            // Check for external metro conflict before spawning
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                if let Some(info) = crate::infra::port::detect_external_metro(8081).await {
-                    let _ = tx.send(Action::ExternalMetroDetected(
-                        crate::domain::ports::port_probe_port::ExternalProcessInfo {
-                            pid: info.pid,
-                            working_dir: info.working_dir,
-                        },
-                    ));
-                } else {
-                    let _ = tx.send(Action::MetroStartConfirmed);
-                }
-            });
+            // Check for external metro conflict before spawning (F-201: DetectExternalMetro)
+            effects.push(Effect::DetectExternalMetro { port: 8081 });
         }
 
         Action::MetroStartConfirmed => {
             state.metro.set_starting();
-            let tx = metro_tx.clone();
-            let htx = handle_tx.clone();
             let worktree_path = state
                 .active_worktree_path
                 .clone()
                 .unwrap_or_else(|| PathBuf::from("."));
-            tokio::spawn(super::runtime::spawn_metro_task(worktree_path, tx, htx));
+            effects.push(Effect::SpawnMetro { worktree: worktree_path });
         }
 
         Action::MetroStop => {
             state.palette_mode = None;
             if let Some(handle) = state.metro.take_handle() {
                 state.metro.set_stopping();
-                // Plan 13-03: kill() is the consuming trait method. The
-                // InAppMetroHandle bridge (defined in runtime.rs post-split)
-                // performs the kill_tx send + stream/stdin task abort that
-                // previously lived inline here. Plan 13-07 replaces the
-                // bridge with TokioMetroAdapter in src/infra/metro.rs.
+                // Plan 13-03: kill() is the consuming trait method.
+                // Post-13-07, the handle is a TokioMetroHandle from TokioMetroAdapter.
                 if let Err(e) = handle.kill() {
                     tracing::warn!("metro handle kill failed: {e}");
                 }
@@ -188,12 +154,9 @@ pub fn update(
         Action::MetroSendDebugger => {
             state.palette_mode = None;
             if state.metro.is_running() {
-                tokio::spawn(async move {
-                    let result = super::runtime::metro_http_post("http://localhost:8081/open-debugger", "{}").await;
-                    match result {
-                        Ok(_) => tracing::info!("debugger opened via HTTP"),
-                        Err(e) => tracing::warn!("debugger open failed: {e}"),
-                    }
+                effects.push(Effect::MetroHttpPost {
+                    url: "http://localhost:8081/open-debugger".to_string(),
+                    body: "{}".to_string(),
                 });
             }
         }
@@ -201,10 +164,9 @@ pub fn update(
         Action::MetroSendReload => {
             state.palette_mode = None;
             if state.metro.is_running() {
-                tokio::spawn(async move {
-                    if let Err(e) = super::runtime::metro_http_post("http://localhost:8081/reload", "").await {
-                        tracing::warn!("metro reload failed: {e}");
-                    }
+                effects.push(Effect::MetroHttpPost {
+                    url: "http://localhost:8081/reload".to_string(),
+                    body: String::new(),
                 });
             }
         }
@@ -222,10 +184,10 @@ pub fn update(
                 // Signal MetroStart to skip external detection — the port may still be
                 // releasing from our just-killed process, not an external conflict.
                 state.skip_external_metro_check = true;
-                update(state, Action::MetroStart, metro_tx, handle_tx);
+                effects.extend(update(state, Action::MetroStart));
             }
             // Refresh worktree list so metro status (green bg) updates immediately
-            update(state, Action::RefreshWorktrees, metro_tx, handle_tx);
+            effects.extend(update(state, Action::RefreshWorktrees));
         }
 
         Action::MetroSpawnFailed(msg) => {
@@ -246,7 +208,7 @@ pub fn update(
             if matches!(activity, crate::domain::metro::MetroActivity::Ready)
                 && let Some(run_spec) = state.pending_metro_run.take() {
                     // Re-enter the full CommandRun pipeline (sync check, device selection, etc.)
-                    update(state, Action::CommandRun(run_spec), metro_tx, handle_tx);
+                    effects.extend(update(state, Action::CommandRun(run_spec)));
                 }
         }
 
@@ -259,13 +221,9 @@ pub fn update(
 
         Action::KillExternalMetro(pid) => {
             state.modal = None;
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                let _ = crate::infra::port::kill_process(pid).await;
-                // Wait briefly for port to free, then auto-start metro
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                let _ = tx.send(Action::MetroStartConfirmed);
-            });
+            // F-201: effect_runner handles the kill + 500ms wait + schedule
+            // MetroStartConfirmed follow-up.
+            effects.push(Effect::KillProcess { pid });
         }
 
         // --- Phase 3: Worktree navigation ---
@@ -334,29 +292,17 @@ pub fn update(
             }
 
             // Phase 4: fetch titles for uncached branches
-            if let Some(ref client) = state.jira_client {
-                let keys_to_fetch: Vec<(String, String)> = state.worktrees.iter()
+            if state.jira_client.is_some() {
+                let keys_to_fetch: Vec<String> = state.worktrees.iter()
                     .filter_map(|wt| {
                         let key = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)?;
                         if state.jira_title_cache.contains_key(&key) { return None; }
-                        Some((wt.branch.clone(), key))
+                        Some(key)
                     })
                     .collect();
 
                 if !keys_to_fetch.is_empty() {
-                    let client = std::sync::Arc::clone(client);
-                    let tx = metro_tx.clone();
-                    tokio::spawn(async move {
-                        let mut results = vec![];
-                        for (_branch, key) in keys_to_fetch {
-                            if let Some(title) = client.fetch_title(&key).await {
-                                results.push((key, title));
-                            }
-                        }
-                        if !results.is_empty() {
-                            let _ = tx.send(Action::JiraTitlesFetched(results));
-                        }
-                    });
+                    effects.push(Effect::FetchJiraTitles { keys: keys_to_fetch });
                 }
             }
         }
@@ -364,20 +310,9 @@ pub fn update(
         Action::RefreshWorktrees => {
             if state.worktree_op_in_flight {
                 tracing::debug!("skipping periodic refresh — worktree op in flight");
-                return;
+                return effects;
             }
-            let repo_root = state.repo_root.clone();
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                match crate::infra::worktrees::list_worktrees(&repo_root).await {
-                    Ok(wts) => {
-                        let _ = tx.send(Action::WorktreesLoaded(wts));
-                    }
-                    Err(e) => {
-                        tracing::warn!("list_worktrees failed: {e}");
-                    }
-                }
-            });
+            effects.push(Effect::ListWorktrees);
         }
 
         // --- Phase 3: Command dispatch ---
@@ -428,8 +363,10 @@ pub fn update(
                                 state.command_queue.push_back(cmd);
                             }
                             state.palette_mode = None;
-                            dispatch_command(state, first, metro_tx);
-                            return;
+                            if let Some(eff) = dispatch_command(state, first) {
+                                effects.push(eff);
+                            }
+                            return effects;
                         }
                         state.modal = Some(ModalState::SyncBeforeRun {
                             run_command: Box::new(spec),
@@ -437,7 +374,7 @@ pub fn update(
                             needs_pods: pods_stale,
                         });
                         state.palette_mode = None;
-                        return;
+                        return effects;
                     }
                 }
 
@@ -445,8 +382,8 @@ pub fn update(
             if spec.needs_metro() && !state.metro.is_running() {
                 // Store the run command — will be dispatched when metro reports Ready
                 state.pending_metro_run = Some(spec);
-                update(state, Action::MetroStart, metro_tx, handle_tx);
-                return;
+                effects.extend(update(state, Action::MetroStart));
+                return effects;
             }
 
             // Pre-processing pipeline
@@ -458,7 +395,7 @@ pub fn update(
                     prompt: format!("Run '{}' on {}?", spec.label(), branch_name),
                     pending_command: spec,
                 });
-                return;
+                return effects;
             }
 
             if spec.needs_text_input() {
@@ -474,48 +411,42 @@ pub fn update(
                     buffer: String::new(),
                     pending_template: Box::new(spec),
                 });
-                return;
+                return effects;
             }
 
             if spec.needs_device_selection() {
                 state.pending_device_command = Some(spec.clone());
-                let tx = metro_tx.clone();
-                let is_android = matches!(spec, CommandSpec::RnRunAndroid { .. });
-                tokio::spawn(async move {
-                    let devices = if is_android {
-                        crate::infra::devices::list_android_devices().await
-                    } else {
-                        crate::infra::devices::list_ios_simulators().await
-                    };
-                    match devices {
-                        Ok(devs) => {
-                            let _ = tx.send(Action::DevicesEnumerated(devs));
-                        }
-                        Err(e) => {
-                            tracing::warn!("device enumeration failed: {e}");
-                            let _ = tx.send(Action::DevicesEnumerated(vec![]));
-                        }
-                    }
-                });
-                return;
+                let kind = if matches!(spec, CommandSpec::RnRunAndroid { .. }) {
+                    crate::domain::ports::device_port::DeviceKind::Android
+                } else {
+                    crate::domain::ports::device_port::DeviceKind::Ios
+                };
+                effects.push(Effect::LoadDevices { kind });
+                return effects;
             }
 
             // Android release build: queue adb install to run after assembleRelease completes
             if matches!(spec, CommandSpec::RnReleaseBuild) {
                 state.command_queue.push_back(CommandSpec::AdbInstallApk);
-                dispatch_command(state, spec, metro_tx);
-                return;
+                if let Some(eff) = dispatch_command(state, spec) {
+                    effects.push(eff);
+                }
+                return effects;
             }
 
             // GitResetHardFetch: two-step — dispatch fetch, queue reset --hard origin/<branch>
             if matches!(spec, CommandSpec::GitResetHardFetch) {
                 state.command_queue.push_back(CommandSpec::GitResetHard);
-                dispatch_command(state, CommandSpec::GitFetch, metro_tx);
-                return;
+                if let Some(eff) = dispatch_command(state, CommandSpec::GitFetch) {
+                    effects.push(eff);
+                }
+                return effects;
             }
 
             // Normal dispatch
-            dispatch_command(state, spec, metro_tx);
+            if let Some(eff) = dispatch_command(state, spec) {
+                effects.push(eff);
+            }
         }
 
         // --- Phase 3: Command output events ---
@@ -542,14 +473,7 @@ pub fn update(
                 if refresh.worktrees {
                     // Full worktree reload (also re-checks staleness and triggers JIRA fetch
                     // via WorktreesLoaded handler when branch names change)
-                    let repo_root = state.repo_root.clone();
-                    let tx = metro_tx.clone();
-                    tokio::spawn(async move {
-                        match crate::infra::worktrees::list_worktrees(&repo_root).await {
-                            Ok(wts) => { let _ = tx.send(Action::WorktreesLoaded(wts)); }
-                            Err(e) => { tracing::warn!("post-command worktree refresh failed: {e}"); }
-                        }
-                    });
+                    effects.push(Effect::ListWorktrees);
                 } else if refresh.staleness {
                     // Staleness refresh: re-check ALL worktrees (cheap I/O, ensures
                     // correct state even if user changed selection during command)
@@ -567,14 +491,14 @@ pub fn update(
             // run_command needs metro to be started before dispatching.
             if let Some(next_spec) = state.command_queue.pop_front() {
                 if next_spec.needs_metro() && !state.metro.is_running() {
-                    update(state, Action::CommandRun(next_spec), metro_tx, handle_tx);
-                } else {
-                    dispatch_command(state, next_spec, metro_tx);
+                    effects.extend(update(state, Action::CommandRun(next_spec)));
+                } else if let Some(eff) = dispatch_command(state, next_spec) {
+                    effects.push(eff);
                 }
             } else if state.pending_metro_after_sync {
                 // Sync commands finished — start metro in the (already switched) worktree
                 state.pending_metro_after_sync = false;
-                update(state, Action::MetroStart, metro_tx, handle_tx);
+                effects.extend(update(state, Action::MetroStart));
             }
         }
 
@@ -627,7 +551,7 @@ pub fn update(
                 // Stop metro if it's running on the worktree being removed
                 if state.metro.is_running()
                     && state.active_worktree_path.as_ref() == Some(&wt_path) {
-                        update(state, Action::MetroStop, metro_tx, handle_tx);
+                        effects.extend(update(state, Action::MetroStop));
                     }
 
                 // Clean up per-worktree dashboard state
@@ -648,27 +572,17 @@ pub fn update(
                     state.active_worktree_path = Some(state.worktrees[idx].path.clone());
                 }
 
-                // Spawn async removal task
+                // Emit the async removal effect
                 state.worktree_op_in_flight = true;
-                let repo_root = state.repo_root.clone();
-                let tx = metro_tx.clone();
-                let path_str = wt_path.to_string_lossy().to_string();
-                tokio::spawn(async move {
-                    match crate::infra::worktrees::remove_worktree(&repo_root, &wt_path).await {
-                        Ok(()) => {
-                            let _ = tx.send(Action::WorktreeRemoved(path_str));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(Action::WorktreeRemoveFailed(e.to_string()));
-                        }
-                    }
-                });
-                return;
+                effects.push(Effect::RemoveWorktree { path: wt_path });
+                return effects;
             }
 
             if let Some(ModalState::Confirm { pending_command, .. }) = state.modal.take() {
                 // Dispatch directly — skip pre-processing (already confirmed)
-                dispatch_command(state, pending_command, metro_tx);
+                if let Some(eff) = dispatch_command(state, pending_command) {
+                    effects.push(eff);
+                }
             }
         }
 
@@ -721,52 +635,33 @@ pub fn update(
                             state.pending_android_mode = false;
                             let mode = if buffer.trim().is_empty() { None } else { Some(buffer.trim().to_string()) };
                             state.android_mode = mode.clone();
-                            if let Some(ref m) = mode {
-                                let _ = crate::infra::android_prefs::save_android_mode(m);
+                            if let Some(m) = mode {
+                                effects.push(Effect::SaveAndroidMode(m));
                             }
                         } else if state.pending_new_branch_worktree {
                             state.pending_new_branch_worktree = false;
                             let new_branch_name = buffer.trim().to_string();
                             let base_branch = state.pending_new_branch_base.take();
                             if new_branch_name.is_empty() {
-                                return;
+                                return effects;
                             }
                             let base_branch = match base_branch {
                                 Some(b) => b,
-                                None => return,
+                                None => return effects,
                             };
-                            let repo_root = state.repo_root.clone();
-                            let tx = metro_tx.clone();
                             state.worktree_op_in_flight = true;
-                            tokio::spawn(async move {
-                                match crate::infra::worktrees::add_worktree_new_branch(&repo_root, &new_branch_name, &base_branch).await {
-                                    Ok(path) => {
-                                        let _ = tx.send(Action::WorktreeNewBranchCreated(path.to_string_lossy().to_string()));
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(Action::WorktreeNewBranchFailed(e.to_string()));
-                                    }
-                                }
+                            effects.push(Effect::AddWorktreeNewBranch {
+                                new: new_branch_name,
+                                base: base_branch,
                             });
                         } else if state.pending_worktree_add {
                             state.pending_worktree_add = false;
                             let branch_name = buffer.trim().to_string();
                             if branch_name.is_empty() {
-                                return;
+                                return effects;
                             }
-                            let repo_root = state.repo_root.clone();
-                            let tx = metro_tx.clone();
                             state.worktree_op_in_flight = true;
-                            tokio::spawn(async move {
-                                match crate::infra::worktrees::add_worktree(&repo_root, &branch_name).await {
-                                    Ok(path) => {
-                                        let _ = tx.send(Action::WorktreeAdded(path.to_string_lossy().to_string()));
-                                    }
-                                    Err(e) => {
-                                        let _ = tx.send(Action::WorktreeAddFailed(e.to_string()));
-                                    }
-                                }
-                            });
+                            effects.push(Effect::AddWorktree { branch: branch_name });
                         } else if let Some(wt_id) = state.pending_claude_open.take() {
                             // Claude tab name modal submit
                             let suffix = if buffer.trim().is_empty() {
@@ -788,11 +683,10 @@ pub fn update(
                                 } else {
                                     format!("claude {flags}")
                                 };
-                                tokio::task::spawn_blocking(move || {
-                                    if let Some(mux) = crate::infra::multiplexer::detect_multiplexer()
-                                        && let Err(e) = mux.new_window(&path, &name, &command) {
-                                            tracing::warn!("multiplexer new_window (claude) failed: {e}");
-                                        }
+                                effects.push(Effect::OpenInMultiplexer {
+                                    worktree: path,
+                                    name,
+                                    command,
                                 });
                             }
                         } else {
@@ -815,7 +709,9 @@ pub fn update(
                                 }
                                 other => other,
                             };
-                            dispatch_command(state, real_spec, metro_tx);
+                            if let Some(eff) = dispatch_command(state, real_spec) {
+                                effects.push(eff);
+                            }
                         }
                     }
                     other => {
@@ -891,15 +787,17 @@ pub fn update(
                     if is_available_emulator {
                         if let CommandSpec::RnRunAndroid { mode, .. } = *pending_template {
                             if let Some(ref m) = mode {
-                                let _ = crate::infra::android_prefs::save_android_mode(m);
+                                effects.push(Effect::SaveAndroidMode(m.clone()));
                             }
                             let mode_flag = mode.map(|m| format!(" --mode {m}")).unwrap_or_default();
                             let cmd = format!(
                                 "emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device && npx react-native run-android{mode_flag}"
                             );
-                            dispatch_command(state, CommandSpec::ShellCommand { command: cmd }, metro_tx);
+                            if let Some(eff) = dispatch_command(state, CommandSpec::ShellCommand { command: cmd }) {
+                                effects.push(eff);
+                            }
                         }
-                        return;
+                        return effects;
                     }
 
                     let real_spec = match *pending_template {
@@ -914,13 +812,15 @@ pub fn update(
                     };
                     // Persist Android mode if present
                     if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
-                        let _ = crate::infra::android_prefs::save_android_mode(m);
+                        effects.push(Effect::SaveAndroidMode(m.clone()));
                     }
                     // Record iOS simulator usage for sort-by-recent
                     if is_ios {
-                        let _ = metro_tx.send(Action::SimulatorUsed(device_id));
+                        effects.push(Effect::ScheduleAction(Action::SimulatorUsed(device_id)));
                     }
-                    dispatch_command(state, real_spec, metro_tx);
+                    if let Some(eff) = dispatch_command(state, real_spec) {
+                        effects.push(eff);
+                    }
                 }
             }
         }
@@ -944,14 +844,16 @@ pub fn update(
                         if is_available_emulator {
                             if let CommandSpec::RnRunAndroid { mode, .. } = spec {
                                 if let Some(ref m) = mode {
-                                    let _ = crate::infra::android_prefs::save_android_mode(m);
+                                    effects.push(Effect::SaveAndroidMode(m.clone()));
                                 }
                                 let mode_flag = mode.map(|m| format!(" --mode {m}")).unwrap_or_default();
                                 let cmd = format!(
                                     "emulator -avd {} > /dev/null 2>&1 & adb wait-for-device && npx react-native run-android{}",
                                     devices[0].id, mode_flag
                                 );
-                                dispatch_command(state, CommandSpec::ShellCommand { command: cmd }, metro_tx);
+                                if let Some(eff) = dispatch_command(state, CommandSpec::ShellCommand { command: cmd }) {
+                                    effects.push(eff);
+                                }
                             }
                         } else {
                             let real_spec = match spec {
@@ -965,9 +867,11 @@ pub fn update(
                                 other => other,
                             };
                             if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
-                                let _ = crate::infra::android_prefs::save_android_mode(m);
+                                effects.push(Effect::SaveAndroidMode(m.clone()));
                             }
-                            dispatch_command(state, real_spec, metro_tx);
+                            if let Some(eff) = dispatch_command(state, real_spec) {
+                                effects.push(eff);
+                            }
                         }
                     }
                     _ => {
@@ -1026,16 +930,18 @@ pub fn update(
                     }
                     if state.metro.is_running() {
                         state.pending_restart = false;
-                        update(state, Action::MetroStop, metro_tx, handle_tx);
+                        effects.extend(update(state, Action::MetroStop));
                     }
                     state.pending_metro_after_sync = true;
-                    dispatch_command(state, CommandSpec::YarnInstall, metro_tx);
-                    return;
+                    if let Some(eff) = dispatch_command(state, CommandSpec::YarnInstall) {
+                        effects.push(eff);
+                    }
+                    return effects;
                 }
                 // Store target path for use after sync completes
                 state.pending_switch_path = target_path;
                 state.modal = Some(ModalState::SyncBeforeMetro { needs_yarn: true, needs_pods: false });
-                return;
+                return effects;
             }
 
             // Original logic (unchanged) — only reached when deps are fresh
@@ -1043,13 +949,13 @@ pub fn update(
                 // Kill current → wait for port free → start in new worktree
                 state.pending_switch_path = target_path;
                 state.pending_restart = true;
-                update(state, Action::MetroStop, metro_tx, handle_tx);
+                effects.extend(update(state, Action::MetroStop));
             } else {
                 // Not running — just start directly in selected worktree
                 if let Some(path) = target_path {
                     state.active_worktree_path = Some(path);
                 }
-                update(state, Action::MetroStart, metro_tx, handle_tx);
+                effects.extend(update(state, Action::MetroStart));
             }
         }
 
@@ -1059,14 +965,14 @@ pub fn update(
                     message: "Cannot open Claude Code: not inside a tmux or zellij session".into(),
                     can_retry: false,
                 });
-                return;
+                return effects;
             }
             let wt = if !state.worktrees.is_empty() {
                 let idx = state.worktree_table_state.selected().unwrap_or(0)
                     .min(state.worktrees.len() - 1);
                 &state.worktrees[idx]
             } else {
-                return;
+                return effects;
             };
             // Store worktree dir name for later use when modal submits
             state.pending_claude_open = Some(
@@ -1088,23 +994,22 @@ pub fn update(
                     message: "Cannot open shell tab: not inside a tmux or zellij session".into(),
                     can_retry: false,
                 });
-                return;
+                return effects;
             }
             let wt = if !state.worktrees.is_empty() {
                 let idx = state.worktree_table_state.selected().unwrap_or(0)
                     .min(state.worktrees.len() - 1);
                 state.worktrees[idx].clone()
             } else {
-                return;
+                return effects;
             };
             let path = wt.path.clone();
             let name = format!("{}-shell", wt.preferred_prefix());
             let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-            tokio::task::spawn_blocking(move || {
-                if let Some(mux) = crate::infra::multiplexer::detect_multiplexer()
-                    && let Err(e) = mux.new_window(&path, &name, &shell) {
-                        tracing::warn!("multiplexer new_window (shell) failed: {e}");
-                    }
+            effects.push(Effect::OpenInMultiplexer {
+                worktree: path,
+                name,
+                command: shell,
             });
         }
 
@@ -1115,10 +1020,8 @@ pub fn update(
             for (key, title) in &titles {
                 state.jira_title_cache.insert(key.clone(), title.clone());
             }
-            // Persist cache to disk (fire-and-forget, log on error)
-            if let Err(e) = crate::infra::jira_cache::save_jira_cache(&state.jira_title_cache) {
-                tracing::warn!("save_jira_cache failed: {e}");
-            }
+            // Persist cache to disk via effect_runner (F-201)
+            effects.push(Effect::SaveJiraCache(state.jira_title_cache.clone()));
             // Apply titles to currently loaded worktrees
             for wt in &mut state.worktrees {
                 if let Some(key) = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira_project_prefix)
@@ -1190,7 +1093,7 @@ pub fn update(
                 }
 
                 if cmds.is_empty() {
-                    return;
+                    return effects;
                 }
 
                 // Dispatch first, queue rest
@@ -1198,7 +1101,9 @@ pub fn update(
                 for cmd in cmds {
                     state.command_queue.push_back(cmd);
                 }
-                dispatch_command(state, first, metro_tx);
+                if let Some(eff) = dispatch_command(state, first) {
+                    effects.push(eff);
+                }
             }
         }
         Action::ToggleFullscreen => {
@@ -1229,12 +1134,8 @@ pub fn update(
             });
         }
         Action::SimulatorUsed(udid) => {
-            // Fire-and-forget write to sim history
-            tokio::task::spawn_blocking(move || {
-                if let Err(e) = crate::infra::sim_history::record_sim_used(&udid) {
-                    tracing::warn!("failed to save sim history: {e}");
-                }
-            });
+            // Fire-and-forget write to sim history via effect_runner
+            effects.push(Effect::RecordSimUsed(udid));
         }
         Action::SyncBeforeRunAccept => {
             if let Some(ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods }) = state.modal.take() {
@@ -1255,7 +1156,9 @@ pub fn update(
                 for cmd in sequence {
                     state.command_queue.push_back(cmd);
                 }
-                dispatch_command(state, first, metro_tx);
+                if let Some(eff) = dispatch_command(state, first) {
+                    effects.push(eff);
+                }
             }
         }
         Action::SyncBeforeRunDecline => {
@@ -1267,9 +1170,9 @@ pub fn update(
                 let spec = *run_command;
                 if spec.needs_metro() && !state.metro.is_running() {
                     state.pending_metro_run = Some(spec);
-                    update(state, Action::MetroStart, metro_tx, handle_tx);
-                } else {
-                    dispatch_command(state, spec, metro_tx);
+                    effects.extend(update(state, Action::MetroStart));
+                } else if let Some(eff) = dispatch_command(state, spec) {
+                    effects.push(eff);
                 }
             }
         }
@@ -1284,7 +1187,7 @@ pub fn update(
                 // Stop metro if running (no auto-restart — sync must finish first)
                 if state.metro.is_running() {
                     state.pending_restart = false;
-                    update(state, Action::MetroStop, metro_tx, handle_tx);
+                    effects.extend(update(state, Action::MetroStop));
                 }
 
                 // Build sync sequence and dispatch
@@ -1303,7 +1206,9 @@ pub fn update(
                 for cmd in sequence {
                     state.command_queue.push_back(cmd);
                 }
-                dispatch_command(state, first, metro_tx);
+                if let Some(eff) = dispatch_command(state, first) {
+                    effects.push(eff);
+                }
             }
         }
 
@@ -1315,12 +1220,12 @@ pub fn update(
                 if state.metro.is_running() {
                     state.pending_switch_path = target_path;
                     state.pending_restart = true;
-                    update(state, Action::MetroStop, metro_tx, handle_tx);
+                    effects.extend(update(state, Action::MetroStop));
                 } else {
                     if let Some(path) = target_path {
                         state.active_worktree_path = Some(path);
                     }
-                    update(state, Action::MetroStart, metro_tx, handle_tx);
+                    effects.extend(update(state, Action::MetroStart));
                 }
             }
         }
@@ -1370,7 +1275,7 @@ pub fn update(
 
         Action::WorktreeRemove => {
             if state.worktrees.is_empty() {
-                return;
+                return effects;
             }
             let idx = state.worktree_table_state.selected().unwrap_or(0)
                 .min(state.worktrees.len() - 1);
@@ -1383,7 +1288,7 @@ pub fn update(
                     can_retry: false,
                 });
                 state.palette_mode = None;
-                return;
+                return effects;
             }
 
             // Store removal target so ModalConfirm knows what to do
@@ -1412,18 +1317,7 @@ pub fn update(
             tracing::info!("worktree removed: {}", path_str);
             state.worktree_op_in_flight = false;
             // Refresh the worktree list to reflect the removal
-            let repo_root = state.repo_root.clone();
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                match crate::infra::worktrees::list_worktrees(&repo_root).await {
-                    Ok(wts) => {
-                        let _ = tx.send(Action::WorktreesLoaded(wts));
-                    }
-                    Err(e) => {
-                        tracing::warn!("worktree refresh after removal failed: {e}");
-                    }
-                }
-            });
+            effects.push(Effect::ListWorktrees);
         }
 
         Action::WorktreeRemoveFailed(err) => {
@@ -1433,7 +1327,7 @@ pub fn update(
                 can_retry: false,
             });
             // Re-add the worktree to the UI since git removal failed
-            update(state, Action::RefreshWorktrees, metro_tx, handle_tx);
+            effects.extend(update(state, Action::RefreshWorktrees));
         }
 
         // --- Quick-260403-dmz: Worktree creation ---
@@ -1451,19 +1345,7 @@ pub fn update(
         Action::WorktreeAdded(path_str) => {
             tracing::info!("worktree added: {}", path_str);
             state.worktree_op_in_flight = false;
-            // Refresh the worktree list to show the new worktree
-            let repo_root = state.repo_root.clone();
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                match crate::infra::worktrees::list_worktrees(&repo_root).await {
-                    Ok(wts) => {
-                        let _ = tx.send(Action::WorktreesLoaded(wts));
-                    }
-                    Err(e) => {
-                        tracing::warn!("worktree refresh after add failed: {e}");
-                    }
-                }
-            });
+            effects.push(Effect::ListWorktrees);
         }
 
         Action::WorktreeAddFailed(err) => {
@@ -1478,18 +1360,7 @@ pub fn update(
 
         Action::WorktreeAddNewBranch => {
             state.palette_mode = None;
-            let repo_root = state.repo_root.clone();
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                match crate::infra::worktrees::list_remote_branches(&repo_root).await {
-                    Ok(branches) => {
-                        let _ = tx.send(Action::BranchesLoaded(branches));
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Action::WorktreeNewBranchFailed(e.to_string()));
-                    }
-                }
-            });
+            effects.push(Effect::ListRemoteBranches);
         }
 
         Action::BranchesLoaded(branches) => {
@@ -1591,18 +1462,7 @@ pub fn update(
         Action::WorktreeNewBranchCreated(path_str) => {
             tracing::info!("worktree with new branch created: {}", path_str);
             state.worktree_op_in_flight = false;
-            let repo_root = state.repo_root.clone();
-            let tx = metro_tx.clone();
-            tokio::spawn(async move {
-                match crate::infra::worktrees::list_worktrees(&repo_root).await {
-                    Ok(wts) => {
-                        let _ = tx.send(Action::WorktreesLoaded(wts));
-                    }
-                    Err(e) => {
-                        tracing::warn!("worktree refresh after new-branch add failed: {e}");
-                    }
-                }
-            });
+            effects.push(Effect::ListWorktrees);
         }
 
         Action::WorktreeNewBranchFailed(err) => {
@@ -1613,4 +1473,6 @@ pub fn update(
             });
         }
     }
+
+    effects
 }
