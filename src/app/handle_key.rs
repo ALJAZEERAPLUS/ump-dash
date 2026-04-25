@@ -50,7 +50,7 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
     // intentionally NOT exhaustive: KeyCode has dozens of variants
     // (function keys, modifiers, paste markers, etc.) and we only want
     // Char(c) here; everything else falls through to the post-match logic.
-    if let Some(ref modal) = state.modal {
+    if let Some(ref modal) = state.modal_stack.modal {
         match modal {
             ModalState::TextInput { .. } => {
                 if let KeyCode::Char(c) = key.code {
@@ -84,7 +84,7 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
 
     // Fallthrough 2: palette context-level close (Pitfall 4). Any unbound key
     // while a palette is open closes the palette.
-    if state.palette_mode.is_some() {
+    if state.modal_stack.palette_mode.is_some() {
         return Some(Action::ModalCancel);
     }
 

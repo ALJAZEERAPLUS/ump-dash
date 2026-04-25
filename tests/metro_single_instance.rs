@@ -27,7 +27,7 @@ fn metro_start_while_running_triggers_restart_not_double_spawn() {
     // Simulate "metro already running in worktree A"
     state.metro.register(fake_metro_handle(9999, "wt-a"));
     assert!(state.metro.is_running(), "precondition: metro must be running");
-    assert!(!state.pending_restart, "precondition: pending_restart starts false");
+    assert!(!state.metro_state.pending_restart, "precondition: pending_restart starts false");
 
     // Dispatch a second MetroStart — the characterization target.
     let effects = update(&mut state, Action::MetroStart);
@@ -35,7 +35,7 @@ fn metro_start_while_running_triggers_restart_not_double_spawn() {
     // Invariant 1: the state machine flagged a restart — it did NOT silently drop
     // or double-spawn.
     assert!(
-        state.pending_restart,
+        state.metro_state.pending_restart,
         "COVER-01: second MetroStart while running MUST set pending_restart = true"
     );
 
@@ -72,7 +72,7 @@ fn metro_start_when_stopped_does_not_set_pending_restart() {
     let effects = update(&mut state, Action::MetroStart);
 
     assert!(
-        !state.pending_restart,
+        !state.metro_state.pending_restart,
         "MetroStart from Stopped must NOT set pending_restart — that flag is only for the restart path"
     );
     // Post-F-201: MetroStart from Stopped emits Effect::DetectExternalMetro

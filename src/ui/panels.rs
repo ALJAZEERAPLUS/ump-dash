@@ -19,7 +19,7 @@ use crate::{
 /// Only shown in normal (non-fullscreen) layout.
 #[allow(dead_code)]
 pub fn render_title_bar(f: &mut Frame, area: Rect, state: &AppState) {
-    let title = state.config.as_ref()
+    let title = state.app_config.config.as_ref()
         .map(|c| c.app_title.as_str())
         .unwrap_or("RN Dash");
     let block = Block::bordered()
@@ -54,7 +54,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         .title_style(Style::default().fg(Color::White))
         .border_style(border_style);
 
-    if state.worktrees.is_empty() {
+    if state.worktree_browser.worktrees.is_empty() {
         let placeholder = Paragraph::new("Loading worktrees...").block(block);
         f.render_widget(placeholder, area);
         return;
@@ -64,11 +64,11 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     // Track visual row indices that are detail rows (not selectable worktree rows).
     let mut detail_row_indices: Vec<usize> = Vec::new();
 
-    for wt in state.worktrees.iter() {
+    for wt in state.worktree_browser.worktrees.iter() {
         let branch = &wt.branch;
 
         // Extract ticket number from branch if possible
-        let ticket_num = crate::domain::jira::extract_jira_key(branch, &state.jira_project_prefix).unwrap_or_default();
+        let ticket_num = crate::domain::jira::extract_jira_key(branch, &state.jira.project_prefix).unwrap_or_default();
         let title = wt.jira_title.as_deref().unwrap_or("");
 
         // Merged ticket display: "UMP-1234 Title text" or just one or the other
@@ -138,8 +138,8 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Use green highlight when the selected row is metro-active, gray otherwise
-    let selected_idx = state.worktree_table_state.selected().unwrap_or(0);
-    let selected_is_metro = state.worktrees.get(selected_idx)
+    let selected_idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    let selected_is_metro = state.worktree_browser.worktrees.get(selected_idx)
         .map(|wt| wt.metro_status == WorktreeMetroStatus::Running)
         .unwrap_or(false);
 
@@ -167,7 +167,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     .highlight_symbol("> ");
 
     // Map logical selection index to visual index (offset by any detail rows inserted before it)
-    if let Some(logical) = state.worktree_table_state.selected() {
+    if let Some(logical) = state.worktree_browser.worktree_table_state.selected() {
         let mut visual = logical;
         for &detail_idx in &detail_row_indices {
             if detail_idx <= visual {
@@ -175,14 +175,14 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             }
         }
         if visual != logical {
-            state.worktree_table_state.select(Some(visual));
+            state.worktree_browser.worktree_table_state.select(Some(visual));
         }
     }
 
-    f.render_stateful_widget(table, area, &mut state.worktree_table_state);
+    f.render_stateful_widget(table, area, &mut state.worktree_browser.worktree_table_state);
 
     // Restore logical index after render so app state stays consistent
-    if let Some(visual) = state.worktree_table_state.selected() {
+    if let Some(visual) = state.worktree_browser.worktree_table_state.selected() {
         let mut logical = visual;
         for &detail_idx in detail_row_indices.iter().rev() {
             if detail_idx <= logical && logical > 0 {
@@ -190,7 +190,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             }
         }
         if logical != visual {
-            state.worktree_table_state.select(Some(logical));
+            state.worktree_browser.worktree_table_state.select(Some(logical));
         }
     }
 }
@@ -204,9 +204,9 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
     };
 
     // Title shows running command name, [running] indicator, and queue count
-    let title = match &state.running_command {
+    let title = match &state.command_runner.running_command {
         Some(spec) => {
-            let queue_count = state.command_queue.len();
+            let queue_count = state.command_runner.command_queue.len();
             if queue_count > 0 {
                 format!(" Output — {} [running] (+{} queued) ", spec.label(), queue_count)
             } else {
@@ -214,7 +214,7 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
             }
         }
         None => {
-            let queue_count = state.command_queue.len();
+            let queue_count = state.command_runner.command_queue.len();
             if queue_count > 0 {
                 format!(" Output ({queue_count} queued) ")
             } else {

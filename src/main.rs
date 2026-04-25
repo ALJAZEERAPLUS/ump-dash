@@ -97,20 +97,20 @@ fn build_state(
     multiplexer_available: bool,
 ) -> AppState {
     let mut state = AppState::default();
-    state.jira_title_cache = jira_title_cache;
-    state.sim_history = sim_history;
+    state.jira.title_cache = jira_title_cache;
+    state.app_config.sim_history = sim_history;
     if let Some(persisted) = android_mode_persisted {
-        state.android_mode = Some(persisted);
+        state.app_config.android_mode = Some(persisted);
     }
-    state.jira_available = jira_available;
-    state.multiplexer_available = multiplexer_available;
+    state.jira.available = jira_available;
+    state.app_config.multiplexer_available = multiplexer_available;
     if let Some(cfg) = config {
-        state.claude_flags = cfg.claude_flags.clone();
-        state.jira_project_prefix = cfg.jira_project_prefix.clone();
+        state.app_config.claude_flags = cfg.claude_flags.clone();
+        state.jira.project_prefix = cfg.jira_project_prefix.clone();
         if let Some(path) = cfg.repo_root_path() {
-            state.repo_root = path;
+            state.app_config.repo_root = path;
         }
-        state.config = Some(cfg);
+        state.app_config.config = Some(cfg);
     }
     state
 }

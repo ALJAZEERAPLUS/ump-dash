@@ -45,7 +45,7 @@ pub async fn run(
     runner
         .run_effects(vec![
             super::effect::Effect::ListWorktrees {
-                repo_root: state.repo_root.clone(),
+                repo_root: state.app_config.repo_root.clone(),
             },
             super::effect::Effect::DetectExternalMetro { port: 8081 },
         ])
@@ -62,7 +62,7 @@ pub async fn run(
             }
             _ = refresh_interval.tick() => {
                 // 60-second periodic refresh: keeps worktrees, staleness, labels, and JIRA titles current
-                if state.running_command.is_none() {
+                if state.command_runner.running_command.is_none() {
                     let effects = update(&mut state, Action::RefreshWorktrees);
                     runner.run_effects(effects).await;
                 }
@@ -126,7 +126,7 @@ pub async fn run(
         // the adapter. Ignoring the result: shutdown is best-effort.
         let _ = handle.kill();
     }
-    if let Some(task) = state.command_task.take() {
+    if let Some(task) = state.command_runner.command_task.take() {
         task.abort();
     }
 

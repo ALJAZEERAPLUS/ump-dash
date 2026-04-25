@@ -6,7 +6,7 @@
 //! 1. Palette → Action resolution (`handle_key` palette branches): 5
 //!    `PaletteMode` variants × 2-7 keys each + unrecognized-key fallback.
 //! 2. Modal dismissal: 8 `ModalState` variants × dismiss keys. Post-condition:
-//!    `state.modal == None` after `update()`.
+//!    `state.modal_stack.modal == None` after `update()`.
 //! 3. Command queue routing: `CommandQueuePush` appends; `CommandExited` drains.
 //!
 //! Post-F-201 (Plan 13-07): `update()` signature is now
@@ -57,7 +57,7 @@ fn base_state() -> AppState {
 /// Seed one worktree so `dispatch_command` does not early-return on an empty
 /// worktree list. Used by the `command_queue` drain test.
 fn seed_one_worktree(state: &mut AppState) {
-    state.worktrees.push(Worktree {
+    state.worktree_browser.worktrees.push(Worktree {
         id: WorktreeId("wt-1".into()),
         path: std::path::PathBuf::from("/tmp/wt-1"),
         branch: "main".into(),
@@ -68,7 +68,7 @@ fn seed_one_worktree(state: &mut AppState) {
         stale_pods: false,
         jira_key: None,
     });
-    state.worktree_table_state.select(Some(0));
+    state.worktree_browser.worktree_table_state.select(Some(0));
 }
 
 // =========================================================================
@@ -81,7 +81,7 @@ mod palette_resolution {
     #[test]
     fn android_palette_resolves_every_key() {
         let mut state = base_state();
-        state.palette_mode = Some(PaletteMode::Android);
+        state.modal_stack.palette_mode = Some(PaletteMode::Android);
 
         // 'd' composes a ShellCommand at call time — match the outer variant
         // (the command-string format is internal and not the invariant we lock).
@@ -120,7 +120,7 @@ mod palette_resolution {
     #[test]
     fn ios_palette_resolves_every_key() {
         let mut state = base_state();
-        state.palette_mode = Some(PaletteMode::Ios);
+        state.modal_stack.palette_mode = Some(PaletteMode::Ios);
 
         assert_eq!(
             handle_key(&state, key('d')),
@@ -152,7 +152,7 @@ mod palette_resolution {
     #[test]
     fn yarn_palette_resolves_every_key() {
         let mut state = base_state();
-        state.palette_mode = Some(PaletteMode::Yarn);
+        state.modal_stack.palette_mode = Some(PaletteMode::Yarn);
 
         assert_eq!(
             handle_key(&state, key('i')),
@@ -200,7 +200,7 @@ mod palette_resolution {
     #[test]
     fn git_palette_resolves_every_key() {
         let mut state = base_state();
-        state.palette_mode = Some(PaletteMode::Git);
+        state.modal_stack.palette_mode = Some(PaletteMode::Git);
 
         assert_eq!(
             handle_key(&state, key('f')),
@@ -260,7 +260,7 @@ mod palette_resolution {
     #[test]
     fn worktree_palette_resolves_every_key() {
         let mut state = base_state();
-        state.palette_mode = Some(PaletteMode::Worktree);
+        state.modal_stack.palette_mode = Some(PaletteMode::Worktree);
 
         assert_eq!(handle_key(&state, key('w')), Some(Action::WorktreeAdd));
         assert_eq!(handle_key(&state, key('d')), Some(Action::WorktreeRemove));
@@ -287,14 +287,14 @@ mod palette_resolution {
     fn yarn_c_opens_clean_toggle_then_x_confirms() {
         // Step 1 (entry): from Yarn palette, 'c' produces OpenCleanMenu.
         let mut state = base_state();
-        state.palette_mode = Some(PaletteMode::Yarn);
+        state.modal_stack.palette_mode = Some(PaletteMode::Yarn);
         assert_eq!(handle_key(&state, key('c')), Some(Action::OpenCleanMenu));
 
         // Step 2 (exit): with CleanToggle modal active, 'x' produces CleanConfirm.
         // This test targets the key→action mapping; modal construction via
         // update(OpenCleanMenu) is covered by its own integration surface.
         let mut state = base_state();
-        state.modal = Some(ModalState::CleanToggle {
+        state.modal_stack.modal = Some(ModalState::CleanToggle {
             options: CleanOptions::default(),
         });
         assert_eq!(
@@ -315,7 +315,7 @@ mod palette_resolution {
 // =========================================================================
 //
 // For each of 8 `ModalState` variants, assert that the documented dismiss key
-// produces the documented `Action` AND that `update()` clears `state.modal`
+// produces the documented `Action` AND that `update()` clears `state.modal_stack.modal`
 // to `None`. Post-F-201: tests are plain `#[test]` (no tokio runtime needed —
 // update() is pure and effects are data, not spawns).
 
@@ -325,7 +325,7 @@ mod modal_dismissal {
     #[test]
     fn confirm_modal_dismisses_on_n_and_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::Confirm {
+        state.modal_stack.modal = Some(ModalState::Confirm {
             prompt: "Run?".into(),
             pending_command: CommandSpec::YarnInstall,
         });
@@ -337,13 +337,13 @@ mod modal_dismissal {
         );
 
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal.is_none(), "ModalCancel must clear state.modal");
+        assert!(state.modal_stack.modal.is_none(), "ModalCancel must clear state.modal_stack.modal");
     }
 
     #[test]
     fn text_input_modal_dismisses_on_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::TextInput {
+        state.modal_stack.modal = Some(ModalState::TextInput {
             prompt: "Branch:".into(),
             buffer: String::new(),
             pending_template: Box::new(CommandSpec::GitCheckout {
@@ -355,13 +355,13 @@ mod modal_dismissal {
             Some(Action::ModalCancel)
         );
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal.is_none());
+        assert!(state.modal_stack.modal.is_none());
     }
 
     #[test]
     fn device_picker_modal_dismisses_on_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::DevicePicker {
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
             devices: Vec::new(),
             selected: 0,
             pending_template: Box::new(CommandSpec::RnRunIos {
@@ -374,13 +374,13 @@ mod modal_dismissal {
             Some(Action::ModalCancel)
         );
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal.is_none());
+        assert!(state.modal_stack.modal.is_none());
     }
 
     #[test]
     fn clean_toggle_modal_dismisses_on_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::CleanToggle {
+        state.modal_stack.modal = Some(ModalState::CleanToggle {
             options: CleanOptions::default(),
         });
         assert_eq!(
@@ -388,13 +388,13 @@ mod modal_dismissal {
             Some(Action::ModalCancel)
         );
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal.is_none());
+        assert!(state.modal_stack.modal.is_none());
     }
 
     #[test]
     fn sync_before_run_modal_dismisses_on_n_and_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::SyncBeforeRun {
+        state.modal_stack.modal = Some(ModalState::SyncBeforeRun {
             run_command: Box::new(CommandSpec::YarnUnitTests),
             needs_yarn: true,
             needs_pods: false,
@@ -413,13 +413,13 @@ mod modal_dismissal {
             Some(Action::SyncBeforeRunDecline)
         );
 
-        // Applying the decline takes state.modal via `.take()` → modal is None
+        // Applying the decline takes state.modal_stack.modal via `.take()` → modal is None
         // BEFORE the conditional dispatch. YarnUnitTests does not need metro,
         // and with an empty worktrees vec `dispatch_command` early-returns
         // without pushing SpawnCommand.
         let _effects = update(&mut state, Action::SyncBeforeRunDecline);
         assert!(
-            state.modal.is_none(),
+            state.modal_stack.modal.is_none(),
             "SyncBeforeRunDecline must clear modal"
         );
     }
@@ -427,13 +427,13 @@ mod modal_dismissal {
     #[test]
     fn sync_before_metro_modal_dismisses_on_n_and_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::SyncBeforeMetro {
+        state.modal_stack.modal = Some(ModalState::SyncBeforeMetro {
             needs_yarn: true,
             needs_pods: false,
         });
         // Bypass the external-metro-detect effect path in the transitive
         // MetroStart dispatch — we only care that modal is cleared.
-        state.skip_external_metro_check = true;
+        state.metro_state.skip_external_metro_check = true;
 
         assert_eq!(
             handle_key(&state, key('n')),
@@ -450,7 +450,7 @@ mod modal_dismissal {
 
         let _effects = update(&mut state, Action::SyncBeforeMetroDecline);
         assert!(
-            state.modal.is_none(),
+            state.modal_stack.modal.is_none(),
             "SyncBeforeMetroDecline must clear modal"
         );
     }
@@ -458,7 +458,7 @@ mod modal_dismissal {
     #[test]
     fn external_metro_conflict_dismisses_on_n_and_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::ExternalMetroConflict {
+        state.modal_stack.modal = Some(ModalState::ExternalMetroConflict {
             pid: 12345,
             working_dir: "/tmp".into(),
         });
@@ -469,13 +469,13 @@ mod modal_dismissal {
             Some(Action::ModalCancel)
         );
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal.is_none());
+        assert!(state.modal_stack.modal.is_none());
     }
 
     #[test]
     fn branch_picker_modal_dismisses_on_esc() {
         let mut state = base_state();
-        state.modal = Some(ModalState::BranchPicker {
+        state.modal_stack.modal = Some(ModalState::BranchPicker {
             branches: Vec::new(),
             selected: 0,
             filter: String::new(),
@@ -485,7 +485,7 @@ mod modal_dismissal {
             Some(Action::ModalCancel)
         );
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal.is_none());
+        assert!(state.modal_stack.modal.is_none());
     }
 }
 
@@ -499,7 +499,7 @@ mod command_queue {
     #[test]
     fn command_queue_push_appends_to_back() {
         let mut state = base_state();
-        assert!(state.command_queue.is_empty());
+        assert!(state.command_runner.command_queue.is_empty());
 
         let _effects = update(
             &mut state,
@@ -510,13 +510,13 @@ mod command_queue {
             Action::CommandQueuePush(CommandSpec::YarnPodInstall),
         );
 
-        assert_eq!(state.command_queue.len(), 2);
+        assert_eq!(state.command_runner.command_queue.len(), 2);
         assert_eq!(
-            state.command_queue.front(),
+            state.command_runner.command_queue.front(),
             Some(&CommandSpec::YarnInstall)
         );
         assert_eq!(
-            state.command_queue.back(),
+            state.command_runner.command_queue.back(),
             Some(&CommandSpec::YarnPodInstall)
         );
     }
@@ -524,16 +524,16 @@ mod command_queue {
     #[test]
     fn command_exited_with_empty_queue_clears_running_command() {
         let mut state = base_state();
-        state.running_command = Some(CommandSpec::GitFetch);
-        assert!(state.command_queue.is_empty());
+        state.command_runner.running_command = Some(CommandSpec::GitFetch);
+        assert!(state.command_runner.command_queue.is_empty());
 
         let _effects = update(&mut state, Action::CommandExited);
 
         assert!(
-            state.running_command.is_none(),
+            state.command_runner.running_command.is_none(),
             "CommandExited must clear running_command"
         );
-        assert!(state.command_queue.is_empty(), "queue stays empty");
+        assert!(state.command_runner.command_queue.is_empty(), "queue stays empty");
     }
 
     #[test]
@@ -541,23 +541,23 @@ mod command_queue {
         let mut state = base_state();
         // Seed one worktree so `dispatch_command` does not early-return.
         seed_one_worktree(&mut state);
-        state.running_command = Some(CommandSpec::GitFetch);
+        state.command_runner.running_command = Some(CommandSpec::GitFetch);
         // GitFetch has RefreshSet::none() — no tokio::spawn on the refresh
         // path. YarnInstall doesn't need metro, so drain routes through
         // `dispatch_command`, which sets running_command to the popped spec.
-        state.command_queue.push_back(CommandSpec::YarnInstall);
-        state.command_queue.push_back(CommandSpec::YarnPodInstall);
+        state.command_runner.command_queue.push_back(CommandSpec::YarnInstall);
+        state.command_runner.command_queue.push_back(CommandSpec::YarnPodInstall);
 
         let effects = update(&mut state, Action::CommandExited);
 
         assert_eq!(
-            state.running_command.as_ref(),
+            state.command_runner.running_command.as_ref(),
             Some(&CommandSpec::YarnInstall),
             "CommandExited must set running_command to the popped front of the queue"
         );
-        assert_eq!(state.command_queue.len(), 1);
+        assert_eq!(state.command_runner.command_queue.len(), 1);
         assert_eq!(
-            state.command_queue.front(),
+            state.command_runner.command_queue.front(),
             Some(&CommandSpec::YarnPodInstall)
         );
         // Post-F-201: dispatch_command returned Effect::SpawnCommand, which

@@ -415,7 +415,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         key: KeyCode::Char('e'),
         label: "e", short_desc: "device list", long_desc: "Pick Android device",
         context: BindingContext::Palette(PaletteMode::Android),
-        action: |s| Some(Action::CommandRun(CommandSpec::RnRunAndroid { device_id: String::new(), mode: s.android_mode.clone() })),
+        action: |s| Some(Action::CommandRun(CommandSpec::RnRunAndroid { device_id: String::new(), mode: s.app_config.android_mode.clone() })),
         visible: |_| true,
     },
     KeyBinding {
@@ -825,7 +825,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         key: KeyCode::Char('g'),
         label: "gg", short_desc: "top", long_desc: "Scroll to top (double-tap)",
         context: BindingContext::CommandOutput,
-        action: |s| if s.pending_g { Some(Action::ScrollToTop) } else { Some(Action::SetPendingG) },
+        action: |s| if s.modal_stack.pending_g { Some(Action::ScrollToTop) } else { Some(Action::SetPendingG) },
         visible: |_| false,
     },
     KeyBinding {
@@ -956,7 +956,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
 // ---------------------------------------------------------------------------
 
 fn external_metro_kill_action(state: &AppState) -> Option<Action> {
-    match state.modal {
+    match state.modal_stack.modal {
         Some(ModalState::ExternalMetroConflict { pid, .. }) => Some(Action::KillExternalMetro(pid)),
         _ => None,
     }
@@ -971,7 +971,7 @@ fn metro_running(state: &AppState) -> bool {
 }
 
 fn command_running(state: &AppState) -> bool {
-    state.running_command.is_some()
+    state.command_runner.running_command.is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -981,9 +981,9 @@ fn command_running(state: &AppState) -> bool {
 pub fn context_matches(ctx: &BindingContext, state: &AppState) -> bool {
     // Overlays take precedence over everything else.
     let in_overlay = state.show_help || state.error_state.is_some();
-    let in_modal = state.modal.is_some();
-    let in_palette = state.palette_mode.is_some();
-    let in_fullscreen = state.fullscreen_panel.is_some();
+    let in_modal = state.modal_stack.modal.is_some();
+    let in_palette = state.modal_stack.palette_mode.is_some();
+    let in_fullscreen = state.worktree_browser.fullscreen_panel.is_some();
 
     match ctx {
         BindingContext::Always => true,
@@ -1002,8 +1002,8 @@ pub fn context_matches(ctx: &BindingContext, state: &AppState) -> bool {
                 && !in_fullscreen
                 && state.focused_panel == FocusedPanel::CommandOutput
         }
-        BindingContext::Palette(p) => !in_modal && !in_overlay && state.palette_mode.as_ref() == Some(p),
-        BindingContext::Modal(k) => matches_modal_kind(state.modal.as_ref(), *k),
+        BindingContext::Palette(p) => !in_modal && !in_overlay && state.modal_stack.palette_mode.as_ref() == Some(p),
+        BindingContext::Modal(k) => matches_modal_kind(state.modal_stack.modal.as_ref(), *k),
         BindingContext::Overlay(OverlayKind::Help) => state.show_help,
         BindingContext::Overlay(OverlayKind::Error) => !state.show_help && state.error_state.is_some(),
         BindingContext::Fullscreen => in_fullscreen && !in_modal && !in_palette && !in_overlay,
@@ -1031,6 +1031,7 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
 
 fn android_palette_d(state: &AppState) -> Option<Action> {
     let mode_flag = state
+        .app_config
         .android_mode
         .as_ref()
         .map(|m| format!(" --mode {m}"))

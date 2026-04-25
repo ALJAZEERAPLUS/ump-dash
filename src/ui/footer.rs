@@ -35,7 +35,7 @@ fn key_hints_for(state: &AppState) -> Vec<(&'static str, &'static str)> {
     }
 
     // Palette mode hints — checked before panel hints
-    if let Some(ref mode) = state.palette_mode {
+    if let Some(ref mode) = state.modal_stack.palette_mode {
         return match mode {
             PaletteMode::Android => vec![
                 ("d", "run-android"),
@@ -80,7 +80,7 @@ fn key_hints_for(state: &AppState) -> Vec<(&'static str, &'static str)> {
     }
 
     // Modal hints — checked after palette, before panel hints
-    if let Some(ref modal) = state.modal {
+    if let Some(ref modal) = state.modal_stack.modal {
         return match modal {
             ModalState::Confirm { .. } => vec![("Y", "confirm"), ("N/Esc", "cancel")],
             ModalState::TextInput { .. } => vec![("Enter", "submit"), ("Esc", "cancel")],
@@ -147,7 +147,7 @@ fn key_hints_for(state: &AppState) -> Vec<(&'static str, &'static str)> {
                 ("j/k", "scroll"),
                 ("f", "fullscreen"),
             ];
-            if state.running_command.is_some() {
+            if state.command_runner.running_command.is_some() {
                 hints.push(("X", "cancel"));
             }
             hints

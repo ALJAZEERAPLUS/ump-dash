@@ -25,7 +25,7 @@ pub fn view(f: &mut Frame, state: &mut AppState) {
     let area = f.area();
 
     // Fullscreen mode — render only the fullscreened panel + footer
-    if let Some(panel) = state.fullscreen_panel {
+    if let Some(panel) = state.worktree_browser.fullscreen_panel {
         let [main_area, footer_area] = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -44,14 +44,14 @@ pub fn view(f: &mut Frame, state: &mut AppState) {
         if let Some(ref error) = state.error_state {
             error_overlay::render_error(f, error);
         }
-        if let Some(ref modal) = state.modal {
+        if let Some(ref modal) = state.modal_stack.modal {
             modals::render_modal(f, modal);
         }
         return;
     }
 
     // Normal layout: top (command output) | bottom (worktree table) | footer
-    let table_height = (state.worktrees.len() as u16 + 3).max(5); // rows + borders + header
+    let table_height = (state.worktree_browser.worktrees.len() as u16 + 3).max(5); // rows + borders + header
     let [top_area, table_area, footer_area] = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -77,7 +77,7 @@ pub fn view(f: &mut Frame, state: &mut AppState) {
     if let Some(ref error) = state.error_state {
         error_overlay::render_error(f, error);
     }
-    if let Some(ref modal) = state.modal {
+    if let Some(ref modal) = state.modal_stack.modal {
         modals::render_modal(f, modal);
     }
 }

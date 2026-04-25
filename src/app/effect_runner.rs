@@ -276,7 +276,7 @@ impl EffectRunner {
             Effect::FetchJiraTitles { keys } => {
                 // Plan 13-08: closes the D-13-07-02 deferral.
                 // adapters.jira is Option<Arc<dyn JiraPort>>; when None we
-                // skip — update() also pre-checks state.jira_available, but
+                // skip — update() also pre-checks state.jira.available, but
                 // a defensive guard here keeps the runner robust.
                 let Some(jira) = self.adapters.jira.clone() else {
                     return;
