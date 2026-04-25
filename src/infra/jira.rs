@@ -74,10 +74,4 @@ impl JiraPort for HttpJiraClient {
     }
 }
 
-/// Returns `true` when the process is running inside a tmux session.
-///
-/// Tmux sets the `TMUX` environment variable to the path of the server socket,
-/// so its presence is a reliable indicator of a tmux session.
-pub fn is_inside_tmux() -> bool {
-    std::env::var("TMUX").is_ok()
-}
+// Plan 13-10 (F-108): is_inside_tmux relocated to crate::infra::multiplexer.

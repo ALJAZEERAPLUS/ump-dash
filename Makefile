@@ -67,19 +67,35 @@ arch-lint:
 	@[ ! -f src/domain/pipeline.rs ] || grep -q 'pub enum Prerequisite' src/domain/pipeline.rs || (echo "G-08 FAIL: Prerequisite enum missing" && exit 1)
 	@echo "=== G-10: domain::ports module index ==="
 	@grep -q '^pub mod' src/domain/ports/mod.rs || (echo "G-10 FAIL: ports/mod.rs empty" && exit 1)
-	@echo "=== G-11: KEYBINDINGS three-site consumers (active after 13-10) ==="
-	@[ ! -f src/app/handle_key.rs ] || rg -q 'KEYBINDINGS' src/app/handle_key.rs || (echo "G-11 FAIL: handle_key does not read KEYBINDINGS" && exit 1)
-	@echo "=== G-12: hand-coded keybinding rows deleted (active after 13-10) ==="
-	@[ ! -f src/ui/footer.rs ] || ! rg -q '"c", "clean' src/ui/footer.rs 2>/dev/null || echo "G-12 PENDING: footer has hand-coded rows (active after 13-10)"
+	@echo "=== G-11: KEYBINDINGS three-site consumers (ACTIVE — Plan 13-10) ==="
+	@# G-11 ACTIVE as of Plan 13-10. handle_key (Plan 13-07), footer (Plan 13-10),
+	@# and help_overlay (Plan 13-10) all read from the KEYBINDINGS registry —
+	@# single source of truth verified at three consumer sites.
+	@rg -q 'KEYBINDINGS' src/app/handle_key.rs || (echo "G-11 FAIL: handle_key does not read KEYBINDINGS" && exit 1)
+	@rg -q 'footer_hints_for' src/ui/footer.rs || (echo "G-11 FAIL: footer.rs does not read keybindings::footer_hints_for" && exit 1)
+	@rg -q 'help_overlay_rows' src/ui/help_overlay.rs || (echo "G-11 FAIL: help_overlay.rs does not read keybindings::help_overlay_rows" && exit 1)
+	@echo "=== G-12: hand-coded keybinding rows deleted (ACTIVE — Plan 13-10) ==="
+	@# G-12 ACTIVE as of Plan 13-10. Footer's pre-13-10 hand-coded
+	@# context-branching tables (e.g. ("c", "clean…") in the Yarn palette)
+	@# are gone — render_footer delegates to keybindings::footer_hints_for.
+	@# help_overlay's pre-13-10 hand-coded Vec<Row> table is gone — only
+	@# the Icons legend rows remain (●/⚠ glyphs, NOT keybindings).
+	@! rg -q '"c", "clean' src/ui/footer.rs 2>/dev/null || (echo "G-12 FAIL: footer.rs has hand-coded keybinding rows" && exit 1)
+	@! rg -q 'Row::new\(vec!\["[a-zA-Z]"' src/ui/help_overlay.rs 2>/dev/null || (echo "G-12 FAIL: help_overlay.rs has hand-coded keybinding Row entries" && exit 1)
 	@echo "=== G-13: Adapters injection struct (ACTIVE — Plan 13-08) ==="
 	@[ -f src/app/adapters.rs ] && grep -q 'pub struct Adapters' src/app/adapters.rs || (echo "G-13 FAIL: Adapters struct missing" && exit 1)
 	@echo "=== G-15: action.rs moved to domain ==="
 	@test -f src/domain/action.rs || (echo "G-15 FAIL: domain/action.rs missing" && exit 1)
 	@test ! -f src/action.rs || (echo "G-15 FAIL: old action.rs still exists" && exit 1)
-	@echo "=== G-16: MetroHandle opaque trait (active after 13-03) ==="
-	@! grep -q 'stdin_tx: tokio::sync' src/domain/metro.rs || echo "G-16 PENDING: MetroHandle struct still exposes tokio fields (active after 13-03)"
-	@echo "=== G-17: MetroPort trait defined (active after 13-03) ==="
-	@[ ! -d src/domain/ports ] || rg -q 'trait MetroPort' src/domain/ports/ 2>/dev/null || echo "G-17 PENDING: MetroPort not yet landed (Plan 13-03)"
+	@echo "=== G-16: MetroHandle opaque trait (ACTIVE — Plan 13-03) ==="
+	@# G-16 ACTIVE as of Plan 13-03. MetroHandle is a trait object behind
+	@# Box<dyn MetroHandle>; the concrete adapter struct's tokio channel
+	@# fields (stdin_tx, etc.) live in src/infra/metro.rs, not in domain.
+	@! grep -q 'stdin_tx: tokio::sync' src/domain/metro.rs || (echo "G-16 FAIL: MetroHandle struct still exposes tokio fields" && exit 1)
+	@echo "=== G-17: MetroPort trait defined (ACTIVE — Plan 13-03) ==="
+	@# G-17 ACTIVE as of Plan 13-03. The MetroPort trait lives in
+	@# src/domain/ports/metro_port.rs; effect_runner reads it via Adapters.
+	@rg -q 'trait MetroPort' src/domain/ports/ 2>/dev/null || (echo "G-17 FAIL: MetroPort trait missing in src/domain/ports/" && exit 1)
 	@echo "=== G-18: exhaustive modal arms (ACTIVE — Plan 13-09) ==="
 	@# G-18 ACTIVE as of Plan 13-09. The wildcard catch-all arms in modal
 	@# dispatch (handle_key.rs modal char-fallthrough + update.rs
@@ -89,6 +105,11 @@ arch-lint:
 	@! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || (echo "G-18 FAIL: handle_key.rs has wildcard catch-all arms" && exit 1)
 	@echo "=== G-19: coverage thresholds hold ==="
 	@$(MAKE) cov-check >/dev/null 2>&1 || echo "G-19 WARN: cov-check output differs from threshold — human verification required"
-	@echo "=== G-20: AppState sub-structs (active after 13-10) ==="
-	@[ ! -f src/app/state.rs ] || rg -q 'pub struct (MetroState|WorktreeBrowserState|CommandRunnerState|ModalStackState|PendingFlags|AppConfigState)' src/app/state.rs 2>/dev/null || echo "G-20 PENDING: sub-structs not yet landed (Plan 13-10)"
+	@echo "=== G-20: AppState sub-structs (ACTIVE — Plan 13-10) ==="
+	@# G-20 ACTIVE as of Plan 13-10. AppState's ~30 flat pub fields are
+	@# regrouped into 6 cohesive sub-structs (MetroState, WorktreeBrowserState,
+	@# CommandRunnerState, ModalStackState, JiraState, AppConfigState) —
+	@# F-209 (Major) closed.
+	@COUNT=$$(rg -c 'pub struct (MetroState|WorktreeBrowserState|CommandRunnerState|ModalStackState|JiraState|AppConfigState|PendingFlags)' src/app/state.rs 2>/dev/null || echo 0); \
+	if [ "$$COUNT" -lt 4 ]; then echo "G-20 FAIL: only $$COUNT sub-structs in src/app/state.rs (need >=4)"; exit 1; fi
 	@echo "arch-lint: PASS"

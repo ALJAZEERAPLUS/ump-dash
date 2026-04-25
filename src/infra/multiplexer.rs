@@ -74,3 +74,17 @@ pub fn detect_multiplexer() -> Option<Box<dyn MultiplexerPort>> {
     }
     None
 }
+
+/// Returns `true` when the process is running inside a tmux session.
+///
+/// Tmux sets the `TMUX` environment variable to the path of the server socket,
+/// so its presence is a reliable indicator of a tmux session.
+///
+/// Plan 13-10 (F-108): relocated from `infra::jira` — multiplexer concern, not
+/// JIRA concern. Currently has no in-tree call sites; kept available behind
+/// `#[allow(dead_code)]` for future detection logic that could route between
+/// `TmuxAdapter::new_window` and a fall-back path.
+#[allow(dead_code)]
+pub fn is_inside_tmux() -> bool {
+    std::env::var("TMUX").is_ok()
+}

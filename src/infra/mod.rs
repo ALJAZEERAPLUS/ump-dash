@@ -1,12 +1,15 @@
-//! Infrastructure layer — process spawning, git, JIRA, tmux, file I/O.
-//! All concrete implementations are behind trait boundaries (ARCH-02).
+//! Infrastructure layer — process spawning, git, JIRA, multiplexer, file I/O.
 //!
-//! F-101 closed in Plan 13-05: `command_runner.rs` no longer imports
-//! `crate::domain::action::Action`. The adapter emits the typed
-//! `CommandEvent` defined in `crate::domain::ports::command_runner_port`
-//! and the app layer (currently `src/app.rs::dispatch_command`; Plan 13-08
-//! moves this to `effect_runner`) translates `CommandEvent → Action` at
-//! the app-side boundary.
+//! All concrete implementations are behind domain-defined port traits
+//! (F-101..F-110 resolved in Phase 13; see
+//! `.planning/phases/11-architecture-audit/AUDIT.md`). The composition root
+//! (`src/main.rs`) constructs concrete adapters and bundles them into
+//! `crate::app::Adapters`; the app layer hops through that bundle, never
+//! importing `crate::infra::*` directly (G-01 in `Makefile arch-lint`).
+//!
+//! Plan 13-10 (F-100, F-112): doc-comment updated to reflect Phase 13 end
+//! state; the deprecated `tmux` module was deleted (its `TmuxAdapter`
+//! replacement lives in `multiplexer.rs`).
 
 pub mod port;
 pub mod process;
@@ -16,7 +19,6 @@ pub mod devices;
 pub mod config;
 pub mod jira;
 pub mod jira_cache;
-pub mod tmux;
 pub mod multiplexer;
 pub mod sim_history;
 pub mod android_prefs;

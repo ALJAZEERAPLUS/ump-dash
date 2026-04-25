@@ -137,6 +137,14 @@ impl CommandSpec {
     }
 
     /// Returns true for commands that need a user-supplied text string before running.
+    ///
+    /// Plan 13-10 (F-006 Minor): the `_ => false` catch-all is intentional. New
+    /// CommandSpec variants default to "no text input required" — which is the
+    /// correct behavior unless they explicitly introduce a text-input
+    /// requirement, at which point the maintainer adds an arm. Variant drift
+    /// is additionally guarded by `is_cancellable`'s test fixture
+    /// (every variant enumerated; new variants force a recompile + test
+    /// review). Exhaustive conversion deferred to backlog per D-02.
     pub fn needs_text_input(&self) -> bool {
         match self {
             CommandSpec::GitRebase { .. }
