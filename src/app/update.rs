@@ -641,6 +641,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::ModalInputChar(c) => {
+            // Plan 13-09 (F-205): exhaustive ModalState enumeration. Rust's
+            // exhaustiveness checker now guards future ModalState additions —
+            // a new variant will trigger a compile error here until explicitly
+            // handled.
             match state.modal.as_mut() {
                 Some(ModalState::TextInput { buffer, .. }) => {
                     buffer.push(c);
@@ -649,11 +653,22 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     filter.push(c);
                     *selected = 0; // reset selection when filter changes
                 }
-                _ => {}
+                // Intentionally ignore char input — these modals do not accept
+                // arbitrary characters as text. (BranchPicker filter input
+                // arrives as Action::BranchPickerFilter, not ModalInputChar.)
+                Some(ModalState::Confirm { .. })
+                | Some(ModalState::CleanToggle { .. })
+                | Some(ModalState::SyncBeforeRun { .. })
+                | Some(ModalState::SyncBeforeMetro { .. })
+                | Some(ModalState::ExternalMetroConflict { .. })
+                | Some(ModalState::BranchPicker { .. })
+                | None => { /* no-op */ }
             }
         }
 
         Action::ModalInputBackspace => {
+            // Plan 13-09 (F-205): exhaustive ModalState enumeration — same
+            // rationale as ModalInputChar above.
             match state.modal.as_mut() {
                 Some(ModalState::TextInput { buffer, .. }) => {
                     buffer.pop();
@@ -662,7 +677,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     filter.pop();
                     *selected = 0; // reset selection when filter changes
                 }
-                _ => {}
+                // Intentionally ignore backspace — these modals do not have
+                // editable text buffers. (BranchPicker filter editing arrives
+                // as Action::BranchPickerBackspace.)
+                Some(ModalState::Confirm { .. })
+                | Some(ModalState::CleanToggle { .. })
+                | Some(ModalState::SyncBeforeRun { .. })
+                | Some(ModalState::SyncBeforeMetro { .. })
+                | Some(ModalState::ExternalMetroConflict { .. })
+                | Some(ModalState::BranchPicker { .. })
+                | None => { /* no-op */ }
             }
         }
 

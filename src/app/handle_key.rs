@@ -43,21 +43,42 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
     // Fallthrough 1: modal char-consumers. TextInput/DevicePicker/BranchPicker
     // accept arbitrary chars as input or filter text. The registry's explicit
     // entries handled the non-char keys; now route any remaining Char(c).
+    //
+    // Plan 13-09 (F-205): the outer match pivots on ModalState (exhaustive)
+    // so Rust's exhaustiveness checker guards future ModalState additions —
+    // the prior wildcard catch-all is gone. The inner if-let on KeyCode is
+    // intentionally NOT exhaustive: KeyCode has dozens of variants
+    // (function keys, modifiers, paste markers, etc.) and we only want
+    // Char(c) here; everything else falls through to the post-match logic.
     if let Some(ref modal) = state.modal {
-        match (modal, key.code) {
-            (ModalState::TextInput { .. }, KeyCode::Char(c)) => {
-                return Some(Action::ModalInputChar(c));
+        match modal {
+            ModalState::TextInput { .. } => {
+                if let KeyCode::Char(c) = key.code {
+                    return Some(Action::ModalInputChar(c));
+                }
             }
-            (ModalState::DevicePicker { .. }, KeyCode::Char(c)) if !c.is_ascii_control() => {
-                // Note: 'j' and 'k' are registered as navigation keys — the registry
-                // walk above caught those. Any other char falls through here and
-                // becomes filter input.
-                return Some(Action::ModalInputChar(c));
+            ModalState::DevicePicker { .. } => {
+                if let KeyCode::Char(c) = key.code
+                    && !c.is_ascii_control() {
+                        // Note: 'j' and 'k' are registered as navigation keys
+                        // — the registry walk above caught those. Any other
+                        // char falls through here and becomes filter input.
+                        return Some(Action::ModalInputChar(c));
+                    }
             }
-            (ModalState::BranchPicker { .. }, KeyCode::Char(c)) => {
-                return Some(Action::BranchPickerFilter(c));
+            ModalState::BranchPicker { .. } => {
+                if let KeyCode::Char(c) = key.code {
+                    return Some(Action::BranchPickerFilter(c));
+                }
             }
-            _ => {}
+            // Intentionally no fallthrough — these modals do not consume
+            // arbitrary char input here. (Their dismiss/confirm keys are
+            // routed through the KEYBINDINGS registry above.)
+            ModalState::Confirm { .. }
+            | ModalState::CleanToggle { .. }
+            | ModalState::SyncBeforeRun { .. }
+            | ModalState::SyncBeforeMetro { .. }
+            | ModalState::ExternalMetroConflict { .. } => { /* no-op */ }
         }
     }
 
