@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 4 complete — 13-06 F-200 structural split: src/app.rs (2522 LOC) replaced by src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs + preserved effect.rs + dispatch_tests.rs. 73 tests green, clippy clean, arch-lint PASS. 4 plans remain across 4 waves.
-last_updated: "2026-04-24T11:25:00Z"
-last_activity: 2026-04-24
+stopped_at: Phase 13 Wave 5 complete — 13-07 (TEA purity restored: update() now `pub fn update(&mut AppState, Action) -> Vec<Effect>`; 7 async metro helpers relocated to src/infra/metro.rs::TokioMetroAdapter; KEYBINDINGS registry with 118 entries; handle_key walks registry with palette fallback preserved). 79 tests green (76 lib + 2 metro + 1 pgid), clippy clean, arch-lint PASS. G-04 + G-05 active. 3 plans remain across 3 waves.
+last_updated: "2026-04-25T08:30:00Z"
+last_activity: 2026-04-25
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 18
-  percent: 82
+  completed_plans: 19
+  percent: 86
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Waves 1-4 complete (6/10 plans), Wave 5 next (TEA purity via Effect consumer)
+**Current focus:** Phase 13 IN-PROGRESS — Waves 1-5 complete (7/10 plans), Wave 6 next (hexagonal injection)
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (6/10 plans executed)
-Plan: W1-W4 complete; next W5 (13-07 — update() returns Vec<Effect>, KEYBINDINGS registry, 7 async metro helpers → infra/metro.rs::TokioMetroAdapter, F-201+F-203+F-208+F-400 consumers)
-Status: src/app.rs deleted — replaced by 9-file src/app/ directory (mod/state/update/handle_key/runtime/effect_runner/adapters/effect/dispatch_tests). update.rs holds the TEA reducer (1616 LOC — shrinks dramatically in 13-07 when tokio::spawn calls become Effect returns). effect_runner.rs + adapters.rs are stubs for 13-08. dispatch_command kept private to update.rs (D-13-06-01); spawn_metro_task / metro_http_post exposed as pub(super) for update.rs (D-13-06-02). COVERAGE-THRESHOLDS.md updated: src/app.rs row replaced by 7 new per-file rows covering the split. Guards passing: G-02, G-03, G-07, G-08, G-09, G-10, G-14, G-15, G-17. Gated PENDING until consumers land: G-01 (infra imports — 13-08), G-04/G-05 (update purity — 13-07), G-06 (pending flags — 13-09), G-11/G-12 (keybindings — 13-07+13-10), G-13 (Adapters — 13-08), G-16/G-18 (metro opaque + modals — 13-09), G-20 (sub-structs — 13-10). Tests: 73 pass; clippy --all-targets -D warnings clean; `make arch-lint` PASS.
+Phase: 13 (audit-driven-refactors) — IN-PROGRESS (7/10 plans executed)
+Plan: W1-W5 complete; next W6 (13-08 — Adapters struct with Arc<dyn Port>; effect_runner full impl dispatching every Effect via adapters; remove all crate::infra imports from src/app/; F-202 + F-101 consumer — also wires JiraPort to close the FetchJiraTitles stub deferred from 13-07)
+Status: TEA purity is in. update.rs is pure (no tokio::spawn / spawn_blocking — G-04 active); src/app/ has zero reqwest / tokio::process imports (G-05 active). KEYBINDINGS = 118 entries in src/app/keybindings.rs; handle_key walks the registry with palette context-fallback preserved (Pitfall 4). 7 async metro helpers (spawn_metro_task, metro_process_task, parse_metro_line, extract_percent, drain_metro_output, stdin_writer, metro_http_post) now live in src/infra/metro.rs::TokioMetroAdapter implementing MetroPort. Two deferrals to 13-08: (1) Effect::FetchJiraTitles stub awaiting Adapters.jira; (2) MetroExited natural-crash callback. Guards passing: G-02, G-03, G-04, G-05, G-07, G-08, G-09, G-10, G-14, G-15, G-17. PENDING for 13-08+: G-01, G-06, G-11, G-12, G-13, G-16, G-18, G-20. Tests: 79 pass (76 lib + 2 metro + 1 pgid); clippy clean; arch-lint PASS.
 Last activity: 2026-04-24
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)

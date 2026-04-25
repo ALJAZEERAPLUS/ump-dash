@@ -95,7 +95,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 13-04-PLAN.md — PortProbePort + WorktreePort + DevicePort + adapter shells (F-102+F-104+F-105) — 2026-04-24
   - [x] 13-05-PLAN.md — CommandRunnerPort + CommandEvent; remove Action import from infra (F-101) — 2026-04-24
   - [x] 13-06-PLAN.md — F-200 structural split of src/app.rs into src/app/{mod,state,update,handle_key,runtime,effect_runner,adapters}.rs — 2026-04-24
-  - [ ] 13-07-PLAN.md — update() purity (F-201 consumer) + metro helpers→infra/metro.rs (F-203 consumer) + KEYBINDINGS registry + handle_key walker (F-208+F-400)
+  - [x] 13-07-PLAN.md — update() purity (F-201 consumer) + metro helpers→infra/metro.rs (F-203 consumer) + KEYBINDINGS registry + handle_key walker (F-208+F-400) — 2026-04-25
   - [ ] 13-08-PLAN.md — Adapters injection; effect_runner full impl; app/ infra-free (F-202 consumer + F-101 consumer)
   - [ ] 13-09-PLAN.md — Recipe consumer replaces 11 inline prereq sites; 3 flags deleted; exhaustive modal arms (F-204 consumer + F-205)
   - [ ] 13-10-PLAN.md — AppState sub-struct regroup (F-209) + footer/help_overlay consume KEYBINDINGS (F-302+F-303) + Minor cleanup (F-108+F-112+verify F-003/F-005/F-006/F-100)
