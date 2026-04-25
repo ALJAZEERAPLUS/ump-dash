@@ -46,6 +46,7 @@ One place to see and control everything about your React Native worktrees — wh
 
 - ✓ Architecture audit (ARCH-01..ARCH-06) — deep-module scoring, D-14 keybinding duplication, app.rs god-object findings — v1.3 Phase 11
 - ✓ Coverage gate (COVER-01..COVER-04) — characterization tests for metro single-instance, POSIX process-group kill, TEA dispatch table; baseline coverage 12.84% line / 20.82% function with per-module `floor(baseline, 5)` thresholds — v1.3 Phase 12
+- ✓ Audit-driven refactors (REFACTOR-01..REFACTOR-03) — 23 of 25 Critical/Major findings closed in code, 2 deferred with rationale (F-500 → Phase 14, F-501 → backlog); src/app.rs split into src/app/ (state/update/handle_key/runtime/effect_runner/adapters/effect/keybindings/dispatch_tests + 6 sub-structs); pure TEA `update(state, action) -> Vec<Effect>`; hexagonal injection via `pub struct Adapters` holding `Arc<dyn Port>` for all 8 domain ports; Recipe/Prerequisite/DependencyState in domain; CommandSpec::is_cancellable type-driven; 118-entry KEYBINDINGS registry consumed by handle_key + footer + help_overlay; 20 shape guards in `make arch-lint` enforcing architectural invariants — v1.3 Phase 13
 
 ### Active
 
@@ -112,12 +113,19 @@ Architecture: TEA (The Elm Architecture) with domain/infra/app/ui separation.
 | Rename ump-dash → rn-dash | Generalize beyond AJ/UMP for public release | ✓ Good — shipped to GitHub |
 | Config-driven repo paths, JIRA prefix | Remove hardcoded company-specific values | ✓ Good — works for any RN monorepo |
 | macOS codesign + notarize in release | Avoid Gatekeeper friction for end users | ✓ Good — clean install experience |
+| TEA purity: `update() -> Vec<Effect>` | Restore reducer purity by batching side effects as data | ✓ Good — Phase 13/F-201; testable without tokio, 17 dispatch tests preserved |
+| Hexagonal `Adapters` injection | Decouple app/ from infra/ via `Arc<dyn Port>` for all 8 ports | ✓ Good — Phase 13/F-202; main.rs is sole composition root |
+| Domain ports module (`domain::ports::*`) | Concentrate the port inventory in one place per Ousterhout | ✓ Good — Phase 13/F-102..F-110; 8 ports: ProcessPort/JiraPort/MultiplexerPort/MetroPort/PortProbePort/WorktreePort/DevicePort/CommandRunnerPort |
+| Recipe + Prerequisite + DependencyState in domain | Replace 11 inline prereq sites with declarative pipeline data | ✓ Good — Phase 13/F-204; `Recipe::expand(&DependencyState) -> Vec<CommandSpec>` testable without tokio |
+| Flat-enum `is_cancellable` predicate | Type-driven cancellation surface; 8 git variants false, 15 others true | ✓ Good — Phase 13/F-501-deferred; flat enum chosen over category-split |
+| KEYBINDINGS registry (118 entries) | Single source of truth consumed by handle_key + footer + help_overlay | ✓ Good — Phase 13/F-208+F-302+F-303+F-400; D-14 keybinding duplication eliminated |
+| 20 shape guards in `make arch-lint` | Architectural invariants enforced by grep — fail CI on regression | ✓ Good — Phase 13; G-01..G-20 active and passing |
 
 ## Current State
 
 **Shipped:** v1.1 Public Release (2026-04-13) — app published to GitHub as `rn-dash`, CI + signed release binaries live. Post-ship quick tasks rolled into v1.2.0.
 
-**v1.3 in progress:** Phase 11 (architecture-audit) and Phase 12 (coverage-gate) complete. 49 tests green, clippy clean, coverage baseline locked in. Phase 13 (audit-driven refactors) is unblocked and next.
+**v1.3 in progress:** Phases 11 (architecture-audit), 12 (coverage-gate), and 13 (audit-driven refactors) complete. 79 tests green, clippy clean, coverage baseline locked, all 23 Critical+Major AUDIT findings closed in code (2 deferred with rationale: F-500 → Phase 14, F-501 → backlog). Hexagonal architecture delivered: `update()` is pure, app/ has zero infra imports, all 8 domain ports scaffolded with Adapters injection. Phase 14 (Per-Worktree Task System Foundation) is unblocked and next.
 
 ## Next Milestone
 
