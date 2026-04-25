@@ -1,9 +1,23 @@
+//! Help overlay — KEYBINDINGS-driven keybinding table + hand-coded Icons legend.
+//!
+//! Plan 13-10 (F-303) closed: the ~100 lines of hand-coded `Vec<Row>`
+//! keybinding tables that used to live here were replaced by a delegation to
+//! `crate::app::keybindings::help_overlay_rows()`. Rows are grouped by the
+//! `section` field on each `HelpRow` and a bold header row is inserted on
+//! every section transition.
+//!
+//! The Icons legend at the bottom STAYS hand-coded — icons are not
+//! keybindings (per AUDIT F-303 recommendation). They live below the
+//! keybinding table and are appended after the registry-driven rows.
+
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Clear, Row, Table},
     Frame,
 };
+
+use crate::app::keybindings::help_overlay_rows;
 
 /// Renders the help overlay. Called from view() when state.show_help == true.
 /// Uses Clear widget before the table to erase background panels behind the overlay.
@@ -14,112 +28,39 @@ pub fn render_help(f: &mut Frame) {
     let section_style = Style::default().add_modifier(Modifier::BOLD);
     let dim_style = Style::default().fg(Color::DarkGray);
 
-    let keybindings = vec![
-        // Navigation section
-        Row::new(vec!["Navigation", ""])
-            .style(section_style),
-        Row::new(vec!["Tab / Shift-Tab",  "Switch panel"]),
-        Row::new(vec!["j / k",            "Navigate within panel"]),
-        Row::new(vec!["? / F1",           "Open this help"]),
-        Row::new(vec!["q / Esc",          "Quit / close overlay"]),
-        Row::new(vec!["", ""]).style(dim_style),
+    // Keybinding rows — read from the KEYBINDINGS registry. Group by section
+    // and insert a bold header on every section transition.
+    let rows_data = help_overlay_rows();
+    let mut rendered: Vec<Row> = Vec::new();
+    let mut current_section: &str = "";
+    for hr in &rows_data {
+        if hr.section != current_section {
+            if !current_section.is_empty() {
+                // Spacer row between sections.
+                rendered.push(Row::new(vec!["", ""]).style(dim_style));
+            }
+            rendered.push(Row::new(vec![hr.section, ""]).style(section_style));
+            current_section = hr.section;
+        }
+        rendered.push(Row::new(vec![hr.label, hr.desc]));
+    }
 
-        // Worktree Table section
-        Row::new(vec!["Worktree Table", ""])
-            .style(section_style),
-        Row::new(vec!["Enter",            "Switch metro to worktree"]),
-        Row::new(vec!["a",               "Android submenu"]),
-        Row::new(vec!["i",               "iOS submenu"]),
-        Row::new(vec!["y",               "Yarn submenu"]),
-        Row::new(vec!["w",               "Worktree submenu"]),
-        Row::new(vec!["g",               "Git submenu"]),
-        Row::new(vec!["C",               "Open Claude Code (tmux/zellij)"]),
-        Row::new(vec!["T",               "Open shell tab at worktree"]),
-        Row::new(vec!["f",               "Toggle fullscreen"]),
-        Row::new(vec!["!",               "Run shell command in worktree"]),
-        Row::new(vec!["R",               "Reload metro (when running) / Refresh list"]),
-        Row::new(vec!["J",               "Metro debugger (when running)"]),
-        Row::new(vec!["Esc",             "Stop metro (when running)"]),
-        Row::new(vec!["", ""]).style(dim_style),
+    // Icons legend section — STAYS hand-coded per AUDIT F-303 (icons are not
+    // keybindings — they describe table-cell glyphs in the worktree row).
+    rendered.push(Row::new(vec!["", ""]).style(dim_style));
+    rendered.push(Row::new(vec!["Icons", ""]).style(section_style));
+    rendered.push(Row::new(vec!["\u{25B6}  (green)", "Metro is running"]));
+    rendered.push(Row::new(vec![
+        "\u{26A0}  (yellow)",
+        "Stale dependencies (node_modules/pods)",
+    ]));
 
-        // Android submenu section
-        Row::new(vec!["Android  (a>)", ""])
-            .style(section_style),
-        Row::new(vec!["d",               "run-android (device select)"]),
-        Row::new(vec!["e",               "Device list"]),
-        Row::new(vec!["r",               "Release build (assembleRelease)"]),
-        Row::new(vec!["Esc",             "Cancel"]),
-        Row::new(vec!["", ""]).style(dim_style),
-
-        // iOS submenu section
-        Row::new(vec!["iOS  (i>)", ""])
-            .style(section_style),
-        Row::new(vec!["d",               "run-ios --device (auto-select)"]),
-        Row::new(vec!["e",               "Simulator list (xcrun)"]),
-        Row::new(vec!["p",               "pod-install"]),
-        Row::new(vec!["Esc",             "Cancel"]),
-        Row::new(vec!["", ""]).style(dim_style),
-
-        // Yarn submenu section
-        Row::new(vec!["Yarn  (y>)", ""])
-            .style(section_style),
-        Row::new(vec!["i",               "yarn install"]),
-        Row::new(vec!["p",               "yarn pod-install"]),
-        Row::new(vec!["u",               "yarn unit-tests"]),
-        Row::new(vec!["t",               "yarn check-types --incremental"]),
-        Row::new(vec!["j",               "yarn jest <filter>"]),
-        Row::new(vec!["l",               "yarn lint --quiet --fix"]),
-        Row::new(vec!["c",               "Clean… (select targets: pods, android, node_modules)"]),
-        Row::new(vec!["Esc",             "Cancel"]),
-        Row::new(vec!["", ""]).style(dim_style),
-
-        // Git submenu section
-        Row::new(vec!["Git  (g>)", ""])
-            .style(section_style),
-        Row::new(vec!["f",               "git fetch --all --tags"]),
-        Row::new(vec!["p",               "git pull"]),
-        Row::new(vec!["P",               "git push"]),
-        Row::new(vec!["X",               "git fetch + reset --hard origin/<branch>"]),
-        Row::new(vec!["b",               "git checkout <branch>"]),
-        Row::new(vec!["c",               "git checkout -b <branch>"]),
-        Row::new(vec!["r",               "git rebase <target>"]),
-        Row::new(vec!["Esc",             "Cancel"]),
-        Row::new(vec!["", ""]).style(dim_style),
-
-        // Worktree submenu section
-        Row::new(vec!["Worktree  (w>)", ""])
-            .style(section_style),
-        Row::new(vec!["w",               "Add new worktree"]),
-        Row::new(vec!["d",               "Remove worktree (purge)"]),
-        Row::new(vec!["b",               "New branch + worktree"]),
-        Row::new(vec!["Esc",             "Cancel"]),
-        Row::new(vec!["", ""]).style(dim_style),
-
-        // Output Pane section
-        Row::new(vec!["Output Pane", ""])
-            .style(section_style),
-        Row::new(vec!["j / k",           "Scroll output"]),
-        Row::new(vec!["X",               "Cancel running command"]),
-        Row::new(vec!["C",               "Clear output"]),
-        Row::new(vec!["f",               "Toggle fullscreen"]),
-        Row::new(vec!["", ""]).style(dim_style),
-
-        // Icons legend section
-        Row::new(vec!["Icons", ""])
-            .style(section_style),
-        Row::new(vec!["●  (green)",       "Metro is running"]),
-        Row::new(vec!["\u{26A0}  (yellow)", "Stale dependencies (node_modules/pods)"]),
-    ];
-
-    let table = Table::new(
-        keybindings,
-        [Constraint::Length(28), Constraint::Fill(1)],
-    )
-    .block(
-        Block::default()
-            .title(" Keybindings — q/Esc to close ")
-            .borders(Borders::ALL),
-    );
+    let table = Table::new(rendered, [Constraint::Length(28), Constraint::Fill(1)])
+        .block(
+            Block::default()
+                .title(" Keybindings — q/Esc to close ")
+                .borders(Borders::ALL),
+        );
 
     // Clear MUST be rendered before the table — otherwise background panels show through
     f.render_widget(Clear, area);
