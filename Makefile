@@ -50,8 +50,14 @@ arch-lint:
 	@echo "=== G-04/G-05: update() purity (active after 13-07) ==="
 	@! rg 'tokio::spawn|spawn_blocking' src/app/update.rs 2>/dev/null || (echo "G-04 FAIL: update.rs contains spawn primitives" && exit 1)
 	@! rg 'reqwest|tokio::process' src/app/ 2>/dev/null || (echo "G-05 FAIL: src/app/ uses reqwest or tokio::process" && exit 1)
-	@echo "=== G-06: coordinating flags collapsed (active after 13-09) ==="
-	@[ ! -f src/app/state.rs ] || ! rg 'pending_metro_run|pending_metro_after_sync' src/app/state.rs 2>/dev/null || echo "G-06 PENDING: flags not collapsed (active after 13-09)"
+	@echo "=== G-06: coordinating flags collapsed (ACTIVE — Plan 13-09) ==="
+	@# G-06 ACTIVE as of Plan 13-09. The 3 prereq-coordination flags
+	@# (pending_metro_run, pending_metro_after_sync, pending_switch_path) are
+	@# absorbed into Recipe::expand call sites, command_queue front-pushes,
+	@# post_drain_action, and synchronous active_worktree_path updates.
+	@# Survivors per 13-RESEARCH Pitfall 3 (pending_restart,
+	@# skip_external_metro_check) are metro-lifecycle, not prereq ordering.
+	@! rg 'pending_metro_run|pending_metro_after_sync|pending_switch_path' src/app/state.rs 2>/dev/null || (echo "G-06 FAIL: prereq flags still present in state.rs" && exit 1)
 	@echo "=== G-07/G-14: REFACTOR-02 is_cancellable (active after 13-02) ==="
 	@grep -q 'pub fn is_cancellable' src/domain/command.rs || (echo "G-07 FAIL: is_cancellable missing" && exit 1)
 	@grep -q 'GitResetHard' src/domain/command.rs || (echo "G-14 FAIL: Git variants not in is_cancellable" && exit 1)
@@ -74,8 +80,13 @@ arch-lint:
 	@! grep -q 'stdin_tx: tokio::sync' src/domain/metro.rs || echo "G-16 PENDING: MetroHandle struct still exposes tokio fields (active after 13-03)"
 	@echo "=== G-17: MetroPort trait defined (active after 13-03) ==="
 	@[ ! -d src/domain/ports ] || rg -q 'trait MetroPort' src/domain/ports/ 2>/dev/null || echo "G-17 PENDING: MetroPort not yet landed (Plan 13-03)"
-	@echo "=== G-18: exhaustive modal arms (active after 13-09) ==="
-	@[ ! -f src/app/handle_key.rs ] || ! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || echo "G-18 PENDING: handle_key has _ => {} arms (active after 13-09)"
+	@echo "=== G-18: exhaustive modal arms (ACTIVE — Plan 13-09) ==="
+	@# G-18 ACTIVE as of Plan 13-09. The wildcard catch-all arms in modal
+	@# dispatch (handle_key.rs modal char-fallthrough + update.rs
+	@# ModalInputChar/Backspace) are rewritten to enumerate every
+	@# ModalState variant explicitly — Rust's exhaustiveness checker
+	@# guards future modal additions.
+	@! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || (echo "G-18 FAIL: handle_key.rs has wildcard catch-all arms" && exit 1)
 	@echo "=== G-19: coverage thresholds hold ==="
 	@$(MAKE) cov-check >/dev/null 2>&1 || echo "G-19 WARN: cov-check output differs from threshold — human verification required"
 	@echo "=== G-20: AppState sub-structs (active after 13-10) ==="
