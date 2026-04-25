@@ -56,7 +56,11 @@ pub enum PaletteMode {
 
 /// Application state — the single source of truth. All mutations happen in update().
 ///
-/// No longer derives Default — MetroManager uses new() rather than Default::default().
+/// Plan 13-08: AppState no longer holds infra adapter trait objects.
+/// `jira_client` and `multiplexer` fields were deleted — those ports now
+/// live in the `Adapters` struct (constructed in `src/main.rs`, owned by
+/// `EffectRunner`). update() reads `jira_available` / `multiplexer_available`
+/// booleans to decide whether to push corresponding effects.
 #[derive(Debug)]
 pub struct AppState {
     // Phase 1 fields
@@ -117,7 +121,12 @@ pub struct AppState {
 
     // --- Phase 4 fields ---
     pub jira_title_cache: std::collections::HashMap<String, String>,  // PROJ-XXXX -> title
-    pub jira_client: Option<std::sync::Arc<dyn crate::domain::ports::jira_port::JiraPort>>,
+    /// True when the `Adapters.jira` port is available (config loaded with
+    /// token). Plan 13-08: replaces the `jira_client: Option<Arc<dyn JiraPort>>`
+    /// field — the port now lives in `Adapters` (constructed in `src/main.rs`).
+    /// update() only needs the availability bit to decide whether to push
+    /// `Effect::FetchJiraTitles`.
+    pub jira_available: bool,
     /// JIRA project key prefix used in branch names (e.g., "UMP" for UMP-1234).
     pub jira_project_prefix: String,
 
@@ -126,12 +135,22 @@ pub struct AppState {
     pub pending_g: bool,
 
     // --- Phase 5.1 fields ---
-    /// Detected terminal multiplexer (tmux or zellij). None when not inside either.
-    pub multiplexer: Option<Box<dyn crate::domain::ports::multiplexer_port::MultiplexerPort>>,
+    /// True when a terminal multiplexer (tmux or zellij) is detected at startup.
+    /// Plan 13-08: replaces the `multiplexer: Option<Box<dyn MultiplexerPort>>`
+    /// field — the port now lives in `Adapters` (constructed in `src/main.rs`).
+    /// update() reads this bit to decide whether to surface a "not in
+    /// tmux/zellij" error or push `Effect::OpenInMultiplexer`.
+    pub multiplexer_available: bool,
     /// Claude Code launch flags loaded from config (e.g. "--dangerously-skip-permissions").
     pub claude_flags: String,
-    /// Loaded dashboard config — kept for runtime access to claude_flags and other settings.
-    pub config: Option<crate::infra::config::DashConfig>,
+    /// Loaded dashboard config — kept for runtime access to claude_flags and
+    /// other settings. The type is `crate::domain::dash_config::DashConfig`
+    /// (Plan 13-08 moved it from infra so AppState stays infra-free).
+    pub config: Option<crate::domain::dash_config::DashConfig>,
+    /// Loaded simulator UDID history (most-recent first). Plan 13-08: read at
+    /// startup in `src/main.rs` and supplied to `AppState` so `update()` can
+    /// sort iOS pickers without crossing the infra boundary.
+    pub sim_history: Vec<String>,
 
     // Quick-2: Worktree removal — set when g>D is pressed, consumed by ModalConfirm
     pub pending_worktree_removal: Option<(crate::domain::worktree::WorktreeId, std::path::PathBuf, String)>,
@@ -195,17 +214,20 @@ impl Default for AppState {
             pending_g: false,
             // Phase 4
             jira_title_cache: std::collections::HashMap::new(),
-            jira_client: None,
+            jira_available: false,  // populated by main.rs from Adapters.jira.is_some()
             jira_project_prefix: "UMP".to_string(),
             // Phase 5.1
-            multiplexer: None,  // set properly in run()
+            multiplexer_available: false,  // populated by main.rs from Adapters.multiplexer.is_some()
             claude_flags: "--dangerously-skip-permissions".to_string(),
             config: None,
+            sim_history: Vec::new(),
             // Quick-2
             pending_worktree_removal: None,
-            // Quick-260331-cw5: load saved mode; default to "debugOptimized" on first run
-            android_mode: crate::infra::android_prefs::load_android_mode()
-                .or_else(|| Some("debugOptimized".to_string())),
+            // Quick-260331-cw5: default Android run mode; main.rs may override
+            // with the persisted value loaded via infra::android_prefs.
+            // Plan 13-08: removed the inline `infra::*` call so
+            // AppState's Default impl is infra-free (G-01).
+            android_mode: Some("debugOptimized".to_string()),
             // Quick-260403-dmz
             pending_worktree_add: false,
             // Quick-260405-ijq

@@ -3,9 +3,11 @@
 //! file's architectural note for the rationale. mod.rs itself imports nothing from infra.
 pub mod action;
 pub mod command;
+pub mod dash_config;
 pub mod jira;
 pub mod metro;
 pub mod pipeline;
 pub mod ports;
 pub mod refresh;
+pub mod staleness;
 pub mod worktree;

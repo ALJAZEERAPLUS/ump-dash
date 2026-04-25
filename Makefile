@@ -39,22 +39,18 @@ cov: cov-baseline cov-html
 # are vacuously satisfied until the target file is created by its landing plan.
 arch-lint:
 	@echo "=== G-01/G-02/G-03: hexagonal import boundaries ==="
-	@# G-01 is PENDING until Plan 13-08 lands Adapters injection — the 13-06
-	@# structural split lifted src/app.rs contents (which imported infra)
-	@# verbatim into src/app/update.rs + runtime.rs + state.rs. G-13 (Adapters
-	@# struct) flips the gate once the infra imports are dropped.
-	@! rg 'crate::infra::' src/app/ 2>/dev/null || echo "G-01 PENDING: app/ imports infra (active after 13-08)"
+	@# G-01 ACTIVE as of Plan 13-08. The whitelist allows the three F-111
+	@# (PersistencePort) deferral lines in effect_runner.rs that still call
+	@# crate::infra::{jira_cache,android_prefs,sim_history}::save_* directly.
+	@# When F-111 lands those will route through Adapters.persistence and the
+	@# whitelist disappears.
+	@if rg -n 'crate::infra::' src/app/ 2>/dev/null | rg -v '^[^:]+:[0-9]+:\s*//' | rg -v 'effect_runner\.rs.*(jira_cache|android_prefs|sim_history)' | grep -q .; then echo "G-01 FAIL: app/ imports infra (non-persistence)"; rg -n 'crate::infra::' src/app/ 2>/dev/null | rg -v '^[^:]+:[0-9]+:\s*//' | rg -v 'effect_runner\.rs.*(jira_cache|android_prefs|sim_history)'; exit 1; fi
 	@! rg 'crate::infra::' src/ui/ 2>/dev/null || (echo "G-02 FAIL: ui/ imports infra" && exit 1)
 	@! rg 'use crate::(domain::)?action' src/infra/ 2>/dev/null || echo "G-03 PENDING: infra still imports Action (active after 13-08)"
 	@echo "=== G-04/G-05: update() purity (active after 13-07) ==="
-	@# G-04/G-05 are ACTIVE as of Plan 13-07 — update() is a pure
-	@# `(state, action) -> Vec<Effect>` function and src/app/ contains no
-	@# HTTP client or process-launch imports (those live in src/infra/metro.rs
-	@# as the TokioMetroAdapter implementing MetroPort).
 	@! rg 'tokio::spawn|spawn_blocking' src/app/update.rs 2>/dev/null || (echo "G-04 FAIL: update.rs contains spawn primitives" && exit 1)
 	@! rg 'reqwest|tokio::process' src/app/ 2>/dev/null || (echo "G-05 FAIL: src/app/ uses reqwest or tokio::process" && exit 1)
 	@echo "=== G-06: coordinating flags collapsed (active after 13-09) ==="
-	@# G-06 PENDING until Plan 13-09 collapses the coordinating flags.
 	@[ ! -f src/app/state.rs ] || ! rg 'pending_metro_run|pending_metro_after_sync' src/app/state.rs 2>/dev/null || echo "G-06 PENDING: flags not collapsed (active after 13-09)"
 	@echo "=== G-07/G-14: REFACTOR-02 is_cancellable (active after 13-02) ==="
 	@grep -q 'pub fn is_cancellable' src/domain/command.rs || (echo "G-07 FAIL: is_cancellable missing" && exit 1)
@@ -69,8 +65,8 @@ arch-lint:
 	@[ ! -f src/app/handle_key.rs ] || rg -q 'KEYBINDINGS' src/app/handle_key.rs || (echo "G-11 FAIL: handle_key does not read KEYBINDINGS" && exit 1)
 	@echo "=== G-12: hand-coded keybinding rows deleted (active after 13-10) ==="
 	@[ ! -f src/ui/footer.rs ] || ! rg -q '"c", "clean' src/ui/footer.rs 2>/dev/null || echo "G-12 PENDING: footer has hand-coded rows (active after 13-10)"
-	@echo "=== G-13: Adapters injection struct (active after 13-08) ==="
-	@[ ! -f src/app/adapters.rs ] || grep -q 'pub struct Adapters' src/app/adapters.rs || (echo "G-13 FAIL: Adapters struct missing" && exit 1)
+	@echo "=== G-13: Adapters injection struct (ACTIVE — Plan 13-08) ==="
+	@[ -f src/app/adapters.rs ] && grep -q 'pub struct Adapters' src/app/adapters.rs || (echo "G-13 FAIL: Adapters struct missing" && exit 1)
 	@echo "=== G-15: action.rs moved to domain ==="
 	@test -f src/domain/action.rs || (echo "G-15 FAIL: domain/action.rs missing" && exit 1)
 	@test ! -f src/action.rs || (echo "G-15 FAIL: old action.rs still exists" && exit 1)
@@ -79,8 +75,6 @@ arch-lint:
 	@echo "=== G-17: MetroPort trait defined (active after 13-03) ==="
 	@[ ! -d src/domain/ports ] || rg -q 'trait MetroPort' src/domain/ports/ 2>/dev/null || echo "G-17 PENDING: MetroPort not yet landed (Plan 13-03)"
 	@echo "=== G-18: exhaustive modal arms (active after 13-09) ==="
-	@# G-18 PENDING until Plan 13-09 rewrites handle_key match arms to be
-	@# exhaustive across all KeyCode variants (no catch-all `_ => {}`).
 	@[ ! -f src/app/handle_key.rs ] || ! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || echo "G-18 PENDING: handle_key has _ => {} arms (active after 13-09)"
 	@echo "=== G-19: coverage thresholds hold ==="
 	@$(MAKE) cov-check >/dev/null 2>&1 || echo "G-19 WARN: cov-check output differs from threshold — human verification required"

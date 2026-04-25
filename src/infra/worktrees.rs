@@ -99,89 +99,14 @@ pub fn parse_worktree_porcelain(text: &str) -> anyhow::Result<Vec<Worktree>> {
 ///
 /// When a sentinel IS found, staleness = sentinel mtime < max(package.json, yarn.lock) mtime.
 pub fn check_stale(worktree_path: &Path) -> bool {
-    // Berry install-state.gz: most reliable for Yarn Berry (v2/v3/v4).
-    // Always created/updated on `yarn install` regardless of nodeLinker setting.
-    let berry_state = worktree_path.join(".yarn").join("install-state.gz");
-
-    // Classic yarn v1 sentinel
-    let yarn_integrity = worktree_path.join("node_modules").join(".yarn-integrity");
-
-    // Try Berry install-state.gz first, then classic .yarn-integrity
-    let sentinel_mtime = std::fs::metadata(&berry_state)
-        .and_then(|m| m.modified())
-        .ok()
-        .or_else(|| {
-            std::fs::metadata(&yarn_integrity)
-                .and_then(|m| m.modified())
-                .ok()
-        });
-
-    let sentinel_mtime = match sentinel_mtime {
-        Some(t) => t,
-        None => {
-            // No sentinel found at all — check if node_modules exists
-            let node_modules = worktree_path.join("node_modules");
-            if !node_modules.exists() {
-                tracing::debug!(
-                    path = %worktree_path.display(),
-                    "check_stale: true — no sentinel and no node_modules"
-                );
-                return true; // Nothing installed
-            }
-            // node_modules exists but no sentinel — benefit of the doubt
-            tracing::debug!(
-                path = %worktree_path.display(),
-                "check_stale: false — no sentinel found, node_modules exists"
-            );
-            return false;
-        }
-    };
-
-    // Compare sentinel against lock files
-    let mut max_lock_mtime: Option<std::time::SystemTime> = None;
-    for lock_file in &["package.json", "yarn.lock"] {
-        let lock_path = worktree_path.join(lock_file);
-        if let Ok(mtime) = std::fs::metadata(&lock_path).and_then(|m| m.modified()) {
-            max_lock_mtime = Some(match max_lock_mtime {
-                Some(current) => current.max(mtime),
-                None => mtime,
-            });
-        }
-    }
-
-    let stale = match max_lock_mtime {
-        Some(lock_mtime) => sentinel_mtime < lock_mtime,
-        None => false, // no lock files → can't determine staleness
-    };
-
-    tracing::debug!(
-        path = %worktree_path.display(),
-        sentinel = if berry_state.exists() { ".yarn/install-state.gz" } else { "node_modules/.yarn-integrity" },
-        stale,
-        "check_stale result"
-    );
-
-    stale
+    crate::domain::staleness::check_stale(worktree_path)
 }
 
 /// Returns true when pods are out of sync — same check CocoaPods' build phase uses:
 /// compare `ios/Podfile.lock` contents against `ios/Pods/Manifest.lock`.
 /// If they differ (or Manifest.lock is missing), pods need `pod install`.
 pub fn check_stale_pods(worktree_path: &Path) -> bool {
-    let podfile_lock = worktree_path.join("ios").join("Podfile.lock");
-    let manifest_lock = worktree_path.join("ios").join("Pods").join("Manifest.lock");
-
-    let lock_bytes = match std::fs::read(&podfile_lock) {
-        Ok(b) => b,
-        Err(_) => return false, // no Podfile.lock → pods not expected
-    };
-
-    let manifest_bytes = match std::fs::read(&manifest_lock) {
-        Ok(b) => b,
-        Err(_) => return true, // Manifest.lock missing → needs pod install
-    };
-
-    lock_bytes != manifest_bytes
+    crate::domain::staleness::check_stale_pods(worktree_path)
 }
 
 /// Removes a worktree from git and deletes its directory.
