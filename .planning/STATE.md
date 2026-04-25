@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 Wave 7 complete — 13-09 (F-204+F-205 consumers: 11 inline prereq sites in update.rs replaced by Recipe::expand(&DependencyState); 3 pending flags deleted from AppState; `_ => {}` catch-alls in handle_key.rs replaced with exhaustive ModalState arms). 79 tests green, clippy clean, arch-lint PASS. G-06 + G-18 active. 1 plan remains in Wave 8.
-last_updated: "2026-04-25T10:00:00Z"
+stopped_at: Phase 13 — ALL 10 PLANS EXECUTED. Wave 8 (13-10) complete: AppState regrouped into 6 sub-structs (MetroState/WorktreeBrowserState/CommandRunnerState/ModalStackState/PendingFlags/AppConfigState); footer.rs + help_overlay.rs consume KEYBINDINGS registry; F-108 (tmux.rs deleted, is_inside_tmux relocated to multiplexer.rs) + F-112 + minor verifications closed. 79 tests green, clippy clean, ALL 20 shape guards in `make arch-lint` ACTIVE. Awaiting phase verification.
+last_updated: "2026-04-25T10:30:00Z"
 last_activity: 2026-04-25
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 22
-  completed_plans: 21
-  percent: 95
+  completed_plans: 22
+  percent: 100
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 IN-PROGRESS — Waves 1-7 complete (9/10 plans), Wave 8 final (state grouping + UI rewire)
+**Current focus:** Phase 13 EXECUTION COMPLETE — 10/10 plans landed across 8 waves; awaiting phase verification
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — IN-PROGRESS (9/10 plans executed)
-Plan: W1-W7 complete; next W8 (13-10 — extract MetroState/WorktreeBrowserState/CommandRunnerState/ModalStackState/PendingFlags/AppConfigState sub-structs in AppState; rewire src/ui/footer.rs + src/ui/help_overlay.rs to consume KEYBINDINGS registry; close minor F-NNN findings — F-209+F-302+F-303+F-108+F-112)
-Status: Recipe consumer landed. update.rs has 21 references to Recipe (11 prereq sites refactored to Recipe::expand + supporting calls). Three pending boolean flags deleted from AppState (pending_metro_run/pending_metro_after_sync/pending_switch_path); pending_restart + skip_external_metro_check survive (Pitfall 3). handle_key.rs outer match on ModalState is now exhaustive (5 explicit + 3 char-consumer arms with inner if-let on KeyCode). post_drain_action: Option<Box<Action>> introduced to support deferred-spec via command_queue.push_front. command_queue semantics preserved. Guards passing: G-01, G-02, G-03, G-04, G-05, G-06, G-07, G-08, G-09, G-10, G-13, G-14, G-15, G-17, G-18. PENDING for 13-10: G-12 (footer hand-coded rows), G-20 (AppState sub-structs). Tests: 79 pass; clippy clean; arch-lint PASS.
+Phase: 13 (audit-driven-refactors) — EXECUTION COMPLETE (10/10 plans)
+Plan: All waves 1-8 merged to main. Final HEAD: 2e91a66 (`docs(13-10): complete Phase 13 final plan summary`).
+Status: Phase 13 executed end-to-end. AUDIT findings closed: F-002 (action.rs→domain), F-101 (infra-no-Action), F-102/F-103/F-104/F-105/F-106 (8 domain ports scaffolded + adapter shells), F-107/F-108/F-110/F-300/F-301 (UI/infra leak fixes), F-200 (src/app.rs split), F-201 (TEA purity, update→Vec<Effect>), F-202 (Adapters hexagonal injection), F-203 (TokioMetroAdapter), F-204 (Recipe::expand consumer), F-205 (exhaustive ModalState), F-208/F-302/F-303/F-400 (KEYBINDINGS registry + UI rewire), F-209 (AppState sub-structs), F-112 (cleanup). REFACTOR-01 + REFACTOR-02 + REFACTOR-03 all delivered. ALL 20 shape guards in `make arch-lint` ACTIVE: G-01 through G-20 every one passing. Tests: 79 pass (76 lib + 2 metro + 1 pgid); clippy --all-targets -D warnings clean. Next: spawn gsd-verifier for phase goal verification, then update_roadmap + evolve PROJECT.md.
 Last activity: 2026-04-25
 
 Progress: [###       ] 33% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5)
