@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 13 COMPLETE + VERIFIED — 4/4 success criteria passed; 23 Critical/Major AUDIT findings closed (5 Critical + 18 Major); 2 Addendum Major findings explicitly deferred with rationale (F-500 → Phase 14, F-501 → backlog). REFACTOR-01/02/03 all delivered. ALL 20 shape guards ACTIVE in `make arch-lint`. 79 tests green, clippy clean. Phase 14 (Per-Worktree Task System Foundation) unblocked.
-last_updated: "2026-04-25T10:45:00Z"
-last_activity: 2026-04-25
+stopped_at: Phase 14 CONTEXT gathered — 23 implementation decisions locked (D-01..D-23). F-500 resolved: full WorktreeSlice from day one in `src/domain/worktree_slice.rs`. New 9th domain port `TaskHandle` keeps cancellation domain-pure; `TaskId(u64)` from atomic counter; CommandSpec discriminant supplies (kind, WorktreeId) collision identity for Phase 15. Action payloads widen: `CommandOutputLine{task_id, line}` + `CommandExited{task_id, status}`. New `Effect::SpawnTask{task_id, worktree_id, spec}` is the spawn chokepoint. Per-worktree FIFO + per-slice post_drain replaces 4 globals. Metro single-instance preserved. Ready for `/gsd-plan-phase 14`.
+last_updated: "2026-04-27T00:00:00Z"
+last_activity: 2026-04-27
 progress:
   total_phases: 6
   completed_phases: 3
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 13 VERIFIED + COMPLETE — Phase 14 (Per-Worktree Task System Foundation) is unblocked
+**Current focus:** Phase 14 CONTEXT captured — ready for `/gsd-plan-phase 14`
 
 ## Current Position
 
-Phase: 13 (audit-driven-refactors) — COMPLETE (10/10 plans, verified 2026-04-25)
-Plan: 13-VERIFICATION.md status: passed (4/4 success criteria); 23 of 25 findings closed in code, 2 Addendum Major findings explicitly deferred with written rationale per AUDIT-ADDENDUM routing.
-Status: Phase 13 closed. AUDIT findings closed in code: F-002, F-004, F-101, F-102, F-103, F-104, F-105, F-106, F-107, F-108, F-110, F-200, F-201, F-202, F-203, F-204, F-205, F-208, F-209, F-300, F-301, F-302, F-303, F-400. Deferred: F-500 (WorktreeSlice) → Phase 14; F-501 (Command category-split) → backlog (flat-enum chosen). REFACTOR-01 + REFACTOR-02 + REFACTOR-03 all delivered. ALL 20 shape guards in `make arch-lint` ACTIVE and passing. Tests: 79 pass (76 lib + 2 metro + 1 pgid); clippy --all-targets -D warnings clean. Final HEAD: cd47bea.
+Phase: 14 (per-worktree-task-system-foundation) — CONTEXT gathered 2026-04-27 (0/TBD plans)
+Resume file: .planning/phases/14-per-worktree-task-system-foundation/14-CONTEXT.md
+Status: 23 implementation decisions locked (D-01..D-23) across 4 gray areas. F-500 resolved per AUDIT-ADDENDUM (`WorktreeSlice` from day one in `src/domain/worktree_slice.rs`). New 9th port `TaskHandle` for domain-pure cancellation; tokio JoinHandle wrapper in `src/infra/`. Spawn chokepoint = `Effect::SpawnTask{task_id, worktree_id, spec}`. Per-worktree FIFO inside slice + per-slice `post_drain` replaces global `running_command` / `command_task` / `command_queue` / `post_drain_action`. Metro single-instance unchanged. Migration ends with new shape guard G-21 forbidding the 4 deleted identifiers; all 20 existing guards + 79 tests must stay green.
 
-Next phase: Phase 14 — Per-Worktree Task System Foundation (depends on Phase 13 — now satisfied).
+Next phase: Phase 14 plan-phase — `/gsd-plan-phase 14`.
 
 Progress: [#####     ] 50% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5; Phase 13 complete 10/10)
 
