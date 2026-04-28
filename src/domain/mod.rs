@@ -10,4 +10,6 @@ pub mod pipeline;
 pub mod ports;
 pub mod refresh;
 pub mod staleness;
+pub mod task;
 pub mod worktree;
+pub mod worktree_slice;
