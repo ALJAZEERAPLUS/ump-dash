@@ -38,8 +38,15 @@ pub async fn run(
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
     let (handle_tx, mut handle_rx) =
         tokio::sync::mpsc::unbounded_channel::<Box<dyn MetroHandle>>();
+    // Phase 14 / Q2: dedicated channel for delivering freshly-spawned TaskRecord
+    // to the main thread. Mirrors handle_tx for Box<dyn MetroHandle>.
+    let (task_handle_tx, mut task_handle_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(
+            crate::domain::worktree::WorktreeId,
+            crate::domain::task::TaskRecord,
+        )>();
 
-    let runner = EffectRunner::new(adapters, action_tx.clone(), handle_tx.clone());
+    let runner = EffectRunner::new(adapters, action_tx.clone(), handle_tx.clone(), task_handle_tx.clone());
 
     // Startup effects: load worktrees + check for external metro.
     runner
@@ -90,6 +97,16 @@ pub async fn run(
                 let effects = update(&mut state, Action::RefreshWorktrees);
                 runner.run_effects(effects).await;
             }
+            Some((wt_id, record)) = task_handle_rx.recv() => {
+                // Phase 14: write the TaskRecord into the slice on the main thread.
+                // RESEARCH §Pitfall P-6 race: if the worktree disappeared between spawn
+                // and delivery, abort the orphan handle so the JoinHandle doesn't leak.
+                if let Some(slice) = state.worktrees.get_mut(&wt_id) {
+                    slice.task = Some(record);
+                } else {
+                    record.handle.abort();
+                }
+            }
         }
 
         // Drain all pending actions before redrawing — batches bursts of log lines
@@ -105,6 +122,13 @@ pub async fn run(
                 Err(TryRecvError::Disconnected) => break,
             }
             if let Ok(handle) = handle_rx.try_recv() { state.metro.register(handle) }
+            if let Ok((wt_id, record)) = task_handle_rx.try_recv() {
+                if let Some(slice) = state.worktrees.get_mut(&wt_id) {
+                    slice.task = Some(record);
+                } else {
+                    record.handle.abort();
+                }
+            }
         }
 
         if state.should_quit {
