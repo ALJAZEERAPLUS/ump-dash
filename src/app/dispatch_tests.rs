@@ -560,11 +560,12 @@ mod command_queue {
             state.command_runner.command_queue.front(),
             Some(&CommandSpec::YarnPodInstall)
         );
-        // Post-F-201: dispatch_command returned Effect::SpawnCommand, which
-        // should be present in the returned vec.
+        // Plan 14-06: dispatch_command now returns Effect::SpawnTask (new
+        // chokepoint — D-10/D-20). SpawnCommand is the legacy variant kept
+        // alive for Recipe::expand sites until Plan 14-07 migrates them.
         assert!(
-            effects.iter().any(|e| matches!(e, Effect::SpawnCommand { .. })),
-            "CommandExited drain must emit Effect::SpawnCommand for the popped spec; got {effects:?}"
+            effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. })),
+            "CommandExited drain must emit Effect::SpawnTask for the popped spec; got {effects:?}"
         );
     }
 }
