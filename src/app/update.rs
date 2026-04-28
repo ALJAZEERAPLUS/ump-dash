@@ -253,11 +253,33 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // sync-check, device selection, etc.). The push_front-on-defer
             // pattern at the dispatch sites guarantees the awaited spec sits
             // at the head of the queue.
-            if matches!(activity, crate::domain::metro::MetroActivity::Ready)
-                && state.command_runner.running_command.is_none()
-                && let Some(spec) = state.command_runner.command_queue.pop_front() {
+            if matches!(activity, crate::domain::metro::MetroActivity::Ready) {
+                // Phase 14 D-13 PRIMARY: walk slices for any whose head needs metro.
+                // Single-instance metro means only one slice can win this transition;
+                // others wait for the next CommandExited.
+                let candidate_id = state.worktrees.iter()
+                    .find(|(_, s)| {
+                        s.task.is_none()
+                            && s.queue.front().map(|c| c.needs_metro()).unwrap_or(false)
+                    })
+                    .map(|(id, _)| id.clone());
+
+                if let Some(ref id) = candidate_id
+                    && let Some(slice) = state.worktrees.get_mut(id)
+                    && let Some(spec) = slice.queue.pop_front()
+                {
+                    // Re-enter update() to allocate a fresh TaskId via dispatch_command.
+                    // CommandRun is the canonical entry point.
+                    effects.extend(update(state, Action::CommandRun(spec)));
+                } else if state.command_runner.running_command.is_none()
+                    && let Some(spec) = state.command_runner.command_queue.pop_front()
+                {
+                    // Phase 14 TRANSITIONAL: legacy global queue head drain.
+                    // Mirrors the existing pre-14 behavior so global-queue tests pass.
+                    // Plan 14-09 deletes this branch.
                     effects.extend(update(state, Action::CommandRun(spec)));
                 }
+            }
         }
 
         Action::ExternalMetroDetected(info) => {
@@ -740,6 +762,27 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::CommandCancel => {
+            let active_id = active_worktree_id(state);
+
+            // Phase 14 PRIMARY: slice-local cancel for the active worktree.
+            if let Some(ref id) = active_id
+                && let Some(slice) = state.worktrees.get_mut(id)
+            {
+                // D-03: opaque abort via TaskHandle trait. Take the record so the
+                // Box<dyn TaskHandle> drops at the end of this block.
+                if let Some(record) = slice.task.take() {
+                    record.handle.abort();
+                }
+                slice.queue.clear();
+                slice.post_drain = None;
+                slice.output.push_back("[cancelled]".into());
+                if slice.output.len() > MAX_COMMAND_LINES {
+                    slice.output.pop_front();
+                }
+            }
+
+            // Phase 14 TRANSITIONAL: legacy global clear preserved so any test or
+            // helper that introspects the globals still passes. Plan 14-09 deletes.
             if let Some(task) = state.command_runner.command_task.take() {
                 task.abort();
             }
@@ -749,7 +792,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Plan 13-09: clear post-drain action so a cancel mid-sync doesn't
             // silently fire metro after the user explicitly cancelled.
             state.command_runner.post_drain_action = None;
-            if let Some(id) = active_worktree_id(state) {
+            if let Some(id) = active_id {
                 let output = state.command_runner.command_output_by_worktree.entry(id).or_default();
                 output.push_back("[cancelled]".into());
                 if output.len() > MAX_COMMAND_LINES {
