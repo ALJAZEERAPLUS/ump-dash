@@ -5,7 +5,7 @@
 //! list without making any I/O calls itself.
 
 /// Unique identifier for a worktree. Newtype around String to prevent accidental mixing.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct WorktreeId(pub String);
 
 /// Metro bundler status for a given worktree.
