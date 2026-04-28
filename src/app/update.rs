@@ -606,11 +606,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
         }
 
-        Action::CommandExited { task_id: _, status: _ } => {
-            // Phase 14 TRANSITIONAL: legacy drain logic preserved unchanged.
-            // Plan 14-07 replaces this with slice-local drain by task_id.
-            let completed_cmd = state.command_runner.running_command.take();
+        Action::CommandExited { task_id, status: _ } => {
+            // Phase 14 D-11 PRIMARY: find the slice whose task matches task_id.
+            let target_id = state.worktrees
+                .iter()
+                .find(|(_, s)| s.task.as_ref().map(|t| t.id) == Some(task_id))
+                .map(|(id, _)| id.clone());
+
+            // Take the slice's task (clearing it) and extract the spec for refresh classification.
+            let completed_spec_from_slice = if let Some(ref id) = target_id {
+                state.worktrees.get_mut(id).and_then(|s| s.task.take()).map(|t| t.spec)
+            } else {
+                None
+            };
+
+            // Phase 14 TRANSITIONAL: legacy global state cleanup. Plan 14-09 deletes
+            // the four globals; until then keep them in sync with the slice.
+            let completed_cmd_legacy = state.command_runner.running_command.take();
             state.command_runner.command_task = None;
+            let completed_cmd = completed_spec_from_slice.or(completed_cmd_legacy);
 
             // Refresh staleness BEFORE draining the queue so any queued run command
             // re-entering CommandRun sees up-to-date stale state (prevents re-showing
@@ -631,25 +645,90 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
             }
 
-            // Drain command queue — pop_front and dispatch if non-empty.
+            // === Slice-local drain (D-11 + D-13) ===
+            // Borrow split: extract the next spec and post_drain BEFORE calling
+            // dispatch_command (which needs &mut AppState). We use a two-pass
+            // approach: peek/pop in one borrow, then dispatch in a fresh borrow.
+            enum SliceDrainResult {
+                /// Head spec needs to be dispatched.
+                Dispatch(crate::domain::command::CommandSpec),
+                /// Head spec needs metro — push back and start metro.
+                NeedsMetro(crate::domain::command::CommandSpec),
+                /// Queue is empty — consume post_drain.
+                PostDrain(Box<Action>),
+                /// Queue is empty, no post_drain.
+                Empty,
+            }
+
+            let slice_drain = if let Some(ref id) = target_id
+                && let Some(slice) = state.worktrees.get_mut(id)
+            {
+                if let Some(next_spec) = slice.queue.pop_front() {
+                    if next_spec.needs_metro() && !state.metro.is_running() {
+                        // D-13: metro stays metro-special. Push back to head of slice.
+                        slice.queue.push_front(next_spec.clone());
+                        SliceDrainResult::NeedsMetro(next_spec)
+                    } else {
+                        SliceDrainResult::Dispatch(next_spec)
+                    }
+                } else if let Some(post) = slice.post_drain.take() {
+                    // D-14: per-slice post_drain consumed on empty queue.
+                    SliceDrainResult::PostDrain(post)
+                } else {
+                    SliceDrainResult::Empty
+                }
+            } else {
+                SliceDrainResult::Empty
+            };
+
+            let mut slice_dispatched = false;
+            match slice_drain {
+                SliceDrainResult::Dispatch(spec) => {
+                    if let Some(eff) = dispatch_command(state, spec) {
+                        effects.push(eff);
+                    }
+                    slice_dispatched = true;
+                }
+                SliceDrainResult::NeedsMetro(_) => {
+                    effects.extend(update(state, Action::MetroStart));
+                    slice_dispatched = true;
+                }
+                SliceDrainResult::PostDrain(post) => {
+                    effects.extend(update(state, *post));
+                    slice_dispatched = true;
+                }
+                SliceDrainResult::Empty => {}
+            }
+
+            // === Transitional legacy drain (preserves existing test behavior) ===
+            // Tests that introspect state.command_runner.command_queue still see the
+            // queue advance. Plan 14-09 deletes this branch.
             // Plan 13-09 (F-204 site 5): for specs that need metro but metro
             // isn't running, push the spec BACK to the front and dispatch
-            // MetroStart. The queue acts as the deferred-spec store
-            // (replacing `pending_metro_run`); MetroActivityUpdate(Ready)
-            // drains the head when metro is up.
+            // MetroStart. The queue acts as the deferred-spec store;
+            // MetroActivityUpdate(Ready) drains the head when metro is up.
             if let Some(next_spec) = state.command_runner.command_queue.pop_front() {
                 if next_spec.needs_metro() && !state.metro.is_running() {
                     state.command_runner.command_queue.push_front(next_spec);
-                    effects.extend(update(state, Action::MetroStart));
-                } else if let Some(eff) = dispatch_command(state, next_spec) {
-                    effects.push(eff);
+                    // Avoid double MetroStart dispatch if slice path already handled it.
+                    if !slice_dispatched {
+                        effects.extend(update(state, Action::MetroStart));
+                    }
+                } else if !slice_dispatched {
+                    // Avoid re-dispatching the same command twice if both queues
+                    // had the same head. The slice queue path already dispatched.
+                    if let Some(eff) = dispatch_command(state, next_spec) {
+                        effects.push(eff);
+                    }
                 }
+                // If slice_dispatched is true: we consumed the legacy queue head for
+                // bookkeeping (queue advances) but don't re-dispatch.
             } else if let Some(action) = state.command_runner.post_drain_action.take() {
                 // Plan 13-09: replaces `pending_metro_after_sync` with a
-                // generalized post-queue-drain action. Sync-then-metro flow
-                // stores Some(MetroStart) here; future post-drain coordination
-                // can reuse the same slot.
-                effects.extend(update(state, *action));
+                // generalized post-queue-drain action.
+                if !slice_dispatched {
+                    effects.extend(update(state, *action));
+                }
             }
         }
 
