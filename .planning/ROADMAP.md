@@ -109,7 +109,16 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   2. The metro single-instance invariant is preserved — starting metro in any worktree while metro is already running goes through the existing conflict flow unchanged
   3. `CommandOutputLine` and `CommandExited` actions carry `WorktreeId`/`TaskId` and are routed to the correct worktree's output buffer regardless of which worktree is currently selected in the UI
   4. A running task's identity `(CommandKind, WorktreeId)` is accessible to UI, cancellation, and collision logic via `task_for_worktree(state, id)`
-**Plans**: TBD
+**Plans**: 9 plans
+  - [ ] 14-01-PLAN.md — Domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port (9th port; pure domain)
+  - [ ] 14-02-PLAN.md — Infra adapter: TokioTaskHandle + From<std::process::ExitStatus>
+  - [ ] 14-03-PLAN.md — AppState root field worktrees + task_for_worktree + merge_slices + WorktreesLoaded integration (D-16/D-17, Q4)
+  - [ ] 14-04-PLAN.md — Effect::SpawnTask variant added (Q1: cwd+branch in payload)
+  - [ ] 14-05-PLAN.md — Action payload widening: CommandOutputLine{task_id,line} + CommandExited{task_id,status} (Q2 lock: dedicated channel, no TaskSpawned action)
+  - [ ] 14-06-PLAN.md — SpawnTask runner arm + task_handle_tx channel + dispatch_command emits SpawnTask (D-10/Q1/Q2/Q3)
+  - [ ] 14-07-PLAN.md — Drain migration: 10 Recipe::expand sites + CommandExited slice-local + CommandCancel + MetroActivityUpdate Ready (D-11/D-12/D-13/D-14)
+  - [ ] 14-08-PLAN.md — Test rewrite: D-21 17 dispatch tests + 5 new parallelism / routing / stale-drop tests
+  - [ ] 14-09-PLAN.md — Atomic deletion: CommandRunnerState + 4 fields + SpawnCommand + helper flips + G-21 grep guard
 
 ### Phase 15: Task Cancellation + Collision + Shared-Resource Semaphore
 **Goal**: Enable individual task cancellation via `CancellationToken` + SIGTERM to the process group with SIGKILL grace fallback; define and enforce a documented collision policy per command category; prevent yarn global cache / `node_modules` corruption from concurrent installs via a per-repo-root semaphore
@@ -142,6 +151,6 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 11. Architecture Audit | v1.3 | 7/7 | Complete   | 2026-04-17 |
 | 12. Coverage Gate | v1.3 | 5/5 | Complete | 2026-04-23 |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
-| 14. Per-Worktree Task System Foundation | v1.3 | 0/TBD | Not started | - |
+| 14. Per-Worktree Task System Foundation | v1.3 | 0/9 | Planned | - |
 | 15. Task Cancellation + Collision + Semaphore | v1.3 | 0/TBD | Not started | - |
 | 16. Live UI Indicators | v1.3 | 0/TBD | Not started | - |
