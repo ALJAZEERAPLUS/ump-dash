@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 14 PLANNED — 9 plans across 8 waves locked. RESEARCH.md (Open Questions Q1..Q4 RESOLVED) + VALIDATION.md (Nyquist-compliant) + PATTERNS.md (16 files mapped to in-tree analogs) all written. Plan 14-01 lays domain types (WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port); 14-02 the tokio adapter; 14-03/14-04 in parallel add AppState root + Effect::SpawnTask{task_id, worktree_id, spec, cwd, branch}; 14-05 widens Action payloads; 14-06 wires the dedicated `task_handle_tx` channel + dispatch_command flip; 14-07 migrates the 10 Recipe sites + slice-local drain; 14-08 rewrites the 17 dispatch_tests + adds 5 parallelism/routing/stale-drop tests; 14-09 is the atomic delete-and-guard (deletes the 4 globals + CommandRunnerState + adds G-21 in the same plan per CONTEXT.md §specifics). Ready for `/gsd-execute-phase 14`.
-last_updated: "2026-04-28T00:00:00Z"
+stopped_at: Phase 14 EXECUTED + VERIFIED (3/4 PASS, 1 manual-only) — all 9 plans across 8 waves landed. Wave 1 (14-01) domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle 9th port. Wave 2 (14-02) TokioTaskHandle adapter. Wave 3 (14-03 + 14-04 parallel) AppState.worktrees root field + merge_slices + Effect::SpawnTask{task_id,worktree_id,spec,cwd,branch}. Wave 4 (14-05) widened Action::CommandOutputLine{task_id,line} + CommandExited{task_id,status}. Wave 5 (14-06) SpawnTask runner arm + dedicated task_handle_tx channel (Q2 lock) + dispatch_command flip. Wave 6 (14-07) all 10 Recipe::expand sites + slice-local CommandExited drain + per-slice post_drain + slice CommandCancel + MetroActivityUpdate(Ready) slice walk. Wave 7 (14-08) 17 dispatch_tests rewritten to read state.worktrees + 5 new parallelism/routing/stale-drop tests. Wave 8 (14-09) atomic delete-and-guard — CommandRunnerState struct + 4 globals + Effect::SpawnCommand deleted, G-21 grep guard active, helpers flipped to slice. 99 tests pass; all 21 G-XX arch guards green; clippy clean; TASK-01/TASK-02/TASK-03 closed. 14-HUMAN-UAT.md persists 1 manual TUI test (concurrent output panel display) per VALIDATION.md §Manual-Only Verifications. Phase 15 (Task Cancellation + Collision + Semaphore) unblocked.
+last_updated: "2026-04-28T06:24:56Z"
 last_activity: 2026-04-28
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 31
-  completed_plans: 22
-  percent: 50
+  completed_plans: 31
+  percent: 67
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 14 PLANNED — 9 plans across 8 waves; ready for `/gsd-execute-phase 14`
+**Current focus:** Phase 14 COMPLETE 2026-04-28 (9/9 plans, 3/4 verified PASS, 1 manual-only TUI check pending in HUMAN-UAT). Phase 15 (Task Cancellation + Collision + Semaphore) unblocked.
 
 ## Current Position
 
-Phase: 14 (per-worktree-task-system-foundation) — PLANNED 2026-04-28 (0/9 plans executed)
-Resume file: .planning/phases/14-per-worktree-task-system-foundation/14-01-PLAN.md
-Status: 9 plans across 8 waves; plan-checker passed with 0 blockers (3 documentation-hygiene warnings resolved inline). Coverage gates: 3/3 phase requirements (TASK-01..03) covered; 23/23 CONTEXT.md decisions (D-01..D-23) referenced by at least one plan. Wave 1 = domain types (14-01); Wave 2 = infra adapter (14-02); Wave 3 in parallel = AppState root field (14-03) + Effect::SpawnTask variant (14-04); Wave 4 = Action payload widening (14-05); Wave 5 = SpawnTask runner + task_handle_tx channel + dispatch_command flip (14-06); Wave 6 = Recipe + drain migration (14-07); Wave 7 = test rewrite + 5 new parallelism tests (14-08); Wave 8 = atomic delete-and-guard (14-09: deletes 4 globals + CommandRunnerState + adds G-21 in the same plan per CONTEXT.md §specifics). All 20 existing guards + 79 tests must stay green throughout migration; new G-21 guard lands in 14-09.
+Phase: 14 (per-worktree-task-system-foundation) — COMPLETE 2026-04-28 (9/9 plans executed, verified 3/4 PASS + 1 manual-only)
+Resume file: None
+Status: All 8 waves landed cleanly. Domain types (WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle 9th port) live in src/domain/. Infra adapter TokioTaskHandle wraps tokio::JoinHandle and impls TaskHandle. AppState gained `worktrees: HashMap<WorktreeId, WorktreeSlice>` root field with task_for_worktree + merge_slices helpers; Effect::SpawnTask{task_id,worktree_id,spec,cwd,branch} replaced SpawnCommand at the chokepoint; Action::CommandOutputLine and CommandExited carry task_id; runtime owns the dedicated task_handle_tx channel (Q2 lock — Box<dyn TaskHandle> not Clone+PartialEq). All 11 Recipe::expand sites push to slice.queue; CommandExited drains slice-locally; CommandCancel calls handle.abort() via port; MetroActivityUpdate(Ready) walks slices. 17 dispatch tests rewritten + 5 new parallelism/routing/stale-drop tests. Atomic delete in 14-09: CommandRunnerState struct + 4 globals + Effect::SpawnCommand all gone; helpers flipped to slice; G-21 grep guard prevents regression. 99 tests pass (96 lib + 2 COVER-01 + 1 COVER-02); all 21 G-XX arch guards green; clippy clean. TASK-01/TASK-02/TASK-03 closed.
 
-Next phase: Phase 14 execute-phase — `/gsd-execute-phase 14`.
+Next phase: Phase 15 (Task Cancellation + Collision + Semaphore) — `/gsd-discuss-phase 15` or `/gsd-plan-phase 15`.
 
-Progress: [#####     ] 50% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5; Phase 13 complete 10/10)
+Progress: [######    ] 67% (v1.3 — Phase 11 7/7; Phase 12 5/5; Phase 13 10/10; Phase 14 9/9)
 
 ## Performance Metrics
 

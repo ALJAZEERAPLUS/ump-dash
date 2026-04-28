@@ -45,7 +45,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 - [x] **Phase 11: Architecture Audit** — Read-only audit of all modules; produces AUDIT.md with severity-tagged findings (completed 2026-04-17)
 - [x] **Phase 12: Coverage Gate** — Characterization tests and baseline coverage report locking in critical invariants before any structural change (completed 2026-04-23)
 - [x] **Phase 13: Audit-Driven Refactors** — Resolve all Critical and Major findings from the audit; type-driven cancellability; domain-level prerequisite ordering (completed 2026-04-25)
-- [ ] **Phase 14: Per-Worktree Task System Foundation** — Replace global task state with per-worktree task map; parallel execution across worktrees; correct output routing
+- [x] **Phase 14: Per-Worktree Task System Foundation** — Replace global task state with per-worktree task map; parallel execution across worktrees; correct output routing (completed 2026-04-28)
 - [ ] **Phase 15: Task Cancellation + Collision + Semaphore** — Individual task cancellation with SIGTERM/SIGKILL; uniqueness-based collision policy; shared-resource semaphore for yarn installs
 - [ ] **Phase 16: Live UI Indicators** — Split Y/P cells; 6-frame inline spinner replacing Y/P during active tasks; live MM:SS elapsed time computed in render path
 
