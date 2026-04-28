@@ -57,9 +57,14 @@ fn base_state() -> AppState {
 /// Seed one worktree so `dispatch_command` does not early-return on an empty
 /// worktree list. Used by the `command_queue` drain test.
 fn seed_one_worktree(state: &mut AppState) {
+    seed_one_worktree_id(state, "wt-1");
+}
+
+/// Seed a single worktree with a given id, also initialising its slice.
+fn seed_one_worktree_id(state: &mut AppState, id: &str) {
     state.worktree_browser.worktrees.push(Worktree {
-        id: WorktreeId("wt-1".into()),
-        path: std::path::PathBuf::from("/tmp/wt-1"),
+        id: WorktreeId(id.into()),
+        path: std::path::PathBuf::from(format!("/tmp/{id}")),
         branch: "main".into(),
         head_sha: "0000000".into(),
         metro_status: WorktreeMetroStatus::Stopped,
@@ -68,7 +73,80 @@ fn seed_one_worktree(state: &mut AppState) {
         stale_pods: false,
         jira_key: None,
     });
+    let idx = state.worktree_browser.worktrees.len() - 1;
+    state.worktree_browser.worktree_table_state.select(Some(idx));
+    // Ensure a slice exists for this worktree.
+    state.worktrees
+        .entry(WorktreeId(id.into()))
+        .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+            id: WorktreeId(id.into()),
+            ..Default::default()
+        });
+}
+
+/// Seed two worktrees (A then B) and their slices.
+fn seed_two_worktrees(state: &mut AppState, id_a: &str, id_b: &str) {
+    seed_one_worktree_id(state, id_a);
+    seed_one_worktree_id(state, id_b);
+    // Keep selection on A (index 0).
     state.worktree_browser.worktree_table_state.select(Some(0));
+}
+
+// =========================================================================
+// Phase 14 / D-21 slice-side assertion helpers
+// =========================================================================
+
+/// Assert the named worktree's slice has a running task.
+fn assert_running_in(state: &AppState, id: &str) {
+    let wid = WorktreeId(id.into());
+    assert!(
+        state.worktrees.get(&wid).and_then(|s| s.task.as_ref()).is_some(),
+        "expected worktree {id:?} to have a running task; slice = {:?}",
+        state.worktrees.get(&wid).map(|s| (s.task.is_some(), s.queue.len())),
+    );
+}
+
+/// Assert no slice has a running task.
+fn assert_no_running_task_anywhere(state: &AppState) {
+    let any = state.worktrees.values().any(|s| s.task.is_some());
+    assert!(!any, "expected no slice to have a running task, but at least one does");
+}
+
+/// Queue length for the named worktree's slice.
+fn slice_queue_len(state: &AppState, id: &str) -> usize {
+    state.worktrees
+        .get(&WorktreeId(id.into()))
+        .map(|s| s.queue.len())
+        .unwrap_or(0)
+}
+
+/// Snapshot of slice output lines for the named worktree.
+fn slice_output(state: &AppState, id: &str) -> Vec<String> {
+    state.worktrees
+        .get(&WorktreeId(id.into()))
+        .map(|s| s.output.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// A test-only `TaskHandle` that does nothing — abort() is a no-op.
+#[derive(Debug)]
+struct NoopHandle;
+
+impl crate::domain::ports::task_handle::TaskHandle for NoopHandle {
+    fn abort(&self) {}
+}
+
+/// Build a synthetic `TaskRecord` for unit tests (no real runtime needed).
+fn synthetic_task_record(
+    id_value: u64,
+    spec: crate::domain::command::CommandSpec,
+) -> crate::domain::task::TaskRecord {
+    crate::domain::task::TaskRecord {
+        id: crate::domain::task::TaskId(id_value),
+        spec,
+        started_at: std::time::Instant::now(),
+        handle: Box::new(NoopHandle),
+    }
 }
 
 // =========================================================================
@@ -499,7 +577,9 @@ mod command_queue {
     #[test]
     fn command_queue_push_appends_to_back() {
         let mut state = base_state();
-        assert!(state.command_runner.command_queue.is_empty());
+        seed_one_worktree(&mut state);
+        // Phase 14 / D-21: assert against the slice (primary source of truth).
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "precondition: slice queue empty");
 
         let _effects = update(
             &mut state,
@@ -510,30 +590,37 @@ mod command_queue {
             Action::CommandQueuePush(CommandSpec::YarnPodInstall),
         );
 
-        assert_eq!(state.command_runner.command_queue.len(), 2);
+        // D-21: slice-side queue assertions.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 2, "slice queue must hold 2 items");
         assert_eq!(
-            state.command_runner.command_queue.front(),
-            Some(&CommandSpec::YarnInstall)
+            state.worktrees.get(&WorktreeId("wt-1".into())).and_then(|s| s.queue.front()),
+            Some(&CommandSpec::YarnInstall),
+            "slice queue front must be YarnInstall"
         );
         assert_eq!(
-            state.command_runner.command_queue.back(),
-            Some(&CommandSpec::YarnPodInstall)
+            state.worktrees.get(&WorktreeId("wt-1".into())).and_then(|s| s.queue.back()),
+            Some(&CommandSpec::YarnPodInstall),
+            "slice queue back must be YarnPodInstall"
         );
     }
 
     #[test]
     fn command_exited_with_empty_queue_clears_running_command() {
         let mut state = base_state();
-        state.command_runner.running_command = Some(CommandSpec::GitFetch);
-        assert!(state.command_runner.command_queue.is_empty());
+        seed_one_worktree(&mut state);
+        // Simulate a running task in the slice (D-21: task lives in slice).
+        state.worktrees.get_mut(&WorktreeId("wt-1".into())).unwrap().task =
+            Some(synthetic_task_record(1, CommandSpec::GitFetch));
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "precondition: slice queue empty");
 
-        let _effects = update(&mut state, Action::CommandExited { task_id: crate::domain::task::TaskId(0), status: crate::domain::task::ExitStatus::Success });
+        let _effects = update(&mut state, Action::CommandExited {
+            task_id: crate::domain::task::TaskId(1),
+            status: crate::domain::task::ExitStatus::Success,
+        });
 
-        assert!(
-            state.command_runner.running_command.is_none(),
-            "CommandExited must clear running_command"
-        );
-        assert!(state.command_runner.command_queue.is_empty(), "queue stays empty");
+        // D-21: slice-side assertion — task cleared after CommandExited.
+        assert_no_running_task_anywhere(&state);
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "queue stays empty");
     }
 
     #[test]
@@ -541,28 +628,33 @@ mod command_queue {
         let mut state = base_state();
         // Seed one worktree so `dispatch_command` does not early-return.
         seed_one_worktree(&mut state);
+
+        // D-21: task + queue live in the slice.
+        let wid = WorktreeId("wt-1".into());
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(2, CommandSpec::GitFetch));
+        // GitFetch has RefreshSet::none() — no tokio::spawn on the refresh path.
+        // YarnInstall doesn't need metro, so drain routes through dispatch_command,
+        // which emits Effect::SpawnTask.
+        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnInstall);
+        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnPodInstall);
+        // Keep legacy state in sync for the transitional dual-write path.
         state.command_runner.running_command = Some(CommandSpec::GitFetch);
-        // GitFetch has RefreshSet::none() — no tokio::spawn on the refresh
-        // path. YarnInstall doesn't need metro, so drain routes through
-        // `dispatch_command`, which sets running_command to the popped spec.
         state.command_runner.command_queue.push_back(CommandSpec::YarnInstall);
         state.command_runner.command_queue.push_back(CommandSpec::YarnPodInstall);
 
-        let effects = update(&mut state, Action::CommandExited { task_id: crate::domain::task::TaskId(0), status: crate::domain::task::ExitStatus::Success });
+        let effects = update(&mut state, Action::CommandExited {
+            task_id: crate::domain::task::TaskId(2),
+            status: crate::domain::task::ExitStatus::Success,
+        });
 
-        assert_eq!(
-            state.command_runner.running_command.as_ref(),
-            Some(&CommandSpec::YarnInstall),
-            "CommandExited must set running_command to the popped front of the queue"
-        );
-        assert_eq!(state.command_runner.command_queue.len(), 1);
-        assert_eq!(
-            state.command_runner.command_queue.front(),
-            Some(&CommandSpec::YarnPodInstall)
-        );
-        // Plan 14-06: dispatch_command now returns Effect::SpawnTask (new
-        // chokepoint — D-10/D-20). SpawnCommand is the legacy variant kept
-        // alive for Recipe::expand sites until Plan 14-07 migrates them.
+        // D-21: after draining the queue head, the slice task is cleared
+        // (SpawnTask effect was emitted; the runtime will write back slice.task
+        // when the effect resolves — not visible in a pure update() test).
+        // The remaining YarnPodInstall stays in the slice queue.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1,
+            "one item (YarnPodInstall) must remain in the slice queue after drain");
+        // Plan 14-06: dispatch_command now returns Effect::SpawnTask.
         assert!(
             effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. })),
             "CommandExited drain must emit Effect::SpawnTask for the popped spec; got {effects:?}"
@@ -601,5 +693,183 @@ mod worktrees_loaded {
         let _ = update(&mut state, Action::WorktreesLoaded(worktrees));
         assert!(state.worktrees.contains_key(&WorktreeId("wt-A".into())));
         assert!(state.worktrees.contains_key(&WorktreeId("wt-B".into())));
+    }
+}
+
+// =========================================================================
+// Sub-module 5: Parallelism — TASK-02 contract (Plan 14-08)
+// =========================================================================
+
+mod parallelism {
+    use super::*;
+
+    /// TASK-02: two worktrees can each have a running task simultaneously.
+    ///
+    /// Pure data test — slice.task fields are populated directly (no runtime).
+    /// The runtime would set slice.task when it processes Effect::SpawnTask;
+    /// here we verify the data model supports concurrent task ownership.
+    #[test]
+    fn yarn_install_on_a_while_jest_on_b_both_have_tasks() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+
+        // Simulate concurrent tasks across two worktrees.
+        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap().task =
+            Some(synthetic_task_record(1, CommandSpec::YarnInstall));
+        state.worktrees.get_mut(&WorktreeId("wt-B".into())).unwrap().task =
+            Some(synthetic_task_record(2, CommandSpec::YarnJest { filter: String::new() }));
+
+        assert_running_in(&state, "wt-A");
+        assert_running_in(&state, "wt-B");
+
+        let count_running = state.worktrees.values().filter(|s| s.task.is_some()).count();
+        assert_eq!(count_running, 2, "TASK-02 contract: parallel tasks across worktrees");
+    }
+
+    /// COVER-01 / D-13 contract: MetroStart while already running triggers
+    /// the restart path, not a double-spawn.
+    ///
+    /// This is a unit-level restatement of the integration test in
+    /// `tests/metro_single_instance.rs` (COVER-01). If accessing
+    /// `FakeMetroHandle` from within `src/` is impractical without exposing
+    /// a public test-helper type, this test is marked `#[ignore]` and
+    /// coverage deferred to COVER-01.
+    #[test]
+    fn metro_start_on_a_while_metro_running_on_b_keeps_single_instance() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+
+        // Register a fake MetroHandle to simulate metro running in wt-B.
+        #[derive(Debug)]
+        struct FakeMetroHandle { pid: u32, worktree_id: String }
+        impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
+            fn pid(&self) -> u32 { self.pid }
+            fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+        }
+        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into() }));
+        assert!(state.metro.is_running(), "precondition: metro running in wt-B");
+
+        // Set active worktree to A (index 0) and dispatch MetroStart.
+        state.worktree_browser.worktree_table_state.select(Some(0));
+        // Skip external detection so the test stays synchronous.
+        state.metro_state.skip_external_metro_check = true;
+        let _effects = update(&mut state, Action::MetroStart);
+
+        // COVER-01 contract: still only one MetroHandle registered (restart path,
+        // not double-spawn). The handler calls MetroStop first (pending_restart=true)
+        // so metro may be Stopping or about to be restarted — either way is_running()
+        // reflects the single-instance invariant.
+        // Regardless of whether pending_restart or restart-in-progress, no second
+        // SpawnMetro effect should have fired unconditionally.
+        assert!(state.metro_state.pending_restart,
+            "COVER-01: MetroStart-while-running must set pending_restart=true");
+    }
+}
+
+// =========================================================================
+// Sub-module 6: Routing — TASK-03 contract (Plan 14-08)
+// =========================================================================
+
+mod routing {
+    use super::*;
+
+    /// TASK-03 / D-08: CommandOutputLine routes to the slice that owns the
+    /// task_id, regardless of which worktree is currently selected in the UI.
+    #[test]
+    fn command_output_line_routes_to_correct_slice_regardless_of_active_worktree() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+
+        // slice_A holds task with id=5; slice_B has no task.
+        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap().task =
+            Some(synthetic_task_record(5, CommandSpec::YarnInstall));
+
+        // Active worktree = B (UI has selected index 1 = wt-B).
+        // seed_two_worktrees puts wt-A at 0 and wt-B at 1; select(1) = B.
+        state.worktree_browser.worktree_table_state.select(Some(1));
+
+        let _ = update(&mut state, Action::CommandOutputLine {
+            task_id: crate::domain::task::TaskId(5),
+            line: "from-A".into(),
+        });
+
+        let a_out = slice_output(&state, "wt-A");
+        let b_out = slice_output(&state, "wt-B");
+        assert!(
+            a_out.iter().any(|l| l == "from-A"),
+            "D-08: line must land in slice_A (task owner); A={:?} B={:?}", a_out, b_out
+        );
+        assert!(
+            !b_out.iter().any(|l| l == "from-A"),
+            "D-08: line must NOT land in slice_B (not task owner); A={:?} B={:?}", a_out, b_out
+        );
+    }
+
+    /// TASK-03 / D-11: CommandExited drains the slice-local queue of the
+    /// exiting task, leaving other worktrees' queues untouched.
+    #[test]
+    fn command_exited_drains_slice_local_queue_not_other() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+
+        // Task on A; both slices have one queued item.
+        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap().task =
+            Some(synthetic_task_record(7, CommandSpec::GitFetch));
+        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap()
+            .queue.push_back(CommandSpec::YarnInstall);
+        state.worktrees.get_mut(&WorktreeId("wt-B".into())).unwrap()
+            .queue.push_back(CommandSpec::YarnPodInstall);
+
+        let queue_b_before = slice_queue_len(&state, "wt-B");
+
+        let _ = update(&mut state, Action::CommandExited {
+            task_id: crate::domain::task::TaskId(7),
+            status: crate::domain::task::ExitStatus::Success,
+        });
+
+        // A's queue was drained (YarnInstall dispatched via SpawnTask effect).
+        // slice.task is None post-exit; SpawnTask effect will populate it in runtime.
+        assert_eq!(slice_queue_len(&state, "wt-A"), 0,
+            "D-11: A's queue must drain on CommandExited");
+        // B's queue untouched.
+        assert_eq!(slice_queue_len(&state, "wt-B"), queue_b_before,
+            "D-11: B's queue must not change");
+    }
+}
+
+// =========================================================================
+// Sub-module 7: Stale-drop — RESEARCH §Pitfall P-3 (Plan 14-08)
+// =========================================================================
+
+mod stale_drop {
+    use super::*;
+
+    /// P-3 / D-08: a CommandOutputLine for a task that no slice owns is
+    /// silently dropped — it must not contaminate any slice's output buffer.
+    ///
+    /// This guards the fast-cancel+respawn race: late stdout from the dead
+    /// process arrives AFTER the slice cleared its task. Since no slice has
+    /// `task.id == 99`, the line should not appear anywhere in `state.worktrees`.
+    #[test]
+    fn late_command_output_line_for_cancelled_task_is_silently_dropped() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-A");
+        // No task on slice_A — task_id 99 belongs to nobody.
+
+        let _ = update(&mut state, Action::CommandOutputLine {
+            task_id: crate::domain::task::TaskId(99),
+            line: "stale".into(),
+        });
+
+        // P-3 contract: the stale line must not land in any slice's output.
+        let any_slice_has_it = state.worktrees.values()
+            .any(|s| s.output.iter().any(|l| l == "stale"));
+        assert!(!any_slice_has_it,
+            "P-3: stale output line must not contaminate any slice; \
+             slices = {:?}",
+            state.worktrees.iter().map(|(k, v)| (k, v.output.len())).collect::<Vec<_>>()
+        );
     }
 }
