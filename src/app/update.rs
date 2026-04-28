@@ -498,17 +498,39 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Phase 3: Command output events ---
 
-        Action::CommandOutputLine(line) => {
-            if let Some(id) = active_worktree_id(state) {
-                let output = state.command_runner.command_output_by_worktree.entry(id).or_default();
-                output.push_back(line);
-                if output.len() > MAX_COMMAND_LINES {
-                    output.pop_front();
+        Action::CommandOutputLine { task_id, line } => {
+            // Phase 14 / D-08 PRIMARY: route by task_id. Late stdout from a
+            // cancelled task lands here with no matching slice → silently dropped.
+            let routed_to_slice = if let Some(slice) = state.worktrees
+                .values_mut()
+                .find(|s| s.task.as_ref().map(|t| t.id) == Some(task_id))
+            {
+                slice.output.push_back(line.clone());
+                if slice.output.len() > MAX_COMMAND_LINES {
+                    slice.output.pop_front();
                 }
-            }
+                true
+            } else {
+                false
+            };
+
+            // Phase 14 TRANSITIONAL: also write to the legacy
+            // command_output_by_worktree map so existing dispatch tests pass
+            // unchanged. Plan 14-08 rewrites the tests; Plan 14-09 deletes the
+            // legacy map. The TaskId(0) sentinel emitted by tests with no real
+            // task hits this branch (slice lookup fails because no slice has
+            // task.id == 0 — slice TaskRecord IDs all come from TaskId::next() ≥ 1).
+            if !routed_to_slice
+                && let Some(id) = active_worktree_id(state) {
+                    let output = state.command_runner.command_output_by_worktree.entry(id).or_default();
+                    output.push_back(line);
+                    if output.len() > MAX_COMMAND_LINES { output.pop_front(); }
+                }
         }
 
-        Action::CommandExited => {
+        Action::CommandExited { task_id: _, status: _ } => {
+            // Phase 14 TRANSITIONAL: legacy drain logic preserved unchanged.
+            // Plan 14-07 replaces this with slice-local drain by task_id.
             let completed_cmd = state.command_runner.running_command.take();
             state.command_runner.command_task = None;
 

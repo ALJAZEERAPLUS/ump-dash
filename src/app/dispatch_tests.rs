@@ -527,7 +527,7 @@ mod command_queue {
         state.command_runner.running_command = Some(CommandSpec::GitFetch);
         assert!(state.command_runner.command_queue.is_empty());
 
-        let _effects = update(&mut state, Action::CommandExited);
+        let _effects = update(&mut state, Action::CommandExited { task_id: crate::domain::task::TaskId(0), status: crate::domain::task::ExitStatus::Success });
 
         assert!(
             state.command_runner.running_command.is_none(),
@@ -548,7 +548,7 @@ mod command_queue {
         state.command_runner.command_queue.push_back(CommandSpec::YarnInstall);
         state.command_runner.command_queue.push_back(CommandSpec::YarnPodInstall);
 
-        let effects = update(&mut state, Action::CommandExited);
+        let effects = update(&mut state, Action::CommandExited { task_id: crate::domain::task::TaskId(0), status: crate::domain::task::ExitStatus::Success });
 
         assert_eq!(
             state.command_runner.running_command.as_ref(),

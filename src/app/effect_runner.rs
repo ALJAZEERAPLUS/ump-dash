@@ -159,16 +159,26 @@ impl EffectRunner {
 
             Effect::SpawnCommand { spec, cwd, branch } => {
                 use crate::domain::ports::command_runner_port::CommandEvent;
+                use crate::domain::task::{ExitStatus, TaskId};
                 // F-101 consumer (Plan 13-08): the CommandEvent → Action
                 // translation lives here — the canonical app-layer boundary.
                 let runner = self.adapters.command_runner.clone();
                 let mut rx = runner.spawn(spec, cwd, branch);
                 let tx = self.action_tx.clone();
+                // Phase 14 transitional: TaskId allocated here so the new payload shapes
+                // ship with valid IDs while the dispatch flip (Plan 14-06) is pending.
+                // After Plan 14-06 every dispatch path emits Effect::SpawnTask which
+                // carries its task_id from the call site (update()). The old
+                // Effect::SpawnCommand variant is removed in Plan 14-09.
+                let task_id = TaskId::next();
                 tokio::spawn(async move {
                     while let Some(ev) = rx.recv().await {
                         let action = match ev {
-                            CommandEvent::OutputLine(line) => Action::CommandOutputLine(line),
-                            CommandEvent::Exited(_status) => Action::CommandExited,
+                            CommandEvent::OutputLine(line) => Action::CommandOutputLine { task_id, line },
+                            CommandEvent::Exited(status) => Action::CommandExited {
+                                task_id,
+                                status: ExitStatus::from(status),
+                            },
                         };
                         if tx.send(action).is_err() {
                             break;
