@@ -259,6 +259,14 @@ pub struct AppState {
     pub modal_stack: ModalStackState,
     pub jira: JiraState,
     pub app_config: AppConfigState,
+
+    /// Phase 14 / D-16: per-worktree task slice map at AppState root.
+    /// Keyed by `WorktreeId`. Replaces (incrementally — Plan 14-09 finishes the
+    /// migration) the 4 global fields on `CommandRunnerState`.
+    pub worktrees: std::collections::HashMap<
+        crate::domain::worktree::WorktreeId,
+        crate::domain::worktree_slice::WorktreeSlice,
+    >,
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +313,64 @@ pub fn active_output_scroll(state: &AppState) -> usize {
                 .copied()
         })
         .unwrap_or(0)
+}
+
+/// Phase 14 / D-07: convenient lookup of the running task in a worktree's slice.
+/// Returns `None` if no slice exists for `id`, or if the slice has no current task.
+pub fn task_for_worktree<'a>(
+    state: &'a AppState,
+    id: &crate::domain::worktree::WorktreeId,
+) -> Option<&'a crate::domain::task::TaskRecord> {
+    state.worktrees.get(id).and_then(|s| s.task.as_ref())
+}
+
+/// Phase 14 / D-17: merge `loaded` worktrees into `state.worktrees`.
+///
+/// - Surviving ids: existing slice kept (preserves task + queue + output).
+/// - Removed ids: slice dropped; if it had a running task, `handle.abort()` is
+///   called explicitly (Phase 14 contract — `Box<dyn TaskHandle>::Drop` is
+///   not specified to abort; Phase 15 widens this).
+/// - New ids: default slice inserted with the worktree's id.
+///
+/// Q4 short-circuit (RESEARCH lines 752-755): when the loaded set equals the
+/// current set, the function does ONE HashSet build + ONE comparison and
+/// returns without iterating. Cost is O(n) HashSet build vs. O(n²) naive.
+pub fn merge_slices(
+    state: &mut AppState,
+    loaded: &[crate::domain::worktree::Worktree],
+) {
+    let loaded_ids: std::collections::HashSet<_> =
+        loaded.iter().map(|w| w.id.clone()).collect();
+    let current_ids: std::collections::HashSet<_> =
+        state.worktrees.keys().cloned().collect();
+    if loaded_ids == current_ids {
+        // Q4: identity refresh — no-op.
+        return;
+    }
+
+    // Drop slices for worktrees that disappeared.
+    state.worktrees.retain(|id, slice| {
+        if !loaded_ids.contains(id) {
+            // Phase 14 contract: explicit abort. Phase 15 widens to
+            // SIGTERM/SIGKILL via TaskHandle::abort.
+            if let Some(record) = slice.task.take() {
+                record.handle.abort();
+            }
+            false
+        } else {
+            true
+        }
+    });
+
+    // Insert default slices for new worktrees.
+    for wt in loaded {
+        state.worktrees
+            .entry(wt.id.clone())
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: wt.id.clone(),
+                ..Default::default()
+            });
+    }
 }
 
 #[cfg(test)]
