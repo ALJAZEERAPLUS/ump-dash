@@ -125,7 +125,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-05-PLAN.md — Action payload widening: CommandOutputLine{task_id,line} + CommandExited{task_id,status} (Q2 lock: dedicated channel, no TaskSpawned action)
 
   **Wave 5** *(blocked on Wave 4 completion)*
-  - [ ] 14-06-PLAN.md — SpawnTask runner arm + task_handle_tx channel + dispatch_command emits SpawnTask (D-10/Q1/Q2/Q3)
+  - [x] 14-06-PLAN.md — SpawnTask runner arm + task_handle_tx channel + dispatch_command emits SpawnTask (D-10/Q1/Q2/Q3)
 
   **Wave 6** *(blocked on Wave 5 completion)*
   - [ ] 14-07-PLAN.md — Drain migration: 10 Recipe::expand sites + CommandExited slice-local + CommandCancel + MetroActivityUpdate Ready (D-11/D-12/D-13/D-14)
