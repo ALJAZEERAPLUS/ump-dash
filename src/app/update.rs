@@ -309,6 +309,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             state.worktree_browser.worktrees = worktrees;
 
+            // Phase 14 / D-17: keep slice map in sync with the loaded worktree set.
+            // Surviving ids: slice + queue + task preserved.
+            // Removed ids: slice dropped; running task aborted explicitly.
+            // New ids: empty default slice inserted.
+            let loaded_for_merge: Vec<crate::domain::worktree::Worktree> =
+                state.worktree_browser.worktrees.clone();
+            crate::app::state::merge_slices(state, &loaded_for_merge);
+
             if !state.worktree_browser.worktrees.is_empty() {
                 // Re-derive selected index from selected_worktree_id (stable across sorts)
                 let selected_idx = state
