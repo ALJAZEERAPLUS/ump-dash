@@ -44,8 +44,21 @@ pub enum Action {
 
     // Phase 3: Command lifecycle
     CommandRun(crate::domain::command::CommandSpec), // dispatched when command is confirmed/ready
-    CommandOutputLine(String),  // line from command stdout/stderr
-    CommandExited,              // command process has finished
+    /// Phase 14 / D-08: routed by `task_id` (NOT by `active_worktree_id`).
+    /// Late stdout from a cancelled task lands here with no matching slice;
+    /// the handler in `update.rs` silently drops it. Protects against the fast
+    /// cancel+respawn race (RESEARCH §Pitfall P-3).
+    CommandOutputLine {
+        task_id: crate::domain::task::TaskId,
+        line: String,
+    },
+    /// Phase 14 / D-09: domain `ExitStatus` enum (NOT `std::process::ExitStatus`).
+    /// Phase 15 will emit `Cancelled` and `Killed`; today only `Success` and
+    /// `Failure { code }` flow.
+    CommandExited {
+        task_id: crate::domain::task::TaskId,
+        status: crate::domain::task::ExitStatus,
+    },
     CommandOutputClear,         // clear the output panel
     CommandCancel,              // abort running command
 
