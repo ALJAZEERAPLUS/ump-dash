@@ -115,7 +115,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-01-PLAN.md — Domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port (9th port; pure domain)
 
   **Wave 2** *(blocked on Wave 1 completion)*
-  - [ ] 14-02-PLAN.md — Infra adapter: TokioTaskHandle + From<std::process::ExitStatus>
+  - [x] 14-02-PLAN.md — Infra adapter: TokioTaskHandle + From<std::process::ExitStatus>
 
   **Wave 3** *(blocked on Wave 2; 14-03 + 14-04 run in parallel — disjoint files)*
   - [ ] 14-03-PLAN.md — AppState root field worktrees + task_for_worktree + merge_slices + WorktreesLoaded integration (D-16/D-17, Q4)
