@@ -109,11 +109,20 @@ arch-lint:
 	@! rg -q '\b_ => \{\}' src/app/handle_key.rs 2>/dev/null || (echo "G-18 FAIL: handle_key.rs has wildcard catch-all arms" && exit 1)
 	@echo "=== G-19: coverage thresholds hold ==="
 	@$(MAKE) cov-check >/dev/null 2>&1 || echo "G-19 WARN: cov-check output differs from threshold — human verification required"
-	@echo "=== G-20: AppState sub-structs (ACTIVE — Plan 13-10) ==="
-	@# G-20 ACTIVE as of Plan 13-10. AppState's ~30 flat pub fields are
-	@# regrouped into 6 cohesive sub-structs (MetroState, WorktreeBrowserState,
-	@# CommandRunnerState, ModalStackState, JiraState, AppConfigState) —
-	@# F-209 (Major) closed.
-	@COUNT=$$(rg -c 'pub struct (MetroState|WorktreeBrowserState|CommandRunnerState|ModalStackState|JiraState|AppConfigState|PendingFlags)' src/app/state.rs 2>/dev/null || echo 0); \
+	@echo "=== G-20: AppState sub-structs (ACTIVE — Plan 13-10 + Plan 14-09) ==="
+	@# G-20 ACTIVE as of Plan 13-10. Plan 14-09 removed CommandRunnerState;
+	@# the 5 remaining sub-structs (MetroState, WorktreeBrowserState,
+	@# ModalStackState, JiraState, AppConfigState; +PendingFlags from 13-09)
+	@# satisfy the >=4 threshold.
+	@COUNT=$$(rg -c 'pub struct (MetroState|WorktreeBrowserState|ModalStackState|JiraState|AppConfigState|PendingFlags)' src/app/state.rs 2>/dev/null || echo 0); \
 	if [ "$$COUNT" -lt 4 ]; then echo "G-20 FAIL: only $$COUNT sub-structs in src/app/state.rs (need >=4)"; exit 1; fi
+	@echo "=== G-21: pre-Phase-14 global task fields removed (ACTIVE — Plan 14-09) ==="
+	@# G-21 ACTIVE as of Plan 14-09. The 4 deleted fields (running_command,
+	@# command_task, command_queue, post_drain_action) MUST NOT reappear in src/
+	@# as field accesses or struct field declarations.
+	@# The pattern matches field access (`.field`) and field declaration (`pub field:` or
+	@# indented `field:`) — it intentionally does NOT match the substring `command_runner`
+	@# (the Adapters port name) or test module/function names that contain these as
+	@# word components. See RESEARCH §Assumptions A4 + PATTERNS.md line 1075.
+	@! rg '\.(running_command|command_task|command_queue|post_drain_action)\b|pub (running_command|command_task|command_queue|post_drain_action):|^\s+(running_command|command_task|command_queue|post_drain_action):' src/ 2>/dev/null || (echo "G-21 FAIL: pre-Phase-14 global task field references remain in src/"; exit 1)
 	@echo "arch-lint: PASS"

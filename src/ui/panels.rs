@@ -203,20 +203,27 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
         theme::style_inactive_border()
     };
 
-    // Title shows running command name, [running] indicator, and queue count
-    let title = match &state.command_runner.running_command {
-        Some(spec) => {
-            let queue_count = state.command_runner.command_queue.len();
-            if queue_count > 0 {
-                format!(" Output — {} [running] (+{} queued) ", spec.label(), queue_count)
+    // Title shows running command name, [running] indicator, and queue count.
+    // Plan 14-09: reads from slice via task_for_worktree + slice queue length.
+    let active_id = crate::app::state::active_worktree_id(state);
+    let active_task = active_id.as_ref()
+        .and_then(|id| crate::app::state::task_for_worktree(state, id));
+    let active_queue_count = active_id.as_ref()
+        .and_then(|id| state.worktrees.get(id))
+        .map(|s| s.queue.len())
+        .unwrap_or(0);
+
+    let title = match active_task {
+        Some(record) => {
+            if active_queue_count > 0 {
+                format!(" Output — {} [running] (+{} queued) ", record.spec.label(), active_queue_count)
             } else {
-                format!(" Output — {} [running] ", spec.label())
+                format!(" Output — {} [running] ", record.spec.label())
             }
         }
         None => {
-            let queue_count = state.command_runner.command_queue.len();
-            if queue_count > 0 {
-                format!(" Output ({queue_count} queued) ")
+            if active_queue_count > 0 {
+                format!(" Output ({active_queue_count} queued) ")
             } else {
                 " Output ".to_string()
             }

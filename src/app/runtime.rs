@@ -68,8 +68,10 @@ pub async fn run(
                 // Periodic tick: triggers redraw for time-based UI updates
             }
             _ = refresh_interval.tick() => {
-                // 60-second periodic refresh: keeps worktrees, staleness, labels, and JIRA titles current
-                if state.command_runner.running_command.is_none() {
+                // 60-second periodic refresh: keeps worktrees, staleness, labels, and JIRA titles current.
+                // Plan 14-09: gate walks slices — skip refresh only if any worktree has a running task.
+                let any_running = state.worktrees.values().any(|s| s.task.is_some());
+                if !any_running {
                     let effects = update(&mut state, Action::RefreshWorktrees);
                     runner.run_effects(effects).await;
                 }
@@ -150,8 +152,11 @@ pub async fn run(
         // the adapter. Ignoring the result: shutdown is best-effort.
         let _ = handle.kill();
     }
-    if let Some(task) = state.command_runner.command_task.take() {
-        task.abort();
+    // Plan 14-09: abort all per-worktree tasks on shutdown.
+    for slice in state.worktrees.values_mut() {
+        if let Some(record) = slice.task.take() {
+            record.handle.abort();
+        }
     }
 
     Ok(())

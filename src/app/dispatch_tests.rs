@@ -638,11 +638,6 @@ mod command_queue {
         // which emits Effect::SpawnTask.
         state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnInstall);
         state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnPodInstall);
-        // Keep legacy state in sync for the transitional dual-write path.
-        state.command_runner.running_command = Some(CommandSpec::GitFetch);
-        state.command_runner.command_queue.push_back(CommandSpec::YarnInstall);
-        state.command_runner.command_queue.push_back(CommandSpec::YarnPodInstall);
-
         let effects = update(&mut state, Action::CommandExited {
             task_id: crate::domain::task::TaskId(2),
             status: crate::domain::task::ExitStatus::Success,

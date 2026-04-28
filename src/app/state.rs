@@ -1,11 +1,14 @@
 //! AppState — the single source of truth for the TUI.
 //!
 //! Plan 13-10 (F-209) regrouped AppState's ~30 pub fields into 6 sub-structs
-//! by domain concern: MetroState, WorktreeBrowserState, CommandRunnerState,
-//! ModalStackState, JiraState, AppConfigState. The 4 cross-cutting fields
+//! by domain concern: MetroState, WorktreeBrowserState, ModalStackState,
+//! JiraState, AppConfigState. The 4 cross-cutting fields
 //! (focused_panel, show_help, error_state, should_quit) and the MetroManager
 //! itself stay at the root — MetroManager keeps its `state.metro.is_running()`
 //! call site clear (avoiding a `state.metro_state.metro.is_running()` clash).
+//!
+//! Plan 14-09: `CommandRunnerState` struct deleted — all 5 of its fields have
+//! been migrated to per-worktree `WorktreeSlice` entries in `state.worktrees`.
 //!
 //! See AUDIT.md F-209 (lines 545-576) and 13-PATTERNS.md:741-793 for the
 //! design rationale.
@@ -107,33 +110,6 @@ impl Default for WorktreeBrowserState {
     }
 }
 
-/// Command execution state — FIFO queue + per-worktree output + handle.
-#[derive(Debug, Default)]
-pub struct CommandRunnerState {
-    /// Command queue — FIFO, drained on CommandExited.
-    pub command_queue: std::collections::VecDeque<crate::domain::command::CommandSpec>,
-
-    /// Per-worktree output persistence.
-    pub command_output_by_worktree: std::collections::HashMap<
-        crate::domain::worktree::WorktreeId,
-        std::collections::VecDeque<String>,
-    >,
-    pub command_output_scroll_by_worktree:
-        std::collections::HashMap<crate::domain::worktree::WorktreeId, usize>,
-
-    /// Currently running command and its task handle.
-    pub running_command: Option<crate::domain::command::CommandSpec>,
-    pub command_task: Option<tokio::task::JoinHandle<()>>,
-
-    /// Plan 13-09: post-queue-drain Action slot. Generalizes the older
-    /// sync-then-metro coordination bool — the sync-then-metro flow stores
-    /// `Some(Action::MetroStart)` here; arbitrary future post-drain actions
-    /// can reuse the same mechanism without growing AppState.
-    ///
-    /// Consumed in CommandExited's empty-queue branch. Cleared in CommandCancel
-    /// and MetroSpawnFailed.
-    pub post_drain_action: Option<Box<crate::domain::action::Action>>,
-}
 
 /// Modal + palette + pending coordinator state. Single bag for one-modal-at-a-time
 /// dispatch and the various pending_* fields that survive between palette → modal
@@ -239,7 +215,8 @@ impl Default for AppConfigState {
 /// Application state — the single source of truth. All mutations happen in update().
 ///
 /// Plan 13-10 (F-209): regrouped from ~30 flat pub fields into 4 cross-cutting
-/// roots + MetroManager + 6 domain sub-structs.
+/// roots + MetroManager + 5 domain sub-structs (Plan 14-09 removed
+/// `CommandRunnerState`; its fields migrated to per-worktree `WorktreeSlice`).
 #[derive(Debug, Default)]
 pub struct AppState {
     // --- Cross-cutting / top-level UI concerns ---
@@ -255,7 +232,6 @@ pub struct AppState {
     // --- Domain sub-structs ---
     pub metro_state: MetroState,
     pub worktree_browser: WorktreeBrowserState,
-    pub command_runner: CommandRunnerState,
     pub modal_stack: ModalStackState,
     pub jira: JiraState,
     pub app_config: AppConfigState,
@@ -288,30 +264,24 @@ pub fn active_worktree_id(state: &AppState) -> Option<crate::domain::worktree::W
 }
 
 /// Returns a reference to the active worktree's command output deque (empty if none selected).
+///
+/// Plan 14-09: reads from `state.worktrees` slice (was `CommandRunnerState.command_output_by_worktree`).
 pub fn active_output(state: &AppState) -> &std::collections::VecDeque<String> {
     static EMPTY: std::sync::LazyLock<std::collections::VecDeque<String>> =
         std::sync::LazyLock::new(std::collections::VecDeque::new);
     if let Some(id) = active_worktree_id(state) {
-        state
-            .command_runner
-            .command_output_by_worktree
-            .get(&id)
-            .unwrap_or(&EMPTY)
+        state.worktrees.get(&id).map(|s| &s.output).unwrap_or(&EMPTY)
     } else {
         &EMPTY
     }
 }
 
 /// Returns the scroll offset for the active worktree's command output (0 if none selected).
+///
+/// Plan 14-09: reads from `state.worktrees` slice (was `CommandRunnerState.command_output_scroll_by_worktree`).
 pub fn active_output_scroll(state: &AppState) -> usize {
     active_worktree_id(state)
-        .and_then(|id| {
-            state
-                .command_runner
-                .command_output_scroll_by_worktree
-                .get(&id)
-                .copied()
-        })
+        .and_then(|id| state.worktrees.get(&id).map(|s| s.output_scroll))
         .unwrap_or(0)
 }
 
