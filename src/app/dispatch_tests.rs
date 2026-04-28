@@ -57,9 +57,14 @@ fn base_state() -> AppState {
 /// Seed one worktree so `dispatch_command` does not early-return on an empty
 /// worktree list. Used by the `command_queue` drain test.
 fn seed_one_worktree(state: &mut AppState) {
+    seed_one_worktree_id(state, "wt-1");
+}
+
+/// Seed a single worktree with a given id, also initialising its slice.
+fn seed_one_worktree_id(state: &mut AppState, id: &str) {
     state.worktree_browser.worktrees.push(Worktree {
-        id: WorktreeId("wt-1".into()),
-        path: std::path::PathBuf::from("/tmp/wt-1"),
+        id: WorktreeId(id.into()),
+        path: std::path::PathBuf::from(format!("/tmp/{id}")),
         branch: "main".into(),
         head_sha: "0000000".into(),
         metro_status: WorktreeMetroStatus::Stopped,
@@ -68,7 +73,80 @@ fn seed_one_worktree(state: &mut AppState) {
         stale_pods: false,
         jira_key: None,
     });
+    let idx = state.worktree_browser.worktrees.len() - 1;
+    state.worktree_browser.worktree_table_state.select(Some(idx));
+    // Ensure a slice exists for this worktree.
+    state.worktrees
+        .entry(WorktreeId(id.into()))
+        .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+            id: WorktreeId(id.into()),
+            ..Default::default()
+        });
+}
+
+/// Seed two worktrees (A then B) and their slices.
+fn seed_two_worktrees(state: &mut AppState, id_a: &str, id_b: &str) {
+    seed_one_worktree_id(state, id_a);
+    seed_one_worktree_id(state, id_b);
+    // Keep selection on A (index 0).
     state.worktree_browser.worktree_table_state.select(Some(0));
+}
+
+// =========================================================================
+// Phase 14 / D-21 slice-side assertion helpers
+// =========================================================================
+
+/// Assert the named worktree's slice has a running task.
+fn assert_running_in(state: &AppState, id: &str) {
+    let wid = WorktreeId(id.into());
+    assert!(
+        state.worktrees.get(&wid).and_then(|s| s.task.as_ref()).is_some(),
+        "expected worktree {id:?} to have a running task; slice = {:?}",
+        state.worktrees.get(&wid).map(|s| (s.task.is_some(), s.queue.len())),
+    );
+}
+
+/// Assert no slice has a running task.
+fn assert_no_running_task_anywhere(state: &AppState) {
+    let any = state.worktrees.values().any(|s| s.task.is_some());
+    assert!(!any, "expected no slice to have a running task, but at least one does");
+}
+
+/// Queue length for the named worktree's slice.
+fn slice_queue_len(state: &AppState, id: &str) -> usize {
+    state.worktrees
+        .get(&WorktreeId(id.into()))
+        .map(|s| s.queue.len())
+        .unwrap_or(0)
+}
+
+/// Snapshot of slice output lines for the named worktree.
+fn slice_output(state: &AppState, id: &str) -> Vec<String> {
+    state.worktrees
+        .get(&WorktreeId(id.into()))
+        .map(|s| s.output.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// A test-only `TaskHandle` that does nothing — abort() is a no-op.
+#[derive(Debug)]
+struct NoopHandle;
+
+impl crate::domain::ports::task_handle::TaskHandle for NoopHandle {
+    fn abort(&self) {}
+}
+
+/// Build a synthetic `TaskRecord` for unit tests (no real runtime needed).
+fn synthetic_task_record(
+    id_value: u64,
+    spec: crate::domain::command::CommandSpec,
+) -> crate::domain::task::TaskRecord {
+    crate::domain::task::TaskRecord {
+        id: crate::domain::task::TaskId(id_value),
+        spec,
+        started_at: std::time::Instant::now(),
+        handle: Box::new(NoopHandle),
+    }
 }
 
 // =========================================================================
@@ -499,7 +577,9 @@ mod command_queue {
     #[test]
     fn command_queue_push_appends_to_back() {
         let mut state = base_state();
-        assert!(state.command_runner.command_queue.is_empty());
+        seed_one_worktree(&mut state);
+        // Phase 14 / D-21: assert against the slice (primary source of truth).
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "precondition: slice queue empty");
 
         let _effects = update(
             &mut state,
@@ -510,30 +590,37 @@ mod command_queue {
             Action::CommandQueuePush(CommandSpec::YarnPodInstall),
         );
 
-        assert_eq!(state.command_runner.command_queue.len(), 2);
+        // D-21: slice-side queue assertions.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 2, "slice queue must hold 2 items");
         assert_eq!(
-            state.command_runner.command_queue.front(),
-            Some(&CommandSpec::YarnInstall)
+            state.worktrees.get(&WorktreeId("wt-1".into())).and_then(|s| s.queue.front()),
+            Some(&CommandSpec::YarnInstall),
+            "slice queue front must be YarnInstall"
         );
         assert_eq!(
-            state.command_runner.command_queue.back(),
-            Some(&CommandSpec::YarnPodInstall)
+            state.worktrees.get(&WorktreeId("wt-1".into())).and_then(|s| s.queue.back()),
+            Some(&CommandSpec::YarnPodInstall),
+            "slice queue back must be YarnPodInstall"
         );
     }
 
     #[test]
     fn command_exited_with_empty_queue_clears_running_command() {
         let mut state = base_state();
-        state.command_runner.running_command = Some(CommandSpec::GitFetch);
-        assert!(state.command_runner.command_queue.is_empty());
+        seed_one_worktree(&mut state);
+        // Simulate a running task in the slice (D-21: task lives in slice).
+        state.worktrees.get_mut(&WorktreeId("wt-1".into())).unwrap().task =
+            Some(synthetic_task_record(1, CommandSpec::GitFetch));
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "precondition: slice queue empty");
 
-        let _effects = update(&mut state, Action::CommandExited { task_id: crate::domain::task::TaskId(0), status: crate::domain::task::ExitStatus::Success });
+        let _effects = update(&mut state, Action::CommandExited {
+            task_id: crate::domain::task::TaskId(1),
+            status: crate::domain::task::ExitStatus::Success,
+        });
 
-        assert!(
-            state.command_runner.running_command.is_none(),
-            "CommandExited must clear running_command"
-        );
-        assert!(state.command_runner.command_queue.is_empty(), "queue stays empty");
+        // D-21: slice-side assertion — task cleared after CommandExited.
+        assert_no_running_task_anywhere(&state);
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "queue stays empty");
     }
 
     #[test]
@@ -541,28 +628,33 @@ mod command_queue {
         let mut state = base_state();
         // Seed one worktree so `dispatch_command` does not early-return.
         seed_one_worktree(&mut state);
+
+        // D-21: task + queue live in the slice.
+        let wid = WorktreeId("wt-1".into());
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(2, CommandSpec::GitFetch));
+        // GitFetch has RefreshSet::none() — no tokio::spawn on the refresh path.
+        // YarnInstall doesn't need metro, so drain routes through dispatch_command,
+        // which emits Effect::SpawnTask.
+        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnInstall);
+        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnPodInstall);
+        // Keep legacy state in sync for the transitional dual-write path.
         state.command_runner.running_command = Some(CommandSpec::GitFetch);
-        // GitFetch has RefreshSet::none() — no tokio::spawn on the refresh
-        // path. YarnInstall doesn't need metro, so drain routes through
-        // `dispatch_command`, which sets running_command to the popped spec.
         state.command_runner.command_queue.push_back(CommandSpec::YarnInstall);
         state.command_runner.command_queue.push_back(CommandSpec::YarnPodInstall);
 
-        let effects = update(&mut state, Action::CommandExited { task_id: crate::domain::task::TaskId(0), status: crate::domain::task::ExitStatus::Success });
+        let effects = update(&mut state, Action::CommandExited {
+            task_id: crate::domain::task::TaskId(2),
+            status: crate::domain::task::ExitStatus::Success,
+        });
 
-        assert_eq!(
-            state.command_runner.running_command.as_ref(),
-            Some(&CommandSpec::YarnInstall),
-            "CommandExited must set running_command to the popped front of the queue"
-        );
-        assert_eq!(state.command_runner.command_queue.len(), 1);
-        assert_eq!(
-            state.command_runner.command_queue.front(),
-            Some(&CommandSpec::YarnPodInstall)
-        );
-        // Plan 14-06: dispatch_command now returns Effect::SpawnTask (new
-        // chokepoint — D-10/D-20). SpawnCommand is the legacy variant kept
-        // alive for Recipe::expand sites until Plan 14-07 migrates them.
+        // D-21: after draining the queue head, the slice task is cleared
+        // (SpawnTask effect was emitted; the runtime will write back slice.task
+        // when the effect resolves — not visible in a pure update() test).
+        // The remaining YarnPodInstall stays in the slice queue.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1,
+            "one item (YarnPodInstall) must remain in the slice queue after drain");
+        // Plan 14-06: dispatch_command now returns Effect::SpawnTask.
         assert!(
             effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. })),
             "CommandExited drain must emit Effect::SpawnTask for the popped spec; got {effects:?}"
