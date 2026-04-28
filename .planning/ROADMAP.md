@@ -134,7 +134,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-08-PLAN.md — Test rewrite: D-21 17 dispatch tests + 5 new parallelism / routing / stale-drop tests
 
   **Wave 8** *(blocked on Wave 7 — atomic delete-and-guard, MUST land in a single plan per CONTEXT.md §specifics)*
-  - [ ] 14-09-PLAN.md — Atomic deletion: CommandRunnerState + 4 fields + SpawnCommand + helper flips + G-21 grep guard
+  - [x] 14-09-PLAN.md — Atomic deletion: CommandRunnerState + 4 fields + SpawnCommand + helper flips + G-21 grep guard
 
 **Cross-cutting constraints** *(must hold across all 9 plans)*:
   - All 79+ existing tests stay green throughout the migration (Plans 14-03..14-08 keep legacy globals alive in parallel; 14-09 is the only plan that deletes)
