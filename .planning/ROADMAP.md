@@ -131,7 +131,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-07-PLAN.md — Drain migration: 10 Recipe::expand sites + CommandExited slice-local + CommandCancel + MetroActivityUpdate Ready (D-11/D-12/D-13/D-14)
 
   **Wave 7** *(blocked on Wave 6 completion)*
-  - [ ] 14-08-PLAN.md — Test rewrite: D-21 17 dispatch tests + 5 new parallelism / routing / stale-drop tests
+  - [x] 14-08-PLAN.md — Test rewrite: D-21 17 dispatch tests + 5 new parallelism / routing / stale-drop tests
 
   **Wave 8** *(blocked on Wave 7 — atomic delete-and-guard, MUST land in a single plan per CONTEXT.md §specifics)*
   - [ ] 14-09-PLAN.md — Atomic deletion: CommandRunnerState + 4 fields + SpawnCommand + helper flips + G-21 grep guard
