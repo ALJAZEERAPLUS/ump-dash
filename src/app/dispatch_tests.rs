@@ -568,3 +568,37 @@ mod command_queue {
         );
     }
 }
+
+// =========================================================================
+// Sub-module 4: WorktreesLoaded — slice map population (Plan 14-03)
+// =========================================================================
+
+mod worktrees_loaded {
+    use super::*;
+
+    fn make_worktree(id: &str, branch: &str) -> Worktree {
+        Worktree {
+            id: WorktreeId(id.into()),
+            path: std::path::PathBuf::from(format!("/tmp/{id}")),
+            branch: branch.into(),
+            head_sha: "0000000".into(),
+            metro_status: WorktreeMetroStatus::Stopped,
+            jira_title: None,
+            stale: false,
+            stale_pods: false,
+            jira_key: None,
+        }
+    }
+
+    #[test]
+    fn worktrees_loaded_populates_slice_map() {
+        let mut state = AppState::default();
+        let worktrees = vec![
+            make_worktree("wt-A", "main"),
+            make_worktree("wt-B", "feat"),
+        ];
+        let _ = update(&mut state, Action::WorktreesLoaded(worktrees));
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-A".into())));
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-B".into())));
+    }
+}

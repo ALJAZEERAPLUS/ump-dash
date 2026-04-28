@@ -259,6 +259,14 @@ pub struct AppState {
     pub modal_stack: ModalStackState,
     pub jira: JiraState,
     pub app_config: AppConfigState,
+
+    /// Phase 14 / D-16: per-worktree task slice map at AppState root.
+    /// Keyed by `WorktreeId`. Replaces (incrementally — Plan 14-09 finishes the
+    /// migration) the 4 global fields on `CommandRunnerState`.
+    pub worktrees: std::collections::HashMap<
+        crate::domain::worktree::WorktreeId,
+        crate::domain::worktree_slice::WorktreeSlice,
+    >,
 }
 
 // ---------------------------------------------------------------------------
@@ -305,4 +313,146 @@ pub fn active_output_scroll(state: &AppState) -> usize {
                 .copied()
         })
         .unwrap_or(0)
+}
+
+/// Phase 14 / D-07: convenient lookup of the running task in a worktree's slice.
+/// Returns `None` if no slice exists for `id`, or if the slice has no current task.
+pub fn task_for_worktree<'a>(
+    state: &'a AppState,
+    id: &crate::domain::worktree::WorktreeId,
+) -> Option<&'a crate::domain::task::TaskRecord> {
+    state.worktrees.get(id).and_then(|s| s.task.as_ref())
+}
+
+/// Phase 14 / D-17: merge `loaded` worktrees into `state.worktrees`.
+///
+/// - Surviving ids: existing slice kept (preserves task + queue + output).
+/// - Removed ids: slice dropped; if it had a running task, `handle.abort()` is
+///   called explicitly (Phase 14 contract — `Box<dyn TaskHandle>::Drop` is
+///   not specified to abort; Phase 15 widens this).
+/// - New ids: default slice inserted with the worktree's id.
+///
+/// Q4 short-circuit (RESEARCH lines 752-755): when the loaded set equals the
+/// current set, the function does ONE HashSet build + ONE comparison and
+/// returns without iterating. Cost is O(n) HashSet build vs. O(n²) naive.
+pub fn merge_slices(
+    state: &mut AppState,
+    loaded: &[crate::domain::worktree::Worktree],
+) {
+    let loaded_ids: std::collections::HashSet<_> =
+        loaded.iter().map(|w| w.id.clone()).collect();
+    let current_ids: std::collections::HashSet<_> =
+        state.worktrees.keys().cloned().collect();
+    if loaded_ids == current_ids {
+        // Q4: identity refresh — no-op.
+        return;
+    }
+
+    // Drop slices for worktrees that disappeared.
+    state.worktrees.retain(|id, slice| {
+        if !loaded_ids.contains(id) {
+            // Phase 14 contract: explicit abort. Phase 15 widens to
+            // SIGTERM/SIGKILL via TaskHandle::abort.
+            if let Some(record) = slice.task.take() {
+                record.handle.abort();
+            }
+            false
+        } else {
+            true
+        }
+    });
+
+    // Insert default slices for new worktrees.
+    for wt in loaded {
+        state.worktrees
+            .entry(wt.id.clone())
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: wt.id.clone(),
+                ..Default::default()
+            });
+    }
+}
+
+#[cfg(test)]
+mod merge_slices_tests {
+    use super::*;
+    use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
+    use crate::domain::worktree_slice::WorktreeSlice;
+    use std::path::PathBuf;
+
+    fn wt(id: &str) -> Worktree {
+        Worktree {
+            id: WorktreeId(id.into()),
+            path: PathBuf::from(format!("/tmp/{id}")),
+            branch: "main".into(),
+            head_sha: "0000000".into(),
+            metro_status: WorktreeMetroStatus::Stopped,
+            jira_title: None,
+            stale: false,
+            stale_pods: false,
+            jira_key: None,
+        }
+    }
+
+    #[test]
+    fn merge_inserts_default_slices_for_new_worktrees() {
+        let mut state = AppState::default();
+        let loaded = vec![wt("wt-1"), wt("wt-2")];
+        merge_slices(&mut state, &loaded);
+        assert_eq!(state.worktrees.len(), 2);
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-1".into())));
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-2".into())));
+    }
+
+    #[test]
+    fn merge_preserves_surviving_slice_state() {
+        let mut state = AppState::default();
+        // Seed slice with a queued command.
+        state.worktrees.insert(
+            WorktreeId("wt-1".into()),
+            WorktreeSlice {
+                id: WorktreeId("wt-1".into()),
+                queue: {
+                    let mut q = std::collections::VecDeque::new();
+                    q.push_back(crate::domain::command::CommandSpec::YarnInstall);
+                    q
+                },
+                ..Default::default()
+            },
+        );
+        // Refresh with the same id present.
+        merge_slices(&mut state, &[wt("wt-1")]);
+        let slice = state.worktrees.get(&WorktreeId("wt-1".into())).unwrap();
+        assert_eq!(slice.queue.len(), 1);
+    }
+
+    #[test]
+    fn merge_drops_slice_for_removed_worktree() {
+        let mut state = AppState::default();
+        state.worktrees.insert(
+            WorktreeId("wt-gone".into()),
+            WorktreeSlice {
+                id: WorktreeId("wt-gone".into()),
+                ..Default::default()
+            },
+        );
+        merge_slices(&mut state, &[wt("wt-survivor")]);
+        assert!(!state.worktrees.contains_key(&WorktreeId("wt-gone".into())));
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-survivor".into())));
+    }
+
+    #[test]
+    fn merge_short_circuits_when_loaded_set_equals_current_set() {
+        // Q4: when the id sets match, surviving slice state stays untouched
+        // even if internal state is structurally suspicious.
+        let mut state = AppState::default();
+        let mut q = std::collections::VecDeque::new();
+        q.push_back(crate::domain::command::CommandSpec::YarnInstall);
+        state.worktrees.insert(
+            WorktreeId("wt-1".into()),
+            WorktreeSlice { id: WorktreeId("wt-1".into()), queue: q, ..Default::default() },
+        );
+        merge_slices(&mut state, &[wt("wt-1")]);
+        assert_eq!(state.worktrees.get(&WorktreeId("wt-1".into())).unwrap().queue.len(), 1);
+    }
 }
