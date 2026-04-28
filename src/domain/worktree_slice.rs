@@ -9,6 +9,7 @@
 //!   - `command_task: Option<JoinHandle<()>>`     -> inside `task.handle: Box<dyn TaskHandle>`
 //!   - `command_queue: VecDeque<CommandSpec>`     -> `queue: VecDeque<CommandSpec>`
 //!   - `post_drain_action: Option<Box<Action>>`   -> `post_drain: Option<Box<Action>>`
+//!
 //! Plus the two output map entries (`command_output_by_worktree`,
 //! `command_output_scroll_by_worktree`) move to per-slice `output` + `output_scroll`.
 

@@ -21,5 +21,6 @@ pub mod jira;
 pub mod jira_cache;
 pub mod multiplexer;
 pub mod sim_history;
+pub mod task_handle;
 pub mod android_prefs;
 pub mod metro;
