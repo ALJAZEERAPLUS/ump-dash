@@ -54,6 +54,20 @@ pub struct EffectRunner {
     pub adapters: Adapters,
     pub action_tx: UnboundedSender<Action>,
     pub handle_tx: UnboundedSender<Box<dyn MetroHandle>>,
+    /// Phase 14 / D-06 + Q2 + Q3 lock: dedicated channel for delivering
+    /// freshly-spawned `TaskRecord`s to the main-thread receiver in
+    /// `runtime.rs`. Mirrors `handle_tx` for `Box<dyn MetroHandle>` because
+    /// neither `TaskRecord` (carries `Box<dyn TaskHandle>`) nor
+    /// `Box<dyn MetroHandle>` are `Clone + PartialEq` — incompatible with the
+    /// `Action` enum's derives.
+    ///
+    /// Single ownership: the `TaskRecord` (and its `handle: Box<dyn TaskHandle>`)
+    /// lives in `slice.task` after delivery. EffectRunner does NOT keep a
+    /// JoinHandle map — Phase 15's CommandCancel reads `slice.task.take().handle`.
+    pub task_handle_tx: UnboundedSender<(
+        crate::domain::worktree::WorktreeId,
+        crate::domain::task::TaskRecord,
+    )>,
 }
 
 impl EffectRunner {
@@ -61,11 +75,16 @@ impl EffectRunner {
         adapters: Adapters,
         action_tx: UnboundedSender<Action>,
         handle_tx: UnboundedSender<Box<dyn MetroHandle>>,
+        task_handle_tx: UnboundedSender<(
+            crate::domain::worktree::WorktreeId,
+            crate::domain::task::TaskRecord,
+        )>,
     ) -> Self {
         Self {
             adapters,
             action_tx,
             handle_tx,
+            task_handle_tx,
         }
     }
 
@@ -344,11 +363,42 @@ impl EffectRunner {
                 });
             }
 
-            // Plan 14-04 stub — Plan 14-06 implements run_spawn_task(). Until
-            // then we need this arm to satisfy exhaustiveness; unimplemented!()
-            // is intentional: no caller emits SpawnTask before Plan 14-07.
-            Effect::SpawnTask { .. } => {
-                unimplemented!("Effect::SpawnTask runner not yet implemented — Plan 14-06");
+            // Plan 14-06: per-task spawn chokepoint (D-10, D-20, Q1, Q2, Q3).
+            Effect::SpawnTask { task_id, worktree_id, spec, cwd, branch } => {
+                use crate::domain::ports::command_runner_port::CommandEvent;
+                use crate::domain::task::{ExitStatus, TaskRecord};
+                let runner = self.adapters.command_runner.clone();
+                // D-06: started_at captured at the runner's spawn moment, NOT in update().
+                let started_at = std::time::Instant::now();
+                let mut rx = runner.spawn(spec.clone(), cwd, branch);
+                let tx = self.action_tx.clone();
+                // D-10: per-task closure capture. TaskId is Copy; async move captures it
+                // so concurrent spawns interleave correctly (RESEARCH P-2).
+                let join_handle = tokio::spawn(async move {
+                    while let Some(ev) = rx.recv().await {
+                        let action = match ev {
+                            CommandEvent::OutputLine(line) => {
+                                Action::CommandOutputLine { task_id, line }
+                            }
+                            CommandEvent::Exited(status) => Action::CommandExited {
+                                task_id,
+                                status: ExitStatus::from(status),
+                            },
+                        };
+                        if tx.send(action).is_err() {
+                            break;
+                        }
+                    }
+                });
+                // Q2 + Q3 lock: deliver TaskRecord via dedicated channel; main thread
+                // writes it into slice.task. Single ownership — no JoinHandle map here.
+                let record = TaskRecord {
+                    id: task_id,
+                    spec,
+                    started_at,
+                    handle: Box::new(crate::infra::task_handle::TokioTaskHandle(join_handle)),
+                };
+                let _ = self.task_handle_tx.send((worktree_id, record));
             }
         }
     }
