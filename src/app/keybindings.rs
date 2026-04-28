@@ -971,7 +971,7 @@ fn metro_running(state: &AppState) -> bool {
 }
 
 fn command_running(state: &AppState) -> bool {
-    state.command_runner.running_command.is_some()
+    state.worktrees.values().any(|s| s.task.is_some())
 }
 
 // ---------------------------------------------------------------------------
