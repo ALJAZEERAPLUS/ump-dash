@@ -120,6 +120,13 @@ None — all 6 fields are properly typed and connected to real domain types. No 
 
 None — these are pure in-process domain data types with no I/O surface, no network endpoints, no auth paths. T-14-01 through T-14-04 from the plan's threat model are accepted (no mitigations required for this plan).
 
-## Self-Check
+## Self-Check: PASSED
 
-Checking files exist and commits are present.
+- FOUND: src/domain/ports/task_handle.rs
+- FOUND: src/domain/task.rs
+- FOUND: src/domain/worktree_slice.rs
+- FOUND: .planning/phases/14-per-worktree-task-system-foundation/14-01-SUMMARY.md
+- FOUND commit 85b4274 (feat: TaskHandle port)
+- FOUND commit d08392c (feat: task.rs types)
+- FOUND commit a9b1ba8 (feat: WorktreeSlice + WorktreeId Default)
+- FOUND commit 6646454 (docs: SUMMARY.md)
