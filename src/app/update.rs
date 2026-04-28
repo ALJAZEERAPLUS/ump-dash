@@ -101,21 +101,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::FocusPrev => state.focused_panel = state.focused_panel.prev(),
         Action::FocusUp => {
             if state.focused_panel == FocusedPanel::CommandOutput
-                && let Some(id) = active_worktree_id(state) {
-                    if let Some(slice) = state.worktrees.get_mut(&id) {
-                        slice.output_scroll = slice.output_scroll.saturating_sub(1);
-                    }
+                && let Some(id) = active_worktree_id(state)
+                && let Some(slice) = state.worktrees.get_mut(&id) {
+                    slice.output_scroll = slice.output_scroll.saturating_sub(1);
                 }
         }
         Action::FocusDown => {
             if state.focused_panel == FocusedPanel::CommandOutput {
                 let max = active_output(state).len();
-                if let Some(id) = active_worktree_id(state) {
-                    if let Some(slice) = state.worktrees.get_mut(&id) {
-                        if slice.output_scroll < max {
-                            slice.output_scroll += 1;
-                        }
-                    }
+                if let Some(id) = active_worktree_id(state)
+                    && let Some(slice) = state.worktrees.get_mut(&id)
+                    && slice.output_scroll < max {
+                        slice.output_scroll += 1;
                 }
             }
         }
@@ -666,11 +663,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::CommandOutputClear => {
-            if let Some(id) = active_worktree_id(state) {
-                if let Some(slice) = state.worktrees.get_mut(&id) {
+            if let Some(id) = active_worktree_id(state)
+                && let Some(slice) = state.worktrees.get_mut(&id) {
                     slice.output.clear();
                     slice.output_scroll = 0;
-                }
             }
         }
 
@@ -1030,13 +1026,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(spec) = state.modal_stack.pending_device_command.take() {
                 match devices.len() {
                     0 => {
-                        if let Some(id) = active_worktree_id(state) {
-                            if let Some(slice) = state.worktrees.get_mut(&id) {
+                        if let Some(id) = active_worktree_id(state)
+                            && let Some(slice) = state.worktrees.get_mut(&id) {
                                 slice.output.push_back("[error] no devices found".into());
                                 if slice.output.len() > MAX_COMMAND_LINES {
                                     slice.output.pop_front();
                                 }
-                            }
                         }
                     }
                     1 => {
@@ -1496,20 +1491,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::ScrollToTop => {
             if state.focused_panel == FocusedPanel::CommandOutput
-                && let Some(id) = active_worktree_id(state) {
-                    if let Some(slice) = state.worktrees.get_mut(&id) {
-                        slice.output_scroll = 0;
-                    }
-                }
+                && let Some(id) = active_worktree_id(state)
+                && let Some(slice) = state.worktrees.get_mut(&id) {
+                    slice.output_scroll = 0;
+            }
         }
 
         Action::ScrollToBottom => {
             if state.focused_panel == FocusedPanel::CommandOutput
-                && let Some(id) = active_worktree_id(state) {
-                    if let Some(slice) = state.worktrees.get_mut(&id) {
-                        slice.output_scroll = slice.output.len();
-                    }
-                }
+                && let Some(id) = active_worktree_id(state)
+                && let Some(slice) = state.worktrees.get_mut(&id) {
+                    slice.output_scroll = slice.output.len();
+            }
         }
 
         Action::SetPendingG => {
@@ -1517,21 +1510,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::CommandOutputScrollUp => {
-            if let Some(id) = active_worktree_id(state) {
-                if let Some(slice) = state.worktrees.get_mut(&id) {
+            if let Some(id) = active_worktree_id(state)
+                && let Some(slice) = state.worktrees.get_mut(&id) {
                     slice.output_scroll = slice.output_scroll.saturating_sub(1);
-                }
             }
         }
 
         Action::CommandOutputScrollDown => {
             let max = active_output(state).len();
-            if let Some(id) = active_worktree_id(state) {
-                if let Some(slice) = state.worktrees.get_mut(&id) {
-                    if slice.output_scroll < max {
-                        slice.output_scroll += 1;
-                    }
-                }
+            if let Some(id) = active_worktree_id(state)
+                && let Some(slice) = state.worktrees.get_mut(&id)
+                && slice.output_scroll < max {
+                    slice.output_scroll += 1;
             }
         }
 
