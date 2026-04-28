@@ -306,3 +306,87 @@ pub fn active_output_scroll(state: &AppState) -> usize {
         })
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod merge_slices_tests {
+    use super::*;
+    use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
+    use crate::domain::worktree_slice::WorktreeSlice;
+    use std::path::PathBuf;
+
+    fn wt(id: &str) -> Worktree {
+        Worktree {
+            id: WorktreeId(id.into()),
+            path: PathBuf::from(format!("/tmp/{id}")),
+            branch: "main".into(),
+            head_sha: "0000000".into(),
+            metro_status: WorktreeMetroStatus::Stopped,
+            jira_title: None,
+            stale: false,
+            stale_pods: false,
+            jira_key: None,
+        }
+    }
+
+    #[test]
+    fn merge_inserts_default_slices_for_new_worktrees() {
+        let mut state = AppState::default();
+        let loaded = vec![wt("wt-1"), wt("wt-2")];
+        merge_slices(&mut state, &loaded);
+        assert_eq!(state.worktrees.len(), 2);
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-1".into())));
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-2".into())));
+    }
+
+    #[test]
+    fn merge_preserves_surviving_slice_state() {
+        let mut state = AppState::default();
+        // Seed slice with a queued command.
+        state.worktrees.insert(
+            WorktreeId("wt-1".into()),
+            WorktreeSlice {
+                id: WorktreeId("wt-1".into()),
+                queue: {
+                    let mut q = std::collections::VecDeque::new();
+                    q.push_back(crate::domain::command::CommandSpec::YarnInstall);
+                    q
+                },
+                ..Default::default()
+            },
+        );
+        // Refresh with the same id present.
+        merge_slices(&mut state, &[wt("wt-1")]);
+        let slice = state.worktrees.get(&WorktreeId("wt-1".into())).unwrap();
+        assert_eq!(slice.queue.len(), 1);
+    }
+
+    #[test]
+    fn merge_drops_slice_for_removed_worktree() {
+        let mut state = AppState::default();
+        state.worktrees.insert(
+            WorktreeId("wt-gone".into()),
+            WorktreeSlice {
+                id: WorktreeId("wt-gone".into()),
+                ..Default::default()
+            },
+        );
+        merge_slices(&mut state, &[wt("wt-survivor")]);
+        assert!(!state.worktrees.contains_key(&WorktreeId("wt-gone".into())));
+        assert!(state.worktrees.contains_key(&WorktreeId("wt-survivor".into())));
+    }
+
+    #[test]
+    fn merge_short_circuits_when_loaded_set_equals_current_set() {
+        // Q4: when the id sets match, surviving slice state stays untouched
+        // even if internal state is structurally suspicious.
+        let mut state = AppState::default();
+        let mut q = std::collections::VecDeque::new();
+        q.push_back(crate::domain::command::CommandSpec::YarnInstall);
+        state.worktrees.insert(
+            WorktreeId("wt-1".into()),
+            WorktreeSlice { id: WorktreeId("wt-1".into()), queue: q, ..Default::default() },
+        );
+        merge_slices(&mut state, &[wt("wt-1")]);
+        assert_eq!(state.worktrees.get(&WorktreeId("wt-1".into())).unwrap().queue.len(), 1);
+    }
+}
