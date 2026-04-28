@@ -128,7 +128,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-06-PLAN.md — SpawnTask runner arm + task_handle_tx channel + dispatch_command emits SpawnTask (D-10/Q1/Q2/Q3)
 
   **Wave 6** *(blocked on Wave 5 completion)*
-  - [ ] 14-07-PLAN.md — Drain migration: 10 Recipe::expand sites + CommandExited slice-local + CommandCancel + MetroActivityUpdate Ready (D-11/D-12/D-13/D-14)
+  - [x] 14-07-PLAN.md — Drain migration: 10 Recipe::expand sites + CommandExited slice-local + CommandCancel + MetroActivityUpdate Ready (D-11/D-12/D-13/D-14)
 
   **Wave 7** *(blocked on Wave 6 completion)*
   - [ ] 14-08-PLAN.md — Test rewrite: D-21 17 dispatch tests + 5 new parallelism / routing / stale-drop tests
