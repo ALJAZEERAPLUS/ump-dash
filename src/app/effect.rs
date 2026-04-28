@@ -28,15 +28,7 @@ pub enum Effect {
     KillProcess { pid: u32 },
 
     // Commands
-    SpawnCommand {
-        spec: CommandSpec,
-        cwd: PathBuf,
-        branch: String,
-    },
-    /// Phase 14 / D-10, D-20, Q1: spawn a per-worktree task. Single chokepoint
-    /// for spawning. Replaces `SpawnCommand` for callers migrated in Plan 14-07
-    /// (the variant `SpawnCommand` itself is removed in Plan 14-09 once every
-    /// dispatch path is migrated).
+    /// Phase 14 / D-10, D-20, Q1: single chokepoint for spawning per-worktree tasks.
     ///
     /// Payload includes `cwd` and `branch` (Q1 lock — RESEARCH §Open Q1 +
     /// §Pitfall P-7) so the runner does not need to look them up against state.
@@ -118,13 +110,14 @@ mod tests {
 
     #[test]
     fn effect_has_at_least_fifteen_variants() {
+        // Plan 14-09: SpawnCommand removed; SpawnTask is the sole spawn chokepoint.
         fn variant_index(e: &Effect) -> u32 {
             match e {
                 Effect::DetectExternalMetro { .. } => 0,
                 Effect::SpawnMetro { .. } => 1,
                 Effect::MetroHttpPost { .. } => 2,
                 Effect::KillProcess { .. } => 3,
-                Effect::SpawnCommand { .. } => 4,
+                Effect::SpawnTask { .. } => 4,
                 Effect::LoadDevices { .. } => 5,
                 Effect::ListWorktrees { .. } => 6,
                 Effect::RemoveWorktree { .. } => 7,
@@ -137,7 +130,6 @@ mod tests {
                 Effect::OpenInMultiplexer { .. } => 14,
                 Effect::FetchJiraTitles { .. } => 15,
                 Effect::ScheduleAction(_) => 16,
-                Effect::SpawnTask { .. } => 17,
             }
         }
         let e = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
