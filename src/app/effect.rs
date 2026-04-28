@@ -33,6 +33,20 @@ pub enum Effect {
         cwd: PathBuf,
         branch: String,
     },
+    /// Phase 14 / D-10, D-20, Q1: spawn a per-worktree task. Single chokepoint
+    /// for spawning. Replaces `SpawnCommand` for callers migrated in Plan 14-07
+    /// (the variant `SpawnCommand` itself is removed in Plan 14-09 once every
+    /// dispatch path is migrated).
+    ///
+    /// Payload includes `cwd` and `branch` (Q1 lock — RESEARCH §Open Q1 +
+    /// §Pitfall P-7) so the runner does not need to look them up against state.
+    SpawnTask {
+        task_id: crate::domain::task::TaskId,
+        worktree_id: crate::domain::worktree::WorktreeId,
+        spec: CommandSpec,
+        cwd: std::path::PathBuf,
+        branch: String,
+    },
     LoadDevices { kind: DeviceKind },
 
     // Worktrees — Plan 13-08: variants now carry repo_root from update().
@@ -64,6 +78,24 @@ pub enum Effect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_task_variant_constructs_and_matches() {
+        let eff = Effect::SpawnTask {
+            task_id: crate::domain::task::TaskId(42),
+            worktree_id: crate::domain::worktree::WorktreeId("wt-test".into()),
+            spec: crate::domain::command::CommandSpec::YarnInstall,
+            cwd: std::path::PathBuf::from("/tmp/wt-test"),
+            branch: "main".into(),
+        };
+        match eff {
+            Effect::SpawnTask { task_id, worktree_id, .. } => {
+                assert_eq!(task_id, crate::domain::task::TaskId(42));
+                assert_eq!(worktree_id, crate::domain::worktree::WorktreeId("wt-test".into()));
+            }
+            _ => panic!("expected SpawnTask"),
+        }
+    }
 
     #[test]
     fn effect_variants_compile() {
@@ -105,6 +137,7 @@ mod tests {
                 Effect::OpenInMultiplexer { .. } => 14,
                 Effect::FetchJiraTitles { .. } => 15,
                 Effect::ScheduleAction(_) => 16,
+                Effect::SpawnTask { .. } => 17,
             }
         }
         let e = Effect::ListWorktrees { repo_root: PathBuf::from(".") };

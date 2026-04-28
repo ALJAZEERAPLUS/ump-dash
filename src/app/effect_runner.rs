@@ -333,6 +333,13 @@ impl EffectRunner {
                     }
                 });
             }
+
+            // Plan 14-04 stub — Plan 14-06 implements run_spawn_task(). Until
+            // then we need this arm to satisfy exhaustiveness; unimplemented!()
+            // is intentional: no caller emits SpawnTask before Plan 14-07.
+            Effect::SpawnTask { .. } => {
+                unimplemented!("Effect::SpawnTask runner not yet implemented — Plan 14-06");
+            }
         }
     }
 }
