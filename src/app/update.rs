@@ -412,9 +412,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
                             let mut sequence = Recipe::SyncThenRun(spec).expand(&deps);
                             let first = sequence.remove(0);
+
+                            // D-12 PRIMARY: push to slice queue for the originating worktree.
+                            let resolved_id = active_worktree_id(state);
+                            if let Some(ref wt_id) = resolved_id {
+                                let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                                    crate::domain::worktree_slice::WorktreeSlice {
+                                        id: wt_id.clone(),
+                                        ..Default::default()
+                                    }
+                                });
+                                for cmd in &sequence {
+                                    slice.queue.push_back(cmd.clone());
+                                }
+                            }
+                            // TRANSITIONAL: legacy global queue write preserved so existing tests pass.
                             for cmd in sequence {
                                 state.command_runner.command_queue.push_back(cmd);
                             }
+
                             state.modal_stack.palette_mode = None;
                             if let Some(eff) = dispatch_command(state, first) {
                                 effects.push(eff);
@@ -437,6 +453,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // queue is drained head-first via CommandRun (preserves the full
             // pipeline). Replaces the deleted `pending_metro_run` field.
             if spec.needs_metro() && !state.metro.is_running() {
+                // D-12 + D-13: push to head of slice queue (push_front) for the originating worktree.
+                if let Some(wt_id) = active_worktree_id(state) {
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
+                        }
+                    });
+                    slice.queue.push_front(spec.clone());
+                }
+                // TRANSITIONAL: legacy global push_front preserved.
                 state.command_runner.command_queue.push_front(spec);
                 effects.extend(update(state, Action::MetroStart));
                 return effects;
@@ -486,9 +513,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if matches!(spec, CommandSpec::RnReleaseBuild) {
                 let mut sequence = Recipe::ReleaseBuildAndInstall.expand(&DependencyState::new(false, false, false));
                 let first = sequence.remove(0);
+
+                // D-12 PRIMARY: push to slice queue for the originating worktree.
+                let resolved_id = active_worktree_id(state);
+                if let Some(ref wt_id) = resolved_id {
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
+                        }
+                    });
+                    for cmd in &sequence {
+                        slice.queue.push_back(cmd.clone());
+                    }
+                }
+                // TRANSITIONAL: legacy global queue write preserved.
                 for cmd in sequence {
                     state.command_runner.command_queue.push_back(cmd);
                 }
+
                 if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
@@ -500,9 +543,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if matches!(spec, CommandSpec::GitResetHardFetch) {
                 let mut sequence = Recipe::GitFetchThenReset.expand(&DependencyState::new(false, false, false));
                 let first = sequence.remove(0);
+
+                // D-12 PRIMARY: push to slice queue for the originating worktree.
+                let resolved_id = active_worktree_id(state);
+                if let Some(ref wt_id) = resolved_id {
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
+                        }
+                    });
+                    for cmd in &sequence {
+                        slice.queue.push_back(cmd.clone());
+                    }
+                }
+                // TRANSITIONAL: legacy global queue write preserved.
                 for cmd in sequence {
                     state.command_runner.command_queue.push_back(cmd);
                 }
+
                 if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
@@ -623,6 +682,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         // --- Phase 5.1: Command queue actions ---
 
         Action::CommandQueuePush(spec) => {
+            // D-12 PRIMARY: push to slice queue for the originating worktree.
+            if let Some(wt_id) = active_worktree_id(state) {
+                let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                    crate::domain::worktree_slice::WorktreeSlice {
+                        id: wt_id.clone(),
+                        ..Default::default()
+                    }
+                });
+                slice.queue.push_back(spec.clone());
+            }
+            // TRANSITIONAL: legacy global queue write preserved.
             state.command_runner.command_queue.push_back(spec);
         }
 
@@ -1065,9 +1135,27 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         return effects;
                     }
                     let first = sequence.remove(0);
+
+                    // D-12 PRIMARY: push to slice queue for the originating worktree.
+                    // D-14: also set per-slice post_drain to MetroStart.
+                    let resolved_id = active_worktree_id(state);
+                    if let Some(ref wt_id) = resolved_id {
+                        let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                            crate::domain::worktree_slice::WorktreeSlice {
+                                id: wt_id.clone(),
+                                ..Default::default()
+                            }
+                        });
+                        for cmd in &sequence {
+                            slice.queue.push_back(cmd.clone());
+                        }
+                        slice.post_drain = Some(Box::new(Action::MetroStart));
+                    }
+                    // TRANSITIONAL: legacy global queue write preserved.
                     for cmd in sequence {
                         state.command_runner.command_queue.push_back(cmd);
                     }
+
                     if let Some(eff) = dispatch_command(state, first) {
                         effects.push(eff);
                     }
@@ -1225,9 +1313,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 // Dispatch first, queue rest
                 let first = cmds.remove(0);
+
+                // D-12 PRIMARY: push to slice queue for the originating worktree.
+                let resolved_id = active_worktree_id(state);
+                if let Some(ref wt_id) = resolved_id {
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
+                        }
+                    });
+                    for cmd in &cmds {
+                        slice.queue.push_back(cmd.clone());
+                    }
+                }
+                // TRANSITIONAL: legacy global queue write preserved.
                 for cmd in cmds {
                     state.command_runner.command_queue.push_back(cmd);
                 }
+
                 if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
@@ -1279,9 +1383,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // Guaranteed non-empty: we only get here from the modal which only
                 // appears when needs_yarn || needs_pods, so sequence has ≥2 elements.
                 let first = sequence.remove(0);
+
+                // D-12 PRIMARY: push to slice queue for the originating worktree.
+                let resolved_id = active_worktree_id(state);
+                if let Some(ref wt_id) = resolved_id {
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
+                        }
+                    });
+                    for cmd in &sequence {
+                        slice.queue.push_back(cmd.clone());
+                    }
+                }
+                // TRANSITIONAL: legacy global queue write preserved.
                 for cmd in sequence {
                     state.command_runner.command_queue.push_back(cmd);
                 }
+
                 if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
@@ -1295,6 +1415,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // won't re-trigger because the user just declined it.
                 let spec = *run_command;
                 if spec.needs_metro() && !state.metro.is_running() {
+                    // D-12 + D-13: push to head of slice queue for the originating worktree.
+                    if let Some(wt_id) = active_worktree_id(state) {
+                        let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                            crate::domain::worktree_slice::WorktreeSlice {
+                                id: wt_id.clone(),
+                                ..Default::default()
+                            }
+                        });
+                        slice.queue.push_front(spec.clone());
+                    }
+                    // TRANSITIONAL: legacy global push_front preserved.
                     state.command_runner.command_queue.push_front(spec);
                     effects.extend(update(state, Action::MetroStart));
                 } else if let Some(eff) = dispatch_command(state, spec) {
@@ -1335,9 +1466,27 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 let mut sequence = sequence;
                 let first = sequence.remove(0);
+
+                // D-12 PRIMARY: push to slice queue for the originating worktree.
+                // D-14: also set per-slice post_drain to MetroStart.
+                let resolved_id = active_worktree_id(state);
+                if let Some(ref wt_id) = resolved_id {
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
+                        }
+                    });
+                    for cmd in &sequence {
+                        slice.queue.push_back(cmd.clone());
+                    }
+                    slice.post_drain = Some(Box::new(Action::MetroStart));
+                }
+                // TRANSITIONAL: legacy global queue write preserved.
                 for cmd in sequence {
                     state.command_runner.command_queue.push_back(cmd);
                 }
+
                 if let Some(eff) = dispatch_command(state, first) {
                     effects.push(eff);
                 }
