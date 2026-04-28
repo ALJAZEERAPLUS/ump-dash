@@ -118,8 +118,8 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-02-PLAN.md — Infra adapter: TokioTaskHandle + From<std::process::ExitStatus>
 
   **Wave 3** *(blocked on Wave 2; 14-03 + 14-04 run in parallel — disjoint files)*
-  - [ ] 14-03-PLAN.md — AppState root field worktrees + task_for_worktree + merge_slices + WorktreesLoaded integration (D-16/D-17, Q4)
-  - [ ] 14-04-PLAN.md — Effect::SpawnTask variant added (Q1: cwd+branch in payload)
+  - [x] 14-03-PLAN.md — AppState root field worktrees + task_for_worktree + merge_slices + WorktreesLoaded integration (D-16/D-17, Q4)
+  - [x] 14-04-PLAN.md — Effect::SpawnTask variant added (Q1: cwd+branch in payload)
 
   **Wave 4** *(blocked on Wave 3 completion)*
   - [ ] 14-05-PLAN.md — Action payload widening: CommandOutputLine{task_id,line} + CommandExited{task_id,status} (Q2 lock: dedicated channel, no TaskSpawned action)
