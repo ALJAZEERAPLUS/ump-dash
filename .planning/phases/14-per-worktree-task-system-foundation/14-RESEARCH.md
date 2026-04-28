@@ -732,27 +732,33 @@ impl TaskHandle for TokioTaskHandle {
 
 **If A1..A4 are uncomfortable for the planner to assume:** the discuss-phase can lock them. None block research; all are "should be obvious from code review" but worth flagging.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All four questions were locked during /gsd-plan-phase 14 planning. Resolutions are recorded in plan frontmatter `must_haves` and bodies, summarized inline below.
 
 1. **Should `Effect::SpawnTask` carry `cwd` and `branch`, or should the runner look them up?** [Assumption A1]
    - What we know: existing `Effect::SpawnCommand` carries them; D-20 sketches `{ task_id, worktree_id, spec }` without them.
    - What's unclear: D-20's sketch is intentionally incomplete vs. accidentally so.
    - Recommendation: planner adds `cwd` + `branch` to the payload; consistent with Plan 13-08 convention.
+   - **RESOLVED:** Plan **14-04** locks the variant as `Effect::SpawnTask { task_id, worktree_id, spec, cwd, branch }` (mirrors `SpawnCommand` payload). Runner does not look up — `update()` resolves cwd+branch at dispatch time and passes them through.
 
 2. **`update()` writes `slice.task` synchronously vs. via `Action::TaskSpawned`?** [Assumption A2]
    - What we know: `update()` cannot call `Instant::now()` (purity); cannot call `tokio::spawn` (G-04); cannot construct a `TokioTaskHandle` (no JoinHandle yet).
    - What's unclear: whether to mirror the metro pattern (handle delivered via dedicated channel + `state.metro.register()` on the main thread) or invent something new.
    - Recommendation: mirror metro. Add `Action::TaskSpawned { task_id, worktree_id, spec, started_at, handle }` to action.rs. The runner constructs the TaskRecord and ships it via this Action; `update()` populates `slice.task` from there.
+   - **RESOLVED:** Plans **14-05** + **14-06** lock a **dedicated `task_handle_tx` channel** (NOT a new `Action::TaskSpawned` variant). Reason: `TaskRecord` holds `Box<dyn TaskHandle>` which neither `Clone`-s nor `PartialEq`-s, so it cannot ride inside the existing `Action` enum derives. The dedicated channel structurally mirrors metro's `handle_tx: UnboundedSender<Box<dyn MetroHandle>>` at `runtime.rs:38-40`, and the runtime drains it on the main thread alongside actions. This satisfies the "mirror metro" intent without breaking Action's derives.
 
 3. **Does `EffectRunner` hold a JoinHandle map, or do TaskRecords own their handle exclusively?** [Claude's Discretion per CONTEXT.md]
    - What we know: D-15 alt-(b) suggests the runner could own a JoinHandle map. D-23 step 7 says "JoinHandle map belongs in effect_runner."
    - What's unclear: if TaskRecords own the only handle (slice.task.handle), Phase 15 cancellation works through the slice; if effect_runner duplicates, two abort paths exist.
    - Recommendation: single ownership in slice.task.handle. The runner needs no map — it dispatches one tokio::spawn per Effect::SpawnTask, the resulting JoinHandle goes straight into the TaskRecord. Phase 15's `Action::CommandCancel` calls `slice.task.take().handle.abort()`. Cleaner.
+   - **RESOLVED:** Plan **14-06** locks **single ownership in `slice.task.handle`** — no map in `EffectRunner`. Each `Effect::SpawnTask` spawns once, wraps the resulting `JoinHandle` in `TokioTaskHandle`, and ships the full `TaskRecord` through `task_handle_tx`. Phase 15 cancellation will read `slice.task.take().handle.abort()`.
 
 4. **What happens to in-flight tasks on `WorktreesLoaded` when the loaded set is identical to the current set (the 60s refresh case)?**
    - What we know: D-17 says existing slices "are kept" — implies no-op on identity.
    - What's unclear: whether the merge helper iterates and creates spurious work (cloning, cap checks).
    - Recommendation: short-circuit when `loaded_ids == current_ids`. Inline test: refresh with no changes, assert task survives, no allocations beyond the HashSet build.
+   - **RESOLVED:** Plan **14-03** locks the **HashSet equality short-circuit** in `merge_slices(state, loaded)`. Inline test asserts (a) task survives identity refresh and (b) zero allocations beyond the HashSet build.
 
 ## Environment Availability
 

@@ -109,16 +109,39 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   2. The metro single-instance invariant is preserved — starting metro in any worktree while metro is already running goes through the existing conflict flow unchanged
   3. `CommandOutputLine` and `CommandExited` actions carry `WorktreeId`/`TaskId` and are routed to the correct worktree's output buffer regardless of which worktree is currently selected in the UI
   4. A running task's identity `(CommandKind, WorktreeId)` is accessible to UI, cancellation, and collision logic via `task_for_worktree(state, id)`
-**Plans**: 9 plans
+**Plans**: 9 plans across 8 waves
+
+  **Wave 1** *(no dependencies — foundation layer)*
   - [ ] 14-01-PLAN.md — Domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port (9th port; pure domain)
+
+  **Wave 2** *(blocked on Wave 1 completion)*
   - [ ] 14-02-PLAN.md — Infra adapter: TokioTaskHandle + From<std::process::ExitStatus>
+
+  **Wave 3** *(blocked on Wave 2; 14-03 + 14-04 run in parallel — disjoint files)*
   - [ ] 14-03-PLAN.md — AppState root field worktrees + task_for_worktree + merge_slices + WorktreesLoaded integration (D-16/D-17, Q4)
   - [ ] 14-04-PLAN.md — Effect::SpawnTask variant added (Q1: cwd+branch in payload)
+
+  **Wave 4** *(blocked on Wave 3 completion)*
   - [ ] 14-05-PLAN.md — Action payload widening: CommandOutputLine{task_id,line} + CommandExited{task_id,status} (Q2 lock: dedicated channel, no TaskSpawned action)
+
+  **Wave 5** *(blocked on Wave 4 completion)*
   - [ ] 14-06-PLAN.md — SpawnTask runner arm + task_handle_tx channel + dispatch_command emits SpawnTask (D-10/Q1/Q2/Q3)
+
+  **Wave 6** *(blocked on Wave 5 completion)*
   - [ ] 14-07-PLAN.md — Drain migration: 10 Recipe::expand sites + CommandExited slice-local + CommandCancel + MetroActivityUpdate Ready (D-11/D-12/D-13/D-14)
+
+  **Wave 7** *(blocked on Wave 6 completion)*
   - [ ] 14-08-PLAN.md — Test rewrite: D-21 17 dispatch tests + 5 new parallelism / routing / stale-drop tests
+
+  **Wave 8** *(blocked on Wave 7 — atomic delete-and-guard, MUST land in a single plan per CONTEXT.md §specifics)*
   - [ ] 14-09-PLAN.md — Atomic deletion: CommandRunnerState + 4 fields + SpawnCommand + helper flips + G-21 grep guard
+
+**Cross-cutting constraints** *(must hold across all 9 plans)*:
+  - All 79+ existing tests stay green throughout the migration (Plans 14-03..14-08 keep legacy globals alive in parallel; 14-09 is the only plan that deletes)
+  - All 20 existing G-XX shape guards stay green; new G-21 lands ONLY in Plan 14-09 alongside the deletion of `running_command` / `command_task` / `command_queue` / `post_drain_action`
+  - `tests/metro_single_instance.rs` (COVER-01) and `tests/process_group_kill.rs` (COVER-02) are READ-ONLY — no plan modifies them (per D-22)
+  - Metro single-instance invariant preserved (D-13: `state.metro` stays at AppState root, `MetroManager::register()` panic intact)
+  - TEA `update()` purity preserved (G-04, G-05): zero `tokio::spawn` / `reqwest` / `tokio::process` in `src/app/update.rs`
 
 ### Phase 15: Task Cancellation + Collision + Shared-Resource Semaphore
 **Goal**: Enable individual task cancellation via `CancellationToken` + SIGTERM to the process group with SIGKILL grace fallback; define and enforce a documented collision policy per command category; prevent yarn global cache / `node_modules` corruption from concurrent installs via a per-repo-root semaphore

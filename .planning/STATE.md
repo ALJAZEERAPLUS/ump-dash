@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: in-progress
-stopped_at: Phase 14 CONTEXT gathered — 23 implementation decisions locked (D-01..D-23). F-500 resolved: full WorktreeSlice from day one in `src/domain/worktree_slice.rs`. New 9th domain port `TaskHandle` keeps cancellation domain-pure; `TaskId(u64)` from atomic counter; CommandSpec discriminant supplies (kind, WorktreeId) collision identity for Phase 15. Action payloads widen: `CommandOutputLine{task_id, line}` + `CommandExited{task_id, status}`. New `Effect::SpawnTask{task_id, worktree_id, spec}` is the spawn chokepoint. Per-worktree FIFO + per-slice post_drain replaces 4 globals. Metro single-instance preserved. Ready for `/gsd-plan-phase 14`.
-last_updated: "2026-04-27T00:00:00Z"
-last_activity: 2026-04-27
+stopped_at: Phase 14 PLANNED — 9 plans across 8 waves locked. RESEARCH.md (Open Questions Q1..Q4 RESOLVED) + VALIDATION.md (Nyquist-compliant) + PATTERNS.md (16 files mapped to in-tree analogs) all written. Plan 14-01 lays domain types (WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port); 14-02 the tokio adapter; 14-03/14-04 in parallel add AppState root + Effect::SpawnTask{task_id, worktree_id, spec, cwd, branch}; 14-05 widens Action payloads; 14-06 wires the dedicated `task_handle_tx` channel + dispatch_command flip; 14-07 migrates the 10 Recipe sites + slice-local drain; 14-08 rewrites the 17 dispatch_tests + adds 5 parallelism/routing/stale-drop tests; 14-09 is the atomic delete-and-guard (deletes the 4 globals + CommandRunnerState + adds G-21 in the same plan per CONTEXT.md §specifics). Ready for `/gsd-execute-phase 14`.
+last_updated: "2026-04-28T00:00:00Z"
+last_activity: 2026-04-28
 progress:
   total_phases: 6
   completed_phases: 3
-  total_plans: 22
+  total_plans: 31
   completed_plans: 22
   percent: 50
 ---
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 14 CONTEXT captured — ready for `/gsd-plan-phase 14`
+**Current focus:** Phase 14 PLANNED — 9 plans across 8 waves; ready for `/gsd-execute-phase 14`
 
 ## Current Position
 
-Phase: 14 (per-worktree-task-system-foundation) — CONTEXT gathered 2026-04-27 (0/TBD plans)
-Resume file: .planning/phases/14-per-worktree-task-system-foundation/14-CONTEXT.md
-Status: 23 implementation decisions locked (D-01..D-23) across 4 gray areas. F-500 resolved per AUDIT-ADDENDUM (`WorktreeSlice` from day one in `src/domain/worktree_slice.rs`). New 9th port `TaskHandle` for domain-pure cancellation; tokio JoinHandle wrapper in `src/infra/`. Spawn chokepoint = `Effect::SpawnTask{task_id, worktree_id, spec}`. Per-worktree FIFO inside slice + per-slice `post_drain` replaces global `running_command` / `command_task` / `command_queue` / `post_drain_action`. Metro single-instance unchanged. Migration ends with new shape guard G-21 forbidding the 4 deleted identifiers; all 20 existing guards + 79 tests must stay green.
+Phase: 14 (per-worktree-task-system-foundation) — PLANNED 2026-04-28 (0/9 plans executed)
+Resume file: .planning/phases/14-per-worktree-task-system-foundation/14-01-PLAN.md
+Status: 9 plans across 8 waves; plan-checker passed with 0 blockers (3 documentation-hygiene warnings resolved inline). Coverage gates: 3/3 phase requirements (TASK-01..03) covered; 23/23 CONTEXT.md decisions (D-01..D-23) referenced by at least one plan. Wave 1 = domain types (14-01); Wave 2 = infra adapter (14-02); Wave 3 in parallel = AppState root field (14-03) + Effect::SpawnTask variant (14-04); Wave 4 = Action payload widening (14-05); Wave 5 = SpawnTask runner + task_handle_tx channel + dispatch_command flip (14-06); Wave 6 = Recipe + drain migration (14-07); Wave 7 = test rewrite + 5 new parallelism tests (14-08); Wave 8 = atomic delete-and-guard (14-09: deletes 4 globals + CommandRunnerState + adds G-21 in the same plan per CONTEXT.md §specifics). All 20 existing guards + 79 tests must stay green throughout migration; new G-21 guard lands in 14-09.
 
-Next phase: Phase 14 plan-phase — `/gsd-plan-phase 14`.
+Next phase: Phase 14 execute-phase — `/gsd-execute-phase 14`.
 
 Progress: [#####     ] 50% (v1.3 — Phase 11 complete 7/7; Phase 12 complete 5/5; Phase 13 complete 10/10)
 
