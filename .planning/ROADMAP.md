@@ -112,7 +112,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 **Plans**: 9 plans across 8 waves
 
   **Wave 1** *(no dependencies — foundation layer)*
-  - [ ] 14-01-PLAN.md — Domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port (9th port; pure domain)
+  - [x] 14-01-PLAN.md — Domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle port (9th port; pure domain)
 
   **Wave 2** *(blocked on Wave 1 completion)*
   - [ ] 14-02-PLAN.md — Infra adapter: TokioTaskHandle + From<std::process::ExitStatus>
