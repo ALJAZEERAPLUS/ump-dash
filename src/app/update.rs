@@ -39,8 +39,10 @@ use std::path::PathBuf;
 /// Used by ModalConfirm to run confirmed destructive commands, and internally after
 /// text-input and device-picker modals complete.
 ///
-/// Appends separator to per-worktree output, sets running_command, and returns the
-/// Effect::SpawnCommand that the effect_runner will consume.
+/// Phase 14 / D-10, D-20: allocates a fresh TaskId, writes the $ separator into
+/// BOTH the new per-worktree slice (primary) and the legacy command_runner maps
+/// (transitional — Plan 14-09 removes the legacy writes). Returns Effect::SpawnTask
+/// instead of Effect::SpawnCommand (new chokepoint).
 fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
     let wt = if !state.worktree_browser.worktrees.is_empty() {
         let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
@@ -52,27 +54,44 @@ fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
         return None;
     };
 
-    // Append a separator line to per-worktree output — output persists, not cleared on new command
     let wt_id = wt.id.clone();
+    let task_id = crate::domain::task::TaskId::next();
+    let argv_line = format!("$ {}", spec.to_argv().join(" "));
+
+    // Phase 14 PRIMARY: slice-local output. Defensive insertion in case the
+    // merge_slices pass hasn't run yet (e.g., during early startup before
+    // first WorktreesLoaded).
+    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+        crate::domain::worktree_slice::WorktreeSlice {
+            id: wt_id.clone(),
+            ..Default::default()
+        }
+    });
+    slice.output.push_back(argv_line.clone());
+    while slice.output.len() > MAX_COMMAND_LINES {
+        slice.output.pop_front();
+    }
+    slice.output_scroll = 0;
+
+    // Phase 14 TRANSITIONAL: legacy writes preserved so existing tests pass.
+    // Plan 14-09 deletes these.
     let output = state.command_runner.command_output_by_worktree.entry(wt_id.clone()).or_default();
-    output.push_back(format!("$ {}", spec.to_argv().join(" ")));
-    // Cap per-worktree output at MAX_COMMAND_LINES
+    output.push_back(argv_line);
     while output.len() > MAX_COMMAND_LINES {
         output.pop_front();
     }
-    // Reset scroll for this worktree to show the latest output
-    state.command_runner.command_output_scroll_by_worktree.insert(wt_id, 0);
-
+    state.command_runner.command_output_scroll_by_worktree.insert(wt_id.clone(), 0);
     state.command_runner.running_command = Some(spec.clone());
-
-    // Abort any existing command task
     if let Some(task) = state.command_runner.command_task.take() {
         task.abort();
     }
 
-    // F-201: return Effect::SpawnCommand — effect_runner owns the actual
-    // async task + CommandEvent -> Action translation.
-    Some(Effect::SpawnCommand {
+    // D-10 / D-20: the new spawn chokepoint. Replaces SpawnCommand for this
+    // call site. Other callers (Recipe::expand sites) still emit SpawnCommand
+    // — Plan 14-07 migrates them.
+    Some(Effect::SpawnTask {
+        task_id,
+        worktree_id: wt_id,
         spec,
         cwd: wt.path.clone(),
         branch: wt.branch.clone(),
