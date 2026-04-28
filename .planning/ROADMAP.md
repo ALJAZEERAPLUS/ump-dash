@@ -122,7 +122,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   - [x] 14-04-PLAN.md — Effect::SpawnTask variant added (Q1: cwd+branch in payload)
 
   **Wave 4** *(blocked on Wave 3 completion)*
-  - [ ] 14-05-PLAN.md — Action payload widening: CommandOutputLine{task_id,line} + CommandExited{task_id,status} (Q2 lock: dedicated channel, no TaskSpawned action)
+  - [x] 14-05-PLAN.md — Action payload widening: CommandOutputLine{task_id,line} + CommandExited{task_id,status} (Q2 lock: dedicated channel, no TaskSpawned action)
 
   **Wave 5** *(blocked on Wave 4 completion)*
   - [ ] 14-06-PLAN.md — SpawnTask runner arm + task_handle_tx channel + dispatch_command emits SpawnTask (D-10/Q1/Q2/Q3)
