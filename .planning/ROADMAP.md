@@ -152,7 +152,14 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   2. Git-porcelain commands (`GitResetHard`, `GitPull`, `GitPush`, `GitRebase`, `GitCheckout`, `GitFetch`) cannot be cancelled — the cancel action is a no-op for these variants, enforced by `is_cancellable()` from Phase 13
   3. Triggering a task whose `(CommandKind, WorktreeId)` matches one already running either blocks the new dispatch or cancels the previous one per the documented per-category collision policy (idempotent installs block-new; builds/tests cancel-previous)
   4. Concurrent yarn installs across worktrees sharing the same repo root are serialized via a `tokio::sync::Semaphore(1)` keyed by repo-root `PathBuf`; both installs complete with valid `node_modules` and non-corrupt `.yarn-integrity`
-**Plans**: TBD
+**Plans**: 7 plans across 5 waves
+  - [ ] 15-01-PLAN.md — Wave 1: foundation (tokio-util direct dep + CommandEvent::ProcessStarted + .process_group(0) in command_runner.rs)
+  - [ ] 15-02-PLAN.md — Wave 2: TokioTaskHandle widened (child_pid + cancel_token) + SIGTERM→200ms→SIGKILL abort() + signal-aware From<ExitStatus>
+  - [ ] 15-04-PLAN.md — Wave 2: CollisionPolicy enum + collision_policy() predicate on CommandSpec (parallel with 15-02)
+  - [ ] 15-03-PLAN.md — Wave 3: Effect::SpawnTask {repo_root} + EffectRunner.yarn_semaphores + SpawnTask arm extension (PID oneshot + CancellationToken + Semaphore acquire)
+  - [ ] 15-05-PLAN.md — Wave 4: update.rs gates — is_cancellable() guard in CommandCancel + collision_policy() gate in dispatch_command + 6 inline dispatch_tests
+  - [ ] 15-06-PLAN.md — Wave 5: integration tests (tests/process_group_cancel.rs + tests/yarn_semaphore_serializes.rs)
+  - [ ] 15-07-PLAN.md — Wave 5: 15-VALIDATION.md fill-in (per-task verification map, Nyquist sign-off) (parallel with 15-06)
 
 ### Phase 16: Live UI Indicators
 **Goal**: Split the merged `Y/P` cell into two independent cells; replace each with a 6-frame rotating yellow spinner while its respective task category is running; show live MM:SS elapsed time in the worktree row computed directly from `started_at.elapsed()` in the render path with no mutable tick state stored in `AppState`
@@ -175,5 +182,5 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 12. Coverage Gate | v1.3 | 5/5 | Complete | 2026-04-23 |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/9 | Planned | - |
-| 15. Task Cancellation + Collision + Semaphore | v1.3 | 0/TBD | Not started | - |
+| 15. Task Cancellation + Collision + Semaphore | v1.3 | 0/7 | Planned | - |
 | 16. Live UI Indicators | v1.3 | 0/TBD | Not started | - |
