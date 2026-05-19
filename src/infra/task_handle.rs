@@ -23,6 +23,12 @@
 use crate::domain::ports::task_handle::TaskHandle;
 use crate::domain::task::ExitStatus;
 
+/// SIGTERM → SIGKILL grace window for cancellation (Plan 15-02 / 15-RESEARCH §Q-3).
+/// Hardcoded — no config knob. 200ms is enough for yarn/node to flush stdout
+/// buffers after SIGTERM but short enough that a hung child gets SIGKILL'd
+/// before the user notices the cancel didn't "feel" immediate.
+const CANCEL_GRACE_MS: u64 = 200;
+
 /// Concrete `TaskHandle` impl. Owns:
 /// - `join_handle`: the forwarding `tokio::task::JoinHandle<()>` that drains
 ///   `CommandEvent`s from the runner and dispatches Actions back to the app.
@@ -59,7 +65,44 @@ impl std::fmt::Debug for TokioTaskHandle {
 
 impl TaskHandle for TokioTaskHandle {
     fn abort(&self) {
-        // Task 2 will widen this to the full SIGTERM → 200ms → SIGKILL ladder.
+        // Plan 15-02 / Pattern 1: SIGTERM → 200ms grace → SIGKILL ladder.
+        // Modeled on infra/metro.rs:157-168 (the metro-side PGID kill).
+        // abort() is the domain trait surface — synchronous, infallible, no panic.
+        let pid = self.child_pid as i32;
+        // Pitfall 3 (15-RESEARCH): libc::kill(-1, SIG*) broadcasts to every
+        // process owned by this UID — that would include rn-dash itself.
+        // The placeholder pid=0 (Plan 15-03 will wire the real one) and the
+        // init pid=1 are both refused silently. abort() must be infallible per
+        // the domain trait, so we return rather than panic.
+        if pid <= 1 {
+            return;
+        }
+        // SAFETY: sending to our own process group; pid validated > 1 above;
+        // ESRCH is a no-op (safe per 15-RESEARCH §Pitfall 1). Return value
+        // intentionally ignored — abort() is infallible.
+        unsafe {
+            let _ = libc::kill(-pid, libc::SIGTERM);
+        }
+        // Grace window: fire-and-forget tokio task that escalates to SIGKILL
+        // after CANCEL_GRACE_MS. JoinHandle is dropped intentionally — if the
+        // runtime shuts down before the sleep elapses, the task is dropped
+        // and no kill is sent (T-15-02-03 disposition: accept).
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(CANCEL_GRACE_MS)).await;
+            // SAFETY: same as above — own PGID, pid > 1 (captured by-copy
+            // from the validated pid), ESRCH is a no-op.
+            unsafe {
+                let _ = libc::kill(-pid, libc::SIGKILL);
+            }
+        });
+        // Signal the forwarding loop (Plan 15-03 wires .cancelled() into the
+        // select! arm) so it can emit ExitStatus::Cancelled without waiting
+        // for the child to wind down.
+        self.cancel_token.cancel();
+        // Belt-and-suspenders cooperative tokio abort of the forwarding task.
+        // If the child dies cleanly to SIGTERM before grace, the forwarding
+        // loop's child.wait() resolves first; if it doesn't, this aborts the
+        // loop so we never block waiting on a wedged stream.
         self.join_handle.abort();
     }
 }
@@ -153,6 +196,91 @@ mod tests {
             };
             assert_eq!(handle.child_pid, 99);
             assert!(!handle.cancel_token.is_cancelled());
+        });
+    }
+
+    #[test]
+    fn abort_with_placeholder_pid_zero_is_noop() {
+        // Pitfall 3 guard: if child_pid is the placeholder 0, abort() must
+        // refuse to send any kill AND return before doing anything else.
+        // Post-condition: cancel_token is NOT cancelled (proves the early
+        // return executed before step 5 of the ladder).
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let token = tokio_util::sync::CancellationToken::new();
+            let handle = TokioTaskHandle {
+                join_handle: tokio::spawn(async {}),
+                child_pid: 0,
+                cancel_token: token.clone(),
+            };
+            handle.abort();
+            assert!(
+                !token.is_cancelled(),
+                "abort() on placeholder pid=0 must short-circuit before cancel_token.cancel()"
+            );
+        });
+    }
+
+    #[test]
+    fn abort_with_placeholder_pid_one_is_noop() {
+        // Pitfall 3 guard (T-15-02-02): pid=1 is init on POSIX. Never send
+        // libc::kill(-1, ..) — that would target every process owned by this
+        // UID, including rn-dash itself.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let token = tokio_util::sync::CancellationToken::new();
+            let handle = TokioTaskHandle {
+                join_handle: tokio::spawn(async {}),
+                child_pid: 1,
+                cancel_token: token.clone(),
+            };
+            handle.abort();
+            assert!(
+                !token.is_cancelled(),
+                "abort() on pid=1 must short-circuit before cancel_token.cancel()"
+            );
+        });
+    }
+
+    #[test]
+    fn abort_with_dead_pid_does_not_panic() {
+        // pid 999_999 is clearly not a running process (and positive when
+        // cast to i32 — Pitfall: 0xDEAD_BEEF as i32 is negative, which the
+        // `pid <= 1` guard would refuse). The libc::kill returns ESRCH
+        // (Pitfall 1 — safe no-op); steps 5 + 6 of the ladder
+        // (cancel_token.cancel() + join_handle.abort()) still run. Sleep
+        // longer than CANCEL_GRACE_MS to give the grace task time to fire
+        // its no-op SIGKILL — assert no panic.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let token = tokio_util::sync::CancellationToken::new();
+            let handle = TokioTaskHandle {
+                join_handle: tokio::spawn(async {
+                    // Long-lived no-op so join_handle.abort() actually has
+                    // something to abort.
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                }),
+                child_pid: 999_999,
+                cancel_token: token.clone(),
+            };
+            handle.abort();
+            // Steps 5 + 6 ran — cancel_token is cancelled.
+            assert!(
+                token.is_cancelled(),
+                "abort() with valid (if dead) pid must cancel the token (step 5)"
+            );
+            // Wait past the grace window so the spawned escalation task fires
+            // its no-op SIGKILL. If it panicked, the runtime would surface it.
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         });
     }
 }
