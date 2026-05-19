@@ -370,7 +370,12 @@ impl EffectRunner {
                     id: task_id,
                     spec,
                     started_at,
-                    handle: Box::new(crate::infra::task_handle::TokioTaskHandle(join_handle)),
+                    // PLACEHOLDER pid=0 — Plan 15-03 wires the real child_pid via CommandEvent::ProcessStarted oneshot.
+                    handle: Box::new(crate::infra::task_handle::TokioTaskHandle {
+                        join_handle,
+                        child_pid: 0,
+                        cancel_token: tokio_util::sync::CancellationToken::new(),
+                    }),
                 };
                 let _ = self.task_handle_tx.send((worktree_id, record));
             }
