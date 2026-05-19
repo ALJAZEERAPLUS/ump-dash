@@ -347,6 +347,10 @@ impl EffectRunner {
                 let join_handle = tokio::spawn(async move {
                     while let Some(ev) = rx.recv().await {
                         let action = match ev {
+                            // Plan 15-01 Task 2: passthrough — Plan 15-03 will
+                            // replace this with full child_pid + oneshot + cancel_token
+                            // wiring into TokioTaskHandle.
+                            CommandEvent::ProcessStarted { .. } => continue,
                             CommandEvent::OutputLine(line) => {
                                 Action::CommandOutputLine { task_id, line }
                             }
