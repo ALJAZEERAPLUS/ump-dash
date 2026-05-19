@@ -868,3 +868,254 @@ mod stale_drop {
         );
     }
 }
+
+// =========================================================================
+// Sub-module 8: Collision gate — TASK-05 contract (Plan 15-05)
+// =========================================================================
+
+mod collision {
+    use super::*;
+
+    /// CollisionPolicy::BlockNew path — the existing YarnInstall task keeps
+    /// running and the new dispatch is silently dropped. No SpawnTask Effect,
+    /// no `$ argv` line, no `[cancelled by new dispatch]` line.
+    #[test]
+    fn collision_block_new_yarn_install_drops_new_dispatch() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+
+        // Seed a running YarnInstall task on the slice.
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(100, CommandSpec::YarnInstall));
+        let output_before: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+
+        let effects = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::YarnInstall),
+        );
+
+        // (a) No SpawnTask effect emitted.
+        let has_spawn = effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. }));
+        assert!(!has_spawn, "BlockNew must NOT emit Effect::SpawnTask; got {effects:?}");
+
+        // (b) slice.task is STILL Some with the original task_id (100).
+        let task = state.worktrees.get(&wid).unwrap().task.as_ref();
+        assert!(task.is_some(), "BlockNew must leave existing task in slice");
+        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(100),
+            "BlockNew must preserve the original task_id");
+
+        // (c) slice.output is unchanged — no $ argv line, no [cancelled ...] line.
+        let output_after: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+        assert_eq!(output_before, output_after,
+            "BlockNew must not write any output line; before={output_before:?} after={output_after:?}");
+    }
+
+    /// CollisionPolicy::CancelPrevious path — existing YarnJest task is aborted
+    /// and replaced by the NEW dispatch. SpawnTask emitted with the NEW filter;
+    /// `[cancelled by new dispatch]` appears in output.
+    ///
+    /// NOTE: `Action::CommandRun(YarnJest { .. })` routes through the TextInput
+    /// modal before reaching `dispatch_command`. To exercise the gate directly
+    /// without the modal dance, this test simulates the TextInput-submit path:
+    /// it opens a TextInput modal with a YarnJest template and pre-fills the
+    /// buffer ("second"), then submits via `Action::ModalInputSubmit`. The
+    /// submit handler invokes `dispatch_command(state, YarnJest { filter:
+    /// "second" })` — which is exactly where the collision gate lives.
+    #[test]
+    fn collision_cancel_previous_yarn_jest_replaces_task() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+
+        // Seed a running YarnJest("first") task on the slice.
+        state.worktrees.get_mut(&wid).unwrap().task = Some(synthetic_task_record(
+            200,
+            CommandSpec::YarnJest { filter: "first".into() },
+        ));
+
+        // Stage a TextInput modal whose template is YarnJest, buffer = "second".
+        // ModalInputSubmit will compose CommandSpec::YarnJest { filter: "second" }
+        // and call dispatch_command — the collision gate's true entry point.
+        state.modal_stack.modal = Some(ModalState::TextInput {
+            prompt: "Jest filter:".into(),
+            buffer: "second".into(),
+            pending_template: Box::new(CommandSpec::YarnJest { filter: String::new() }),
+        });
+
+        let effects = update(&mut state, Action::ModalInputSubmit);
+
+        // (a) Exactly one SpawnTask Effect with the NEW filter.
+        let has_spawn_second = effects.iter().any(|e| matches!(
+            e,
+            Effect::SpawnTask { spec: CommandSpec::YarnJest { filter }, .. } if filter == "second"
+        ));
+        assert!(has_spawn_second,
+            "CancelPrevious must emit Effect::SpawnTask for the NEW YarnJest dispatch; got {effects:?}");
+
+        // (b) slice.task is None — old record was taken; new record arrives
+        //     asynchronously via task_handle_tx (not visible to synchronous update()).
+        assert!(state.worktrees.get(&wid).unwrap().task.is_none(),
+            "CancelPrevious must take the existing record from slice.task");
+
+        // (c) slice.output contains [cancelled by new dispatch].
+        let output: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+        assert!(output.iter().any(|l| l == "[cancelled by new dispatch]"),
+            "CancelPrevious must push [cancelled by new dispatch]; output={output:?}");
+    }
+
+    /// Different discriminants do NOT collide — existing YarnInstall task is
+    /// untouched when a YarnLint dispatch arrives. No [cancelled ...] line.
+    ///
+    /// YarnLint is chosen because it has no text-input or device-picker
+    /// pre-processing, so `Action::CommandRun(YarnLint)` reaches
+    /// `dispatch_command` directly — the gate's true site.
+    #[test]
+    fn collision_different_discriminants_dispatch_normally() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+
+        // Seed a running YarnInstall task.
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(300, CommandSpec::YarnInstall));
+
+        let effects = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::YarnLint),
+        );
+
+        // (a) Existing YarnInstall record is still in slice.task — different
+        //     discriminant means no collision, no cancellation.
+        let task = state.worktrees.get(&wid).unwrap().task.as_ref();
+        assert!(task.is_some(), "existing YarnInstall task must remain — different discriminant");
+        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(300),
+            "original YarnInstall task_id must be preserved");
+
+        // (b) No [cancelled by new dispatch] line — gate did not fire.
+        let output: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+        assert!(!output.iter().any(|l| l == "[cancelled by new dispatch]"),
+            "no [cancelled by new dispatch] line when discriminants differ; output={output:?}");
+
+        // (c) SpawnTask Effect emitted for the new YarnLint (different discriminant
+        //     means the dispatch flows through normally to allocate a new task).
+        let has_spawn_lint = effects.iter().any(|e| matches!(
+            e,
+            Effect::SpawnTask { spec: CommandSpec::YarnLint, .. }
+        ));
+        assert!(has_spawn_lint,
+            "different-discriminant dispatch must emit Effect::SpawnTask for the new spec; got {effects:?}");
+    }
+
+    /// Q-4 honor: git → BlockNew. Existing GitPull task keeps running; second
+    /// GitPull dispatch is silently dropped. No SpawnTask, no output change.
+    #[test]
+    fn collision_git_pull_block_new() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+
+        // Seed a running GitPull task.
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(400, CommandSpec::GitPull));
+        let output_before: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+
+        let effects = update(&mut state, Action::CommandRun(CommandSpec::GitPull));
+
+        // (a) No SpawnTask effect emitted.
+        let has_spawn = effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. }));
+        assert!(!has_spawn, "git BlockNew must NOT emit Effect::SpawnTask; got {effects:?}");
+
+        // (b) Existing GitPull task still in slice.
+        let task = state.worktrees.get(&wid).unwrap().task.as_ref();
+        assert!(task.is_some(), "git BlockNew must preserve existing task");
+        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(400),
+            "original GitPull task_id must be preserved");
+
+        // (c) Output unchanged.
+        let output_after: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+        assert_eq!(output_before, output_after,
+            "git BlockNew must not write any output line");
+    }
+}
+
+// =========================================================================
+// Sub-module 9: Cancellation guard — TASK-04 contract (Plan 15-05)
+// =========================================================================
+
+mod cancellation_guard {
+    use super::*;
+
+    /// 15-RESEARCH §Pitfall 5: CommandCancel on a running git task is a NO-OP.
+    /// The record is re-inserted into the slice; queue and output are unchanged.
+    #[test]
+    fn cancel_on_git_pull_is_noop_record_reinserted() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+
+        // Seed a running GitPull task; pre-load the queue with a follow-up
+        // (which must NOT be cleared).
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(500, CommandSpec::GitPull));
+        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnInstall);
+        let output_before: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+
+        let _effects = update(&mut state, Action::CommandCancel);
+
+        // (a) slice.task still Some with the SAME task_id (re-inserted).
+        let task = state.worktrees.get(&wid).unwrap().task.as_ref();
+        assert!(task.is_some(), "non-cancellable: record must be re-inserted");
+        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(500),
+            "non-cancellable: original task_id must be preserved");
+
+        // (b) Queue is unchanged — NOT cleared.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1,
+            "non-cancellable: queue must NOT be cleared");
+
+        // (c) Output does NOT contain [cancelled] line.
+        let output_after: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+        assert_eq!(output_before, output_after,
+            "non-cancellable: no [cancelled] line written; before={output_before:?} after={output_after:?}");
+        assert!(!output_after.iter().any(|l| l == "[cancelled]"),
+            "non-cancellable: explicit no-[cancelled] check");
+    }
+
+    /// Cancellable variants preserve Phase 14 behavior: take, abort, clear queue,
+    /// push [cancelled].
+    #[test]
+    fn cancel_on_yarn_install_aborts_and_clears() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+
+        // Seed a running YarnInstall task and pre-load a queued follow-up.
+        state.worktrees.get_mut(&wid).unwrap().task =
+            Some(synthetic_task_record(600, CommandSpec::YarnInstall));
+        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnLint);
+
+        let _effects = update(&mut state, Action::CommandCancel);
+
+        // (a) slice.task is None — record was taken.
+        assert!(state.worktrees.get(&wid).unwrap().task.is_none(),
+            "cancellable: slice.task must be cleared");
+
+        // (b) Queue is empty — cleared.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0,
+            "cancellable: queue must be cleared");
+
+        // (c) Output contains [cancelled].
+        let output: Vec<String> = state.worktrees.get(&wid).unwrap()
+            .output.iter().cloned().collect();
+        assert!(output.iter().any(|l| l == "[cancelled]"),
+            "cancellable: output must contain [cancelled]; got {output:?}");
+    }
+}
