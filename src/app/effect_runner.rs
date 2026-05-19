@@ -68,6 +68,21 @@ pub struct EffectRunner {
         crate::domain::worktree::WorktreeId,
         crate::domain::task::TaskRecord,
     )>,
+
+    /// Plan 15-03 / TASK-06: per-repo-root yarn-family install semaphore.
+    /// Keyed by the canonicalized `repo_root` of `Effect::SpawnTask`; each
+    /// entry is a `Semaphore(1)` that serializes concurrent `YarnInstall`,
+    /// `YarnPodInstall`, and `RmNodeModules` invocations across worktrees
+    /// sharing the same upstream repo (they all write/delete `node_modules`).
+    /// Non-yarn specs skip the lookup entirely.
+    ///
+    /// `std::sync::Mutex` is intentional (not `tokio::sync::Mutex`) — the
+    /// guard is held only across a synchronous HashMap insert/clone and is
+    /// dropped before any `.await`. See 15-RESEARCH §Pitfall 4 + §Pattern 4.
+    /// The Rust compiler enforces this — `MutexGuard` is `!Send`.
+    pub yarn_semaphores: std::sync::Mutex<
+        std::collections::HashMap<std::path::PathBuf, std::sync::Arc<tokio::sync::Semaphore>>,
+    >,
 }
 
 impl EffectRunner {
@@ -85,6 +100,7 @@ impl EffectRunner {
             action_tx,
             handle_tx,
             task_handle_tx,
+            yarn_semaphores: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -333,55 +349,225 @@ impl EffectRunner {
                 });
             }
 
-            // Plan 14-06: per-task spawn chokepoint (D-10, D-20, Q1, Q2, Q3).
+            // Plan 14-06 / Plan 15-03: per-task spawn chokepoint (D-10, D-20, Q1, Q2, Q3 + TASK-04, TASK-06).
+            //
+            // Phase 15 wiring (Plan 15-03):
+            //   - Reads CommandEvent::ProcessStarted { pid } as the FIRST event
+            //     and delivers it via tokio::sync::oneshot to the TaskRecord
+            //     assembly task, which builds TokioTaskHandle with the real pid.
+            //   - Threads a tokio_util::sync::CancellationToken into the
+            //     forwarding loop's tokio::select! so abort() can fire
+            //     Action::CommandExited { status: Cancelled } without waiting
+            //     for the OS wait() to return.
+            //   - For yarn-family specs (YarnInstall, YarnPodInstall,
+            //     RmNodeModules) acquires an OwnedSemaphorePermit from the
+            //     per-canonicalized-repo-root Semaphore(1) BEFORE invoking
+            //     runner.spawn() — serializing concurrent installs across
+            //     sibling worktrees. Non-yarn specs skip the semaphore.
             Effect::SpawnTask { task_id, worktree_id, spec, cwd, branch, repo_root } => {
                 use crate::domain::ports::command_runner_port::CommandEvent;
                 use crate::domain::task::{ExitStatus, TaskRecord};
-                // Plan 15-03 Task 1 transitional: `repo_root` is destructured
-                // here but consumed by Task 2 of the same plan. Mute the unused
-                // warning for the one-task interim so the build stays green.
-                let _ = repo_root;
+
                 let runner = self.adapters.command_runner.clone();
                 // D-06: started_at captured at the runner's spawn moment, NOT in update().
                 let started_at = std::time::Instant::now();
-                let mut rx = runner.spawn(spec.clone(), cwd, branch);
+
+                // Cancellation plumbing — shared between the abort() ladder
+                // (held by TokioTaskHandle) and the forwarding loop below.
+                let cancel_token = tokio_util::sync::CancellationToken::new();
+                let cancel_token_for_loop = cancel_token.clone();
+
+                // Yarn-family predicate. Only these three specs serialize via
+                // the per-repo-root semaphore (15-RESEARCH §F8) — they all
+                // mutate node_modules under the worktree.
+                let is_yarn_family = matches!(
+                    spec,
+                    crate::domain::command::CommandSpec::YarnInstall
+                        | crate::domain::command::CommandSpec::YarnPodInstall
+                        | crate::domain::command::CommandSpec::RmNodeModules
+                );
+
+                // Canonicalize the repo_root so semantically-equal paths
+                // (./foo vs /abs/foo, symlinks, trailing slashes) hash to the
+                // same HashMap bucket. Fall back to the raw path on errors
+                // (NFS, missing dir at start-of-day — 15-RESEARCH §Pattern 4).
+                let canonical_repo_root = repo_root
+                    .canonicalize()
+                    .unwrap_or_else(|_| repo_root.clone());
+
+                // Look up (or create) the per-repo-root semaphore.
+                // CRITICAL (15-RESEARCH §Pitfall 4): the std::sync::Mutex guard
+                // MUST be dropped before any `.await` because MutexGuard is
+                // `!Send`. The explicit `let mut map = ...; ... .clone()` in
+                // a scope block forces the guard to drop at the closing brace
+                // — Rust's compiler enforces the rest.
+                let semaphore_opt: Option<std::sync::Arc<tokio::sync::Semaphore>> =
+                    if is_yarn_family {
+                        let mut map = self.yarn_semaphores.lock().unwrap();
+                        Some(
+                            map.entry(canonical_repo_root.clone())
+                                .or_insert_with(|| {
+                                    std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                                })
+                                .clone(),
+                        )
+                    } else {
+                        None
+                    };
+                // MutexGuard dropped here — safe to `.await` below.
+
+                // PID delivery (15-RESEARCH §F2 Option B): the forwarding task
+                // reads CommandEvent::ProcessStarted { pid } as its first event
+                // and ships the pid via a oneshot to the assembly task that
+                // builds the TaskRecord. The assembly task wraps the oneshot
+                // in a 5-second timeout so the spawn-failure path (oneshot
+                // sender dropped) does not leak an awaiter (T-15-03-05).
+                let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<u32>();
+
                 let tx = self.action_tx.clone();
-                // D-10: per-task closure capture. TaskId is Copy; async move captures it
-                // so concurrent spawns interleave correctly (RESEARCH P-2).
+                let spec_for_record = spec.clone();
+
+                // D-10: per-task closure capture. TaskId is Copy; async move
+                // captures it so concurrent spawns interleave correctly
+                // (RESEARCH P-2). The cancel_token is cloned into the loop's
+                // own variable above so the outer scope can still hand the
+                // original to TokioTaskHandle.
                 let join_handle = tokio::spawn(async move {
-                    while let Some(ev) = rx.recv().await {
-                        let action = match ev {
-                            // Plan 15-01 Task 2: passthrough — Plan 15-03 will
-                            // replace this with full child_pid + oneshot + cancel_token
-                            // wiring into TokioTaskHandle.
-                            CommandEvent::ProcessStarted { .. } => continue,
-                            CommandEvent::OutputLine(line) => {
-                                Action::CommandOutputLine { task_id, line }
+                    // Step A: acquire the yarn-family semaphore permit BEFORE
+                    // invoking runner.spawn() so the subprocess does not start
+                    // until our turn comes up. OwnedSemaphorePermit is Drop —
+                    // released on task exit, abort, OR panic (T-15-03-03).
+                    let _permit: Option<tokio::sync::OwnedSemaphorePermit> =
+                        if let Some(sem) = semaphore_opt {
+                            match sem.acquire_owned().await {
+                                Ok(p) => Some(p),
+                                Err(_closed) => {
+                                    // Semaphore was closed — should never happen
+                                    // (we never call .close()) but if it does
+                                    // we still want to surface a clean cancel
+                                    // rather than silently hang.
+                                    let _ = tx.send(Action::CommandExited {
+                                        task_id,
+                                        status: ExitStatus::Cancelled,
+                                    });
+                                    return;
+                                }
                             }
-                            CommandEvent::Exited(status) => Action::CommandExited {
+                        } else {
+                            None
+                        };
+
+                    // Step B: now spawn the subprocess. Per the port contract
+                    // (command_runner_port.rs), ProcessStarted arrives BEFORE
+                    // any OutputLine on the success path; spawn-failure path
+                    // skips ProcessStarted and goes straight to Exited.
+                    let mut rx = runner.spawn(spec.clone(), cwd, branch);
+
+                    // Step C: consume the first event. Forward pid via the
+                    // oneshot so the assembly task can build the TaskRecord.
+                    // On spawn-failure (first event is Exited / channel
+                    // closes), we drop pid_tx — the assembly task's timeout
+                    // wrapper will resolve with the placeholder pid=0, which
+                    // abort()'s `pid <= 1` guard makes a no-op (Plan 15-02).
+                    let _child_pid: u32 = match rx.recv().await {
+                        Some(CommandEvent::ProcessStarted { pid }) => {
+                            let _ = pid_tx.send(pid);
+                            pid
+                        }
+                        Some(CommandEvent::Exited(status)) => {
+                            // Spawn-failure fast path — runner emitted
+                            // a synthetic Exited. Forward it and bail.
+                            let _ = tx.send(Action::CommandExited {
                                 task_id,
                                 status: ExitStatus::from(status),
-                            },
-                        };
-                        if tx.send(action).is_err() {
-                            break;
+                            });
+                            return;
+                        }
+                        Some(CommandEvent::OutputLine(_)) | None => {
+                            // Either the contract was violated (OutputLine
+                            // before ProcessStarted) or the channel closed
+                            // immediately. Either way, treat as failure.
+                            let _ = tx.send(Action::CommandExited {
+                                task_id,
+                                status: ExitStatus::Failure { code: None },
+                            });
+                            return;
+                        }
+                    };
+
+                    // Step D: forwarding loop with cancel select. The cancel
+                    // arm fires Action::CommandExited { Cancelled } and breaks
+                    // immediately — the OS-level Exited(status) that arrives
+                    // later (after abort()'s SIGTERM → 200ms → SIGKILL ladder
+                    // resolves) is dropped because the loop has exited. Phase
+                    // 14 D-08 stale-task-drop in update.rs handles any race
+                    // where a second CommandExited would arrive.
+                    loop {
+                        tokio::select! {
+                            maybe_ev = rx.recv() => {
+                                match maybe_ev {
+                                    Some(CommandEvent::OutputLine(line)) => {
+                                        if tx.send(Action::CommandOutputLine { task_id, line }).is_err() {
+                                            break;
+                                        }
+                                    }
+                                    Some(CommandEvent::Exited(status)) => {
+                                        let _ = tx.send(Action::CommandExited {
+                                            task_id,
+                                            status: ExitStatus::from(status),
+                                        });
+                                        break;
+                                    }
+                                    Some(CommandEvent::ProcessStarted { .. }) => {
+                                        // Spec says exactly one — ignore stragglers.
+                                    }
+                                    None => break,
+                                }
+                            }
+                            _ = cancel_token_for_loop.cancelled() => {
+                                let _ = tx.send(Action::CommandExited {
+                                    task_id,
+                                    status: ExitStatus::Cancelled,
+                                });
+                                break;
+                            }
                         }
                     }
+                    // _permit drops here — next queued yarn install can proceed.
                 });
-                // Q2 + Q3 lock: deliver TaskRecord via dedicated channel; main thread
-                // writes it into slice.task. Single ownership — no JoinHandle map here.
-                let record = TaskRecord {
-                    id: task_id,
-                    spec,
-                    started_at,
-                    // PLACEHOLDER pid=0 — Plan 15-03 wires the real child_pid via CommandEvent::ProcessStarted oneshot.
-                    handle: Box::new(crate::infra::task_handle::TokioTaskHandle {
-                        join_handle,
-                        child_pid: 0,
-                        cancel_token: tokio_util::sync::CancellationToken::new(),
-                    }),
-                };
-                let _ = self.task_handle_tx.send((worktree_id, record));
+
+                // Assembly task: wait for the real child pid (with a 5s hard
+                // timeout to handle the spawn-failure path where pid_tx was
+                // dropped without sending — T-15-03-05) then build the
+                // TaskRecord and deliver it via the dedicated channel. The
+                // main thread writes it into slice.task. Single ownership —
+                // no JoinHandle map here.
+                let task_handle_tx = self.task_handle_tx.clone();
+                tokio::spawn(async move {
+                    let real_child_pid = match tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        pid_rx,
+                    )
+                    .await
+                    {
+                        Ok(Ok(pid)) => pid,
+                        // Timeout OR sender dropped (spawn failure). Use 0 —
+                        // abort()'s `pid <= 1` guard makes the resulting kill
+                        // a no-op (Plan 15-02 / T-15-03-05).
+                        _ => 0,
+                    };
+                    let record = TaskRecord {
+                        id: task_id,
+                        spec: spec_for_record,
+                        started_at,
+                        handle: Box::new(crate::infra::task_handle::TokioTaskHandle {
+                            join_handle,
+                            child_pid: real_child_pid,
+                            cancel_token: cancel_token.clone(),
+                        }),
+                    };
+                    let _ = task_handle_tx.send((worktree_id, record));
+                });
             }
         }
     }
