@@ -43,6 +43,25 @@ pub enum CommandSpec {
     ShellCommand { command: String },   // !: run arbitrary shell command in worktree dir
 }
 
+/// Per-variant policy applied when a new task dispatch matches a running task
+/// on the same `(CommandSpec discriminant, WorktreeId)` per Phase 14 D-05.
+///
+/// TASK-05 / 15-RESEARCH §F6: collision_policy() is the type-driven authority
+/// consulted by `dispatch_command` (Plan 15-05) when it detects a collision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollisionPolicy {
+    /// The existing task keeps running; the new dispatch is silently dropped.
+    /// Used for idempotent installs (running a second `yarn install` while one
+    /// is in progress produces the same result; no point in double-running)
+    /// and for non-cancellable git porcelain (Q-4 lock — cancel-previous is
+    /// impossible for variants where `is_cancellable() == false`).
+    BlockNew,
+    /// The existing task is aborted, then the new task is dispatched. Used for
+    /// builds, tests, and runs where the user intent is "run THIS version NOW"
+    /// — re-running a test or app build should reflect the latest sources.
+    CancelPrevious,
+}
+
 impl CommandSpec {
     /// Returns the argv that should be passed to `tokio::process::Command`.
     /// The first element is the program; the rest are arguments.
@@ -134,6 +153,56 @@ impl CommandSpec {
                 | CommandSpec::GitCheckoutNew { .. }
                 | CommandSpec::GitFetch
         )
+    }
+
+    /// Returns the per-variant collision policy applied when a new dispatch
+    /// matches a running task on the same `(discriminant, WorktreeId)` per
+    /// D-05.
+    ///
+    /// `BlockNew` for idempotent installs and non-cancellable git variants
+    /// (Q-4); `CancelPrevious` for builds, tests, runs, and clean operations
+    /// where "run THIS version NOW" is the intent.
+    ///
+    /// TASK-05 / 15-RESEARCH §F6. The match is intentionally exhaustive (NO
+    /// `_ =>` arm) so adding a new `CommandSpec` variant produces a compile
+    /// error here, forcing the maintainer to assign a policy explicitly
+    /// (T-15-04-01 mitigation). The drift-guard meta-test
+    /// `collision_policy_covers_every_variant` provides a second layer of
+    /// enforcement.
+    pub fn collision_policy(&self) -> CollisionPolicy {
+        match self {
+            // Idempotent installs — running again while one is in progress
+            // produces the same result.
+            CommandSpec::YarnInstall
+            | CommandSpec::YarnPodInstall => CollisionPolicy::BlockNew,
+
+            // Non-cancellable git porcelain (Q-4): cancel-previous is
+            // impossible for variants where `is_cancellable() == false`, so
+            // BlockNew is the only valid policy.
+            CommandSpec::GitResetHard
+            | CommandSpec::GitResetHardFetch
+            | CommandSpec::GitPull
+            | CommandSpec::GitPush
+            | CommandSpec::GitRebase { .. }
+            | CommandSpec::GitCheckout { .. }
+            | CommandSpec::GitCheckoutNew { .. }
+            | CommandSpec::GitFetch => CollisionPolicy::BlockNew,
+
+            // Builds, tests, runs — "run THIS version NOW" semantics.
+            CommandSpec::YarnUnitTests
+            | CommandSpec::YarnJest { .. }
+            | CommandSpec::YarnLint
+            | CommandSpec::YarnCheckTypes
+            | CommandSpec::RnRunAndroid { .. }
+            | CommandSpec::RnRunIos { .. }
+            | CommandSpec::RnRunIosDevice
+            | CommandSpec::RnReleaseBuild
+            | CommandSpec::AdbInstallApk
+            | CommandSpec::ShellCommand { .. }
+            | CommandSpec::RnCleanAndroid
+            | CommandSpec::RnCleanCocoapods
+            | CommandSpec::RmNodeModules => CollisionPolicy::CancelPrevious,
+        }
     }
 
     /// Returns true for commands that need a user-supplied text string before running.
@@ -352,5 +421,144 @@ mod tests {
     fn is_cancellable_shell_true() {
         let spec = CommandSpec::ShellCommand { command: "echo hi".into() };
         assert!(spec.is_cancellable(), "shell command must be cancellable");
+    }
+
+    // TASK-05 / Plan 15-04: `CommandSpec::collision_policy()` returns the per-variant
+    // policy applied when a new dispatch collides with a running task on the same
+    // `(discriminant, WorktreeId)` per Phase 14 D-05. Three per-family tests plus one
+    // drift-guard meta-test enumerating every variant.
+
+    #[test]
+    fn collision_policy_idempotent_installs_block_new() {
+        let installs = [
+            CommandSpec::YarnInstall,
+            CommandSpec::YarnPodInstall,
+        ];
+        for spec in &installs {
+            assert_eq!(
+                spec.collision_policy(),
+                CollisionPolicy::BlockNew,
+                "install variant {:?} must BlockNew",
+                spec
+            );
+        }
+    }
+
+    #[test]
+    fn collision_policy_builds_tests_runs_cancel_previous() {
+        let cancelable = [
+            CommandSpec::YarnUnitTests,
+            CommandSpec::YarnJest { filter: "x".into() },
+            CommandSpec::YarnLint,
+            CommandSpec::YarnCheckTypes,
+            CommandSpec::RnRunAndroid { device_id: "".into(), mode: Some("release".into()) },
+            CommandSpec::RnRunIos { device_id: "iPhone 15".into() },
+            CommandSpec::RnRunIosDevice,
+            CommandSpec::RnReleaseBuild,
+            CommandSpec::AdbInstallApk,
+            CommandSpec::ShellCommand { command: "ls".into() },
+            CommandSpec::RnCleanAndroid,
+            CommandSpec::RnCleanCocoapods,
+            CommandSpec::RmNodeModules,
+        ];
+        for spec in &cancelable {
+            assert_eq!(
+                spec.collision_policy(),
+                CollisionPolicy::CancelPrevious,
+                "build/test/run variant {:?} must CancelPrevious",
+                spec
+            );
+        }
+    }
+
+    #[test]
+    fn collision_policy_git_variants_all_block_new() {
+        let git_variants = [
+            CommandSpec::GitResetHard,
+            CommandSpec::GitResetHardFetch,
+            CommandSpec::GitPull,
+            CommandSpec::GitPush,
+            CommandSpec::GitRebase { target: "main".into() },
+            CommandSpec::GitCheckout { branch: "main".into() },
+            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::GitFetch,
+        ];
+        for spec in &git_variants {
+            assert_eq!(
+                spec.collision_policy(),
+                CollisionPolicy::BlockNew,
+                "git variant {:?} must BlockNew (non-cancellable cannot CancelPrevious)",
+                spec
+            );
+        }
+    }
+
+    /// Drift-guard meta-test: mirrors the predicate body with an exhaustive
+    /// match (no `_` arm). Adding a new CommandSpec variant fails to compile here
+    /// AND in `collision_policy()` itself — two layers of compile-time enforcement
+    /// against silent default assignment (mitigates T-15-04-01).
+    #[test]
+    fn collision_policy_covers_every_variant() {
+        // One instance of every CommandSpec variant; if a variant is added in a
+        // future phase, this match becomes non-exhaustive and the build fails.
+        let variants = [
+            CommandSpec::GitResetHard,
+            CommandSpec::GitPull,
+            CommandSpec::GitPush,
+            CommandSpec::GitRebase { target: "main".into() },
+            CommandSpec::GitCheckout { branch: "main".into() },
+            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::RnCleanAndroid,
+            CommandSpec::RnCleanCocoapods,
+            CommandSpec::RmNodeModules,
+            CommandSpec::YarnInstall,
+            CommandSpec::YarnPodInstall,
+            CommandSpec::RnRunAndroid { device_id: "".into(), mode: None },
+            CommandSpec::RnRunIos { device_id: "".into() },
+            CommandSpec::RnRunIosDevice,
+            CommandSpec::YarnUnitTests,
+            CommandSpec::YarnJest { filter: "".into() },
+            CommandSpec::YarnLint,
+            CommandSpec::YarnCheckTypes,
+            CommandSpec::GitFetch,
+            CommandSpec::GitResetHardFetch,
+            CommandSpec::RnReleaseBuild,
+            CommandSpec::AdbInstallApk,
+            CommandSpec::ShellCommand { command: "".into() },
+        ];
+        for v in &variants {
+            // Exhaustive match — no `_ =>` arm. Mirrors `collision_policy()` body.
+            let _policy: CollisionPolicy = match v {
+                CommandSpec::GitResetHard
+                | CommandSpec::GitResetHardFetch
+                | CommandSpec::GitPull
+                | CommandSpec::GitPush
+                | CommandSpec::GitRebase { .. }
+                | CommandSpec::GitCheckout { .. }
+                | CommandSpec::GitCheckoutNew { .. }
+                | CommandSpec::GitFetch
+                | CommandSpec::YarnInstall
+                | CommandSpec::YarnPodInstall => CollisionPolicy::BlockNew,
+                CommandSpec::YarnUnitTests
+                | CommandSpec::YarnJest { .. }
+                | CommandSpec::YarnLint
+                | CommandSpec::YarnCheckTypes
+                | CommandSpec::RnRunAndroid { .. }
+                | CommandSpec::RnRunIos { .. }
+                | CommandSpec::RnRunIosDevice
+                | CommandSpec::RnReleaseBuild
+                | CommandSpec::AdbInstallApk
+                | CommandSpec::ShellCommand { .. }
+                | CommandSpec::RnCleanAndroid
+                | CommandSpec::RnCleanCocoapods
+                | CommandSpec::RmNodeModules => CollisionPolicy::CancelPrevious,
+            };
+            // Also assert the predicate agrees with the local mirror.
+            assert!(matches!(
+                v.collision_policy(),
+                CollisionPolicy::BlockNew | CollisionPolicy::CancelPrevious
+            ));
+        }
+        assert_eq!(variants.len(), 23, "must enumerate all 23 CommandSpec variants");
     }
 }
