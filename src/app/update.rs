@@ -14,7 +14,7 @@
 use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
-use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
+use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState};
 use crate::domain::pipeline::{DependencyState, Recipe};
 use std::path::PathBuf;
 
@@ -42,6 +42,15 @@ use std::path::PathBuf;
 /// Plan 14-09 (D-10, D-20): allocates a fresh TaskId, writes the $ separator into
 /// the per-worktree slice, and returns Effect::SpawnTask — the single chokepoint
 /// for spawning. Transitional legacy writes removed (Plan 14-09).
+///
+/// Plan 15-05 / TASK-05: BEFORE allocating a TaskId or writing the `$ argv`
+/// line, the function consults the (discriminant, WorktreeId) collision gate
+/// (D-05). If `slice.task` holds a running task whose spec discriminant
+/// matches the incoming spec, `spec.collision_policy()` decides:
+/// - `BlockNew` → return None; slice untouched; no `$ argv` line.
+/// - `CancelPrevious` → abort the previous task, clear the slice queue,
+///   push `[cancelled by new dispatch]`, then fall through to normal
+///   dispatch with the new task_id.
 fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
     let wt = if !state.worktree_browser.worktrees.is_empty() {
         let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
@@ -54,6 +63,38 @@ fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
     };
 
     let wt_id = wt.id.clone();
+
+    // Phase 15 / TASK-05 collision gate (D-05, discriminant identity).
+    // BEFORE allocating a new TaskId or writing the $ argv line, check whether
+    // an existing task on the same worktree shares the spec discriminant.
+    // Two-pass approach: immutable borrow to read existing.spec discriminant,
+    // then (if CancelPrevious) mutable borrow to take + abort. This avoids the
+    // borrow-checker conflict of holding `slice` mutably across the abort call.
+    let collision_cancel_previous: bool = if let Some(slice) = state.worktrees.get(&wt_id)
+        && let Some(existing) = slice.task.as_ref()
+        && std::mem::discriminant(&existing.spec) == std::mem::discriminant(&spec)
+    {
+        match spec.collision_policy() {
+            CollisionPolicy::BlockNew => return None,
+            CollisionPolicy::CancelPrevious => true,
+        }
+    } else {
+        false
+    };
+
+    if collision_cancel_previous
+        && let Some(slice) = state.worktrees.get_mut(&wt_id)
+    {
+        if let Some(record) = slice.task.take() {
+            record.handle.abort();
+        }
+        slice.queue.clear();
+        slice.output.push_back("[cancelled by new dispatch]".into());
+        while slice.output.len() > MAX_COMMAND_LINES {
+            slice.output.pop_front();
+        }
+    }
+
     let task_id = crate::domain::task::TaskId::next();
     let argv_line = format!("$ {}", spec.to_argv().join(" "));
 
