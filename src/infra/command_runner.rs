@@ -73,6 +73,12 @@ async fn run_command(
         .current_dir(&worktree_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // CRITICAL: process_group(0) makes the spawned child its own process-group
+        // leader (PID == PGID). Phase 15 SIGTERM-to-PGID then reaches grandchildren
+        // (yarn-spawned node workers, gradle-spawned java, xcodebuild-spawned clang).
+        // Without this, libc::kill(-pid, SIGTERM) targets a non-existent group (ESRCH)
+        // and only the immediate child dies. 15-RESEARCH §F1 / §Pitfall 2.
+        .process_group(0)
         .kill_on_drop(true)
         .spawn()
     {
@@ -85,6 +91,12 @@ async fn run_command(
             return;
         }
     };
+
+    // Phase 15 / Plan 15-01 Task 3: emit child PID as the FIRST event so
+    // effect_runner can construct TokioTaskHandle { child_pid, .. } before
+    // any OutputLine arrives. Spec: command_runner_port::CommandEvent doc.
+    let child_pid = child.id().expect("child pid available after successful spawn");
+    let _ = tx.send(CommandEvent::ProcessStarted { pid: child_pid });
 
     // Take IO handles immediately before any wait/kill call.
     let stdout = child.stdout.take().expect("stdout piped");
@@ -178,4 +190,48 @@ fn synthetic_failure_status() -> std::process::ExitStatus {
     // This codebase does not ship on Windows; this path keeps the trait
     // implementation compilable under `cargo check --target x86_64-pc-windows-gnu`.
     std::process::ExitStatus::default()
+}
+
+#[cfg(test)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    /// Plan 15-01 Task 3 — locks the "ProcessStarted is the FIRST event"
+    /// contract from `CommandEvent` doc string. Spawns `echo done` through
+    /// the real `TokioCommandRunner` and asserts the event ordering
+    /// `[ProcessStarted { pid > 1 }, OutputLine(_)+, Exited(_)]`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_command_emits_process_started_first() {
+        let runner = TokioCommandRunner;
+        let mut rx = runner.spawn(
+            CommandSpec::ShellCommand { command: "echo done".into() },
+            std::env::temp_dir(),
+            "main".into(),
+        );
+
+        // FIRST event must be ProcessStarted with a real OS pid.
+        let first = rx.recv().await.expect("at least one event");
+        match first {
+            CommandEvent::ProcessStarted { pid } => {
+                assert!(pid > 1, "expected real pid > 1, got {pid}");
+            }
+            other => panic!("expected ProcessStarted first, got {other:?}"),
+        }
+
+        // Drain the rest; require at least one OutputLine and exactly one Exited.
+        let mut output_lines = 0usize;
+        let mut exited = 0usize;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                CommandEvent::ProcessStarted { .. } => {
+                    panic!("ProcessStarted must be emitted exactly once");
+                }
+                CommandEvent::OutputLine(_) => output_lines += 1,
+                CommandEvent::Exited(_) => exited += 1,
+            }
+        }
+        assert!(output_lines >= 1, "expected at least one OutputLine");
+        assert_eq!(exited, 1, "expected exactly one Exited event");
+    }
 }
