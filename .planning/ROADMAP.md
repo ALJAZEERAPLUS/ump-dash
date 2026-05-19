@@ -154,8 +154,8 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   4. Concurrent yarn installs across worktrees sharing the same repo root are serialized via a `tokio::sync::Semaphore(1)` keyed by repo-root `PathBuf`; both installs complete with valid `node_modules` and non-corrupt `.yarn-integrity`
 **Plans**: 7 plans across 5 waves
   - [x] 15-01-PLAN.md — Wave 1: foundation (tokio-util direct dep + CommandEvent::ProcessStarted + .process_group(0) in command_runner.rs)
-  - [ ] 15-02-PLAN.md — Wave 2: TokioTaskHandle widened (child_pid + cancel_token) + SIGTERM→200ms→SIGKILL abort() + signal-aware From<ExitStatus>
-  - [ ] 15-04-PLAN.md — Wave 2: CollisionPolicy enum + collision_policy() predicate on CommandSpec (parallel with 15-02)
+  - [x] 15-02-PLAN.md — Wave 2: TokioTaskHandle widened (child_pid + cancel_token) + SIGTERM→200ms→SIGKILL abort() + signal-aware From<ExitStatus>
+  - [x] 15-04-PLAN.md — Wave 2: CollisionPolicy enum + collision_policy() predicate on CommandSpec (parallel with 15-02)
   - [ ] 15-03-PLAN.md — Wave 3: Effect::SpawnTask {repo_root} + EffectRunner.yarn_semaphores + SpawnTask arm extension (PID oneshot + CancellationToken + Semaphore acquire)
   - [ ] 15-05-PLAN.md — Wave 4: update.rs gates — is_cancellable() guard in CommandCancel + collision_policy() gate in dispatch_command + 6 inline dispatch_tests
   - [ ] 15-06-PLAN.md — Wave 5: integration tests (tests/process_group_cancel.rs + tests/yarn_semaphore_serializes.rs)
@@ -182,5 +182,5 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 12. Coverage Gate | v1.3 | 5/5 | Complete | 2026-04-23 |
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/9 | Planned | - |
-| 15. Task Cancellation + Collision + Semaphore | v1.3 | 1/7 | In Progress|  |
+| 15. Task Cancellation + Collision + Semaphore | v1.3 | 3/7 | In Progress|  |
 | 16. Live UI Indicators | v1.3 | 0/TBD | Not started | - |
