@@ -22,6 +22,7 @@
 
 use crate::domain::ports::task_handle::TaskHandle;
 use crate::domain::task::ExitStatus;
+use std::os::unix::process::ExitStatusExt;
 
 /// SIGTERM → SIGKILL grace window for cancellation (Plan 15-02 / 15-RESEARCH §Q-3).
 /// Hardcoded — no config knob. 200ms is enough for yarn/node to flush stdout
@@ -107,17 +108,24 @@ impl TaskHandle for TokioTaskHandle {
     }
 }
 
-/// Translate OS exit status into the domain enum (D-09). Phase 14 only
-/// distinguishes success vs. failure — Phase 15 will widen to inspect signals
-/// via `std::os::unix::process::ExitStatusExt::signal()` and emit `Killed`.
+/// Translate OS exit status into the domain enum (D-09).
+///
+/// Phase 15: signal-aware mapping. SIGKILL → Killed (the cancel grace expired
+/// and we hard-killed); any other signal (typically SIGTERM from the cancel
+/// path before grace, or external SIGINT/SIGHUP) → Cancelled. Clean exit with
+/// non-zero code → Failure { code: Some(N) }. See 15-RESEARCH §F4.
 impl From<std::process::ExitStatus> for ExitStatus {
     fn from(status: std::process::ExitStatus) -> Self {
         if status.success() {
             ExitStatus::Success
+        } else if let Some(signal) = ExitStatusExt::signal(&status) {
+            if signal == libc::SIGKILL {
+                ExitStatus::Killed
+            } else {
+                ExitStatus::Cancelled
+            }
         } else {
-            // Phase 14: signal-killed processes show up as Failure { code: None }
-            // because std::process::ExitStatus.code() returns None on signal exit.
-            // Phase 15 widens this to detect signals explicitly.
+            // Clean exit with non-zero code (no signal).
             ExitStatus::Failure { code: status.code() }
         }
     }
@@ -281,6 +289,77 @@ mod tests {
             // Wait past the grace window so the spawned escalation task fires
             // its no-op SIGKILL. If it panicked, the runtime would surface it.
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        });
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn from_sigkill_status_maps_to_killed() {
+        // Spawn a real `sleep 30` child in its own process group, broadcast
+        // SIGKILL to the PGID, await the child's exit, and assert the mapped
+        // domain ExitStatus is Killed. Hard-timeout the wait at 3s to keep CI
+        // bounded.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut child = tokio::process::Command::new("sleep")
+                .arg("30")
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let pid = child.id().unwrap() as i32;
+            assert!(pid > 1);
+            // SAFETY: our own PGID, pid validated > 1; SIGKILL terminates.
+            unsafe {
+                let _ = libc::kill(-pid, libc::SIGKILL);
+            }
+            let status = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                child.wait(),
+            )
+            .await
+            .expect("child did not exit within 3s after SIGKILL")
+            .unwrap();
+            let mapped: ExitStatus = status.into();
+            assert_eq!(mapped, ExitStatus::Killed);
+        });
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn from_sigterm_status_maps_to_cancelled() {
+        // Same fixture as the SIGKILL test but with SIGTERM. The shell's
+        // default SIGTERM handler terminates the process; the resulting
+        // ExitStatus exposes signal() == Some(SIGTERM), which maps to
+        // ExitStatus::Cancelled.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut child = tokio::process::Command::new("sleep")
+                .arg("30")
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let pid = child.id().unwrap() as i32;
+            assert!(pid > 1);
+            // SAFETY: our own PGID, pid validated > 1; SIGTERM terminates by
+            // default for `sleep`.
+            unsafe {
+                let _ = libc::kill(-pid, libc::SIGTERM);
+            }
+            let status = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                child.wait(),
+            )
+            .await
+            .expect("child did not exit within 3s after SIGTERM")
+            .unwrap();
+            let mapped: ExitStatus = status.into();
+            assert_eq!(mapped, ExitStatus::Cancelled);
         });
     }
 }
