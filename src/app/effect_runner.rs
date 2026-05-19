@@ -334,9 +334,13 @@ impl EffectRunner {
             }
 
             // Plan 14-06: per-task spawn chokepoint (D-10, D-20, Q1, Q2, Q3).
-            Effect::SpawnTask { task_id, worktree_id, spec, cwd, branch } => {
+            Effect::SpawnTask { task_id, worktree_id, spec, cwd, branch, repo_root } => {
                 use crate::domain::ports::command_runner_port::CommandEvent;
                 use crate::domain::task::{ExitStatus, TaskRecord};
+                // Plan 15-03 Task 1 transitional: `repo_root` is destructured
+                // here but consumed by Task 2 of the same plan. Mute the unused
+                // warning for the one-task interim so the build stays green.
+                let _ = repo_root;
                 let runner = self.adapters.command_runner.clone();
                 // D-06: started_at captured at the runner's spawn moment, NOT in update().
                 let started_at = std::time::Instant::now();

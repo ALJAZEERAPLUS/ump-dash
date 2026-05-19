@@ -72,12 +72,16 @@ fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
     slice.output_scroll = 0;
 
     // D-10 / D-20: the spawn chokepoint.
+    // Plan 15-03 / TASK-06: `repo_root` is propagated so effect_runner can
+    // key the per-repo-root yarn semaphore. Sourced from AppState (the single
+    // source of truth set at startup by main.rs).
     Some(Effect::SpawnTask {
         task_id,
         worktree_id: wt_id,
         spec,
         cwd: wt.path.clone(),
         branch: wt.branch.clone(),
+        repo_root: state.app_config.repo_root.clone(),
     })
 }
 

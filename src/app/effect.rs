@@ -32,12 +32,19 @@ pub enum Effect {
     ///
     /// Payload includes `cwd` and `branch` (Q1 lock — RESEARCH §Open Q1 +
     /// §Pitfall P-7) so the runner does not need to look them up against state.
+    ///
+    /// Plan 15-03 / TASK-06: `repo_root` is the canonicalization key for the
+    /// yarn install semaphore. `effect_runner` canonicalizes it and uses it
+    /// to look up (or create) the per-repo-root `Semaphore(1)` that serializes
+    /// `YarnInstall` / `YarnPodInstall` / `RmNodeModules` across worktrees
+    /// that share the same upstream repo. Non-yarn specs ignore the field.
     SpawnTask {
         task_id: crate::domain::task::TaskId,
         worktree_id: crate::domain::worktree::WorktreeId,
         spec: CommandSpec,
         cwd: std::path::PathBuf,
         branch: String,
+        repo_root: std::path::PathBuf,
     },
     LoadDevices { kind: DeviceKind },
 
@@ -79,11 +86,36 @@ mod tests {
             spec: crate::domain::command::CommandSpec::YarnInstall,
             cwd: std::path::PathBuf::from("/tmp/wt-test"),
             branch: "main".into(),
+            repo_root: std::path::PathBuf::from("/tmp/repo-root-test"),
         };
         match eff {
-            Effect::SpawnTask { task_id, worktree_id, .. } => {
+            Effect::SpawnTask { task_id, worktree_id, repo_root, .. } => {
                 assert_eq!(task_id, crate::domain::task::TaskId(42));
                 assert_eq!(worktree_id, crate::domain::worktree::WorktreeId("wt-test".into()));
+                assert_eq!(repo_root, std::path::PathBuf::from("/tmp/repo-root-test"));
+            }
+            _ => panic!("expected SpawnTask"),
+        }
+    }
+
+    /// Plan 15-03 / TASK-06: `repo_root` is the key the runner uses to look up
+    /// the per-repo-root yarn install semaphore. This test pins the field's
+    /// presence and round-trip identity — a refactor that drops the field or
+    /// renames it will break this characterization.
+    #[test]
+    fn spawn_task_carries_repo_root_for_semaphore_key() {
+        let key = std::path::PathBuf::from("/Users/test/repo-A");
+        let eff = Effect::SpawnTask {
+            task_id: crate::domain::task::TaskId(7),
+            worktree_id: crate::domain::worktree::WorktreeId("wt-A-1".into()),
+            spec: crate::domain::command::CommandSpec::YarnInstall,
+            cwd: std::path::PathBuf::from("/Users/test/repo-A/wt-A-1"),
+            branch: "feat".into(),
+            repo_root: key.clone(),
+        };
+        match eff {
+            Effect::SpawnTask { repo_root, .. } => {
+                assert_eq!(repo_root, key, "repo_root must round-trip — it is the semaphore HashMap key");
             }
             _ => panic!("expected SpawnTask"),
         }
