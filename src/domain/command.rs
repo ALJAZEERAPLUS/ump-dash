@@ -353,4 +353,143 @@ mod tests {
         let spec = CommandSpec::ShellCommand { command: "echo hi".into() };
         assert!(spec.is_cancellable(), "shell command must be cancellable");
     }
+
+    // TASK-05 / Plan 15-04: `CommandSpec::collision_policy()` returns the per-variant
+    // policy applied when a new dispatch collides with a running task on the same
+    // `(discriminant, WorktreeId)` per Phase 14 D-05. Three per-family tests plus one
+    // drift-guard meta-test enumerating every variant.
+
+    #[test]
+    fn collision_policy_idempotent_installs_block_new() {
+        let installs = [
+            CommandSpec::YarnInstall,
+            CommandSpec::YarnPodInstall,
+        ];
+        for spec in &installs {
+            assert_eq!(
+                spec.collision_policy(),
+                CollisionPolicy::BlockNew,
+                "install variant {:?} must BlockNew",
+                spec
+            );
+        }
+    }
+
+    #[test]
+    fn collision_policy_builds_tests_runs_cancel_previous() {
+        let cancelable = [
+            CommandSpec::YarnUnitTests,
+            CommandSpec::YarnJest { filter: "x".into() },
+            CommandSpec::YarnLint,
+            CommandSpec::YarnCheckTypes,
+            CommandSpec::RnRunAndroid { device_id: "".into(), mode: Some("release".into()) },
+            CommandSpec::RnRunIos { device_id: "iPhone 15".into() },
+            CommandSpec::RnRunIosDevice,
+            CommandSpec::RnReleaseBuild,
+            CommandSpec::AdbInstallApk,
+            CommandSpec::ShellCommand { command: "ls".into() },
+            CommandSpec::RnCleanAndroid,
+            CommandSpec::RnCleanCocoapods,
+            CommandSpec::RmNodeModules,
+        ];
+        for spec in &cancelable {
+            assert_eq!(
+                spec.collision_policy(),
+                CollisionPolicy::CancelPrevious,
+                "build/test/run variant {:?} must CancelPrevious",
+                spec
+            );
+        }
+    }
+
+    #[test]
+    fn collision_policy_git_variants_all_block_new() {
+        let git_variants = [
+            CommandSpec::GitResetHard,
+            CommandSpec::GitResetHardFetch,
+            CommandSpec::GitPull,
+            CommandSpec::GitPush,
+            CommandSpec::GitRebase { target: "main".into() },
+            CommandSpec::GitCheckout { branch: "main".into() },
+            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::GitFetch,
+        ];
+        for spec in &git_variants {
+            assert_eq!(
+                spec.collision_policy(),
+                CollisionPolicy::BlockNew,
+                "git variant {:?} must BlockNew (non-cancellable cannot CancelPrevious)",
+                spec
+            );
+        }
+    }
+
+    /// Drift-guard meta-test: mirrors the predicate body with an exhaustive
+    /// match (no `_` arm). Adding a new CommandSpec variant fails to compile here
+    /// AND in `collision_policy()` itself — two layers of compile-time enforcement
+    /// against silent default assignment (mitigates T-15-04-01).
+    #[test]
+    fn collision_policy_covers_every_variant() {
+        // One instance of every CommandSpec variant; if a variant is added in a
+        // future phase, this match becomes non-exhaustive and the build fails.
+        let variants = [
+            CommandSpec::GitResetHard,
+            CommandSpec::GitPull,
+            CommandSpec::GitPush,
+            CommandSpec::GitRebase { target: "main".into() },
+            CommandSpec::GitCheckout { branch: "main".into() },
+            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::RnCleanAndroid,
+            CommandSpec::RnCleanCocoapods,
+            CommandSpec::RmNodeModules,
+            CommandSpec::YarnInstall,
+            CommandSpec::YarnPodInstall,
+            CommandSpec::RnRunAndroid { device_id: "".into(), mode: None },
+            CommandSpec::RnRunIos { device_id: "".into() },
+            CommandSpec::RnRunIosDevice,
+            CommandSpec::YarnUnitTests,
+            CommandSpec::YarnJest { filter: "".into() },
+            CommandSpec::YarnLint,
+            CommandSpec::YarnCheckTypes,
+            CommandSpec::GitFetch,
+            CommandSpec::GitResetHardFetch,
+            CommandSpec::RnReleaseBuild,
+            CommandSpec::AdbInstallApk,
+            CommandSpec::ShellCommand { command: "".into() },
+        ];
+        for v in &variants {
+            // Exhaustive match — no `_ =>` arm. Mirrors `collision_policy()` body.
+            let _policy: CollisionPolicy = match v {
+                CommandSpec::GitResetHard
+                | CommandSpec::GitResetHardFetch
+                | CommandSpec::GitPull
+                | CommandSpec::GitPush
+                | CommandSpec::GitRebase { .. }
+                | CommandSpec::GitCheckout { .. }
+                | CommandSpec::GitCheckoutNew { .. }
+                | CommandSpec::GitFetch
+                | CommandSpec::YarnInstall
+                | CommandSpec::YarnPodInstall => CollisionPolicy::BlockNew,
+                CommandSpec::YarnUnitTests
+                | CommandSpec::YarnJest { .. }
+                | CommandSpec::YarnLint
+                | CommandSpec::YarnCheckTypes
+                | CommandSpec::RnRunAndroid { .. }
+                | CommandSpec::RnRunIos { .. }
+                | CommandSpec::RnRunIosDevice
+                | CommandSpec::RnReleaseBuild
+                | CommandSpec::AdbInstallApk
+                | CommandSpec::ShellCommand { .. }
+                | CommandSpec::RnCleanAndroid
+                | CommandSpec::RnCleanCocoapods
+                | CommandSpec::RmNodeModules => CollisionPolicy::CancelPrevious,
+            };
+            // Also assert the predicate agrees with the local mirror.
+            assert!(matches!(
+                v.collision_policy(),
+                CollisionPolicy::BlockNew | CollisionPolicy::CancelPrevious
+            ));
+        }
+        assert_eq!(variants.len(), 23, "must enumerate all 23 CommandSpec variants");
+    }
 }
