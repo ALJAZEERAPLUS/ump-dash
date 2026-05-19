@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
-status: in-progress
-stopped_at: Phase 14 EXECUTED + VERIFIED (3/4 PASS, 1 manual-only) — all 9 plans across 8 waves landed. Wave 1 (14-01) domain types: WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle 9th port. Wave 2 (14-02) TokioTaskHandle adapter. Wave 3 (14-03 + 14-04 parallel) AppState.worktrees root field + merge_slices + Effect::SpawnTask{task_id,worktree_id,spec,cwd,branch}. Wave 4 (14-05) widened Action::CommandOutputLine{task_id,line} + CommandExited{task_id,status}. Wave 5 (14-06) SpawnTask runner arm + dedicated task_handle_tx channel (Q2 lock) + dispatch_command flip. Wave 6 (14-07) all 10 Recipe::expand sites + slice-local CommandExited drain + per-slice post_drain + slice CommandCancel + MetroActivityUpdate(Ready) slice walk. Wave 7 (14-08) 17 dispatch_tests rewritten to read state.worktrees + 5 new parallelism/routing/stale-drop tests. Wave 8 (14-09) atomic delete-and-guard — CommandRunnerState struct + 4 globals + Effect::SpawnCommand deleted, G-21 grep guard active, helpers flipped to slice. 99 tests pass; all 21 G-XX arch guards green; clippy clean; TASK-01/TASK-02/TASK-03 closed. 14-HUMAN-UAT.md persists 1 manual TUI test (concurrent output panel display) per VALIDATION.md §Manual-Only Verifications. Phase 15 (Task Cancellation + Collision + Semaphore) unblocked.
-last_updated: "2026-04-28T06:24:56Z"
-last_activity: 2026-04-28
+status: executing
+stopped_at: Completed 12-04-PLAN.md (COVER-04 post-wave-2 baseline — 5cc75ae commits BASELINE-COVERAGE.json + BASELINE-COVERAGE.md + COVERAGE-THRESHOLDS.md; 27 src/ files, 12.84% line / 20.82% function / 9.89% region total; floor-to-5 ratchet locked; 46 lib tests + 3 integration tests pass under coverage; clippy all-targets -D warnings clean). Phase 12 COMPLETE — all 4 COVER-NN green. Phase 13 (audit-driven refactors) unblocked.
+last_updated: "2026-05-19T09:53:47.204Z"
 progress:
   total_phases: 6
   completed_phases: 4
-  total_plans: 31
+  total_plans: 38
   completed_plans: 31
-  percent: 67
+  percent: 82
 ---
 
 # Project State
@@ -21,13 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 **Core value:** One place to see and control everything about your React Native worktrees — which one is running, what branch each is on, and execute any command without context-switching.
-**Current focus:** Phase 14 COMPLETE 2026-04-28 (9/9 plans, 3/4 verified PASS, 1 manual-only TUI check pending in HUMAN-UAT). Phase 15 (Task Cancellation + Collision + Semaphore) unblocked.
+**Current focus:** Phase 15 — task-cancellation-collision-shared-resource-semaphore
 
 ## Current Position
 
-Phase: 14 (per-worktree-task-system-foundation) — COMPLETE 2026-04-28 (9/9 plans executed, verified 3/4 PASS + 1 manual-only)
+Phase: 15 (task-cancellation-collision-shared-resource-semaphore) — EXECUTING
+Plan: 1 of 7
 Resume file: None
-Status: All 8 waves landed cleanly. Domain types (WorktreeSlice + TaskId/TaskRecord/ExitStatus + TaskHandle 9th port) live in src/domain/. Infra adapter TokioTaskHandle wraps tokio::JoinHandle and impls TaskHandle. AppState gained `worktrees: HashMap<WorktreeId, WorktreeSlice>` root field with task_for_worktree + merge_slices helpers; Effect::SpawnTask{task_id,worktree_id,spec,cwd,branch} replaced SpawnCommand at the chokepoint; Action::CommandOutputLine and CommandExited carry task_id; runtime owns the dedicated task_handle_tx channel (Q2 lock — Box<dyn TaskHandle> not Clone+PartialEq). All 11 Recipe::expand sites push to slice.queue; CommandExited drains slice-locally; CommandCancel calls handle.abort() via port; MetroActivityUpdate(Ready) walks slices. 17 dispatch tests rewritten + 5 new parallelism/routing/stale-drop tests. Atomic delete in 14-09: CommandRunnerState struct + 4 globals + Effect::SpawnCommand all gone; helpers flipped to slice; G-21 grep guard prevents regression. 99 tests pass (96 lib + 2 COVER-01 + 1 COVER-02); all 21 G-XX arch guards green; clippy clean. TASK-01/TASK-02/TASK-03 closed.
+Status: Executing Phase 15
 
 Next phase: Phase 15 (Task Cancellation + Collision + Semaphore) — `/gsd-discuss-phase 15` or `/gsd-plan-phase 15`.
 
