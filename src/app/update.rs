@@ -678,17 +678,28 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let active_id = active_worktree_id(state);
 
             // D-03: opaque abort via TaskHandle trait for the active worktree.
+            // Phase 15 / TASK-04 (15-RESEARCH §Pitfall 5): is_cancellable() guard
+            // prevents SIGTERM at running git rebase/push (data-integrity risk).
+            // Take-then-maybe-reinsert pattern: take() requires &mut on slice.task,
+            // we then inspect the OWNED record and either abort + clear OR put it back.
             if let Some(ref id) = active_id
                 && let Some(slice) = state.worktrees.get_mut(id)
+                && let Some(record) = slice.task.take()
             {
-                if let Some(record) = slice.task.take() {
+                if record.spec.is_cancellable() {
                     record.handle.abort();
-                }
-                slice.queue.clear();
-                slice.post_drain = None;
-                slice.output.push_back("[cancelled]".into());
-                if slice.output.len() > MAX_COMMAND_LINES {
-                    slice.output.pop_front();
+                    slice.queue.clear();
+                    slice.post_drain = None;
+                    slice.output.push_back("[cancelled]".into());
+                    if slice.output.len() > MAX_COMMAND_LINES {
+                        slice.output.pop_front();
+                    }
+                } else {
+                    // Non-cancellable variants (all 8 git porcelain commands):
+                    // CommandCancel is a no-op. Re-insert the record so the
+                    // running task continues to completion. Queue and output
+                    // are also untouched.
+                    slice.task = Some(record);
                 }
             }
         }
