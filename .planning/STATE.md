@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: completed
-stopped_at: Completed 12-04-PLAN.md (COVER-04 post-wave-2 baseline — 5cc75ae commits BASELINE-COVERAGE.json + BASELINE-COVERAGE.md + COVERAGE-THRESHOLDS.md; 27 src/ files, 12.84% line / 20.82% function / 9.89% region total; floor-to-5 ratchet locked; 46 lib tests + 3 integration tests pass under coverage; clippy all-targets -D warnings clean). Phase 12 COMPLETE — all 4 COVER-NN green. Phase 13 (audit-driven refactors) unblocked.
-last_updated: "2026-05-19T10:57:23.078Z"
+stopped_at: Phase 16 context gathered
+last_updated: "2026-05-21T22:22:55.655Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-13 after v1.1 milestone completion)
 
 Phase: 15 — COMPLETE
 Plan: 1 of 7
-Resume file: None
+Resume file: .planning/phases/16-live-ui-indicators/16-CONTEXT.md
 Status: Phase 15 complete
 
 Next phase: Phase 15 (Task Cancellation + Collision + Semaphore) — `/gsd-discuss-phase 15` or `/gsd-plan-phase 15`.
@@ -124,6 +124,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-23T19:02:42Z
-Stopped at: Completed 12-04-PLAN.md (COVER-04 post-wave-2 baseline — 5cc75ae commits BASELINE-COVERAGE.json + BASELINE-COVERAGE.md + COVERAGE-THRESHOLDS.md; 27 src/ files, 12.84% line / 20.82% function / 9.89% region total; floor-to-5 ratchet locked; 46 lib tests + 3 integration tests pass under coverage; clippy all-targets -D warnings clean). Phase 12 COMPLETE — all 4 COVER-NN green. Phase 13 (audit-driven refactors) unblocked.
+Last session: 2026-05-21T22:22:55.647Z
+Stopped at: Phase 16 context gathered
 Resume file: None
