@@ -16,9 +16,11 @@ use crate::domain::command::CommandSpec;
 /// no layout or call-site change required. The type annotation `[&str; 6]` is
 /// exact so any swap is type-checked at compile time.
 ///
-/// Width risk: ◐ (U+25D0) and ◑ (U+25D1) have east_asian_width=A (Ambiguous).
-/// Safe in tmux+iTerm2 (Western locale). Fall back to braille set if misaligned.
-pub const SPINNER_FRAMES: [&str; 6] = ["◐", "◓", "◑", "◒", "◐", "◓"];
+/// Glyph width: braille dots U+2800-block all have east_asian_width=N (Narrow),
+/// so they render single-cell in every terminal and align with the width-1 Y/P
+/// letters. (Half-circles ◐◑ are east_asian_width=A/Ambiguous and rendered fine
+/// in tmux+iTerm2 but did not visually line up with the letters — braille does.)
+pub const SPINNER_FRAMES: [&str; 6] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴"];
 
 /// Returns the current spinner glyph for a running task.
 ///
@@ -94,32 +96,32 @@ mod tests {
 
     #[test]
     fn frame_at_0ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(0)), "◐");
+        assert_eq!(spinner_frame(Duration::from_millis(0)), "⠋");
     }
 
     #[test]
     fn frame_at_149ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(149)), "◐");
+        assert_eq!(spinner_frame(Duration::from_millis(149)), "⠋");
     }
 
     #[test]
     fn frame_at_150ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(150)), "◓");
+        assert_eq!(spinner_frame(Duration::from_millis(150)), "⠙");
     }
 
     #[test]
     fn frame_at_749ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(749)), "◐");
+        assert_eq!(spinner_frame(Duration::from_millis(749)), "⠼");
     }
 
     #[test]
     fn frame_at_750ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(750)), "◓");
+        assert_eq!(spinner_frame(Duration::from_millis(750)), "⠴");
     }
 
     #[test]
     fn frame_wraps_at_900ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(900)), "◐");
+        assert_eq!(spinner_frame(Duration::from_millis(900)), "⠋");
     }
 
     // --- format_elapsed: boundary cases (D-08) ---

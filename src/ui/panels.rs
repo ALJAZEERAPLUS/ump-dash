@@ -207,7 +207,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             Constraint::Length(20), // Branch
             Constraint::Min(20),    // Ticket (merged number + title)
             Constraint::Length(16), // Dir
-            Constraint::Length(20), // Task (◐ unit-tests 12:03 = 18 chars + 2 margin)
+            Constraint::Length(20), // Task (⠋ unit-tests 12:03 = 18 chars + 2 margin)
         ],
     )
     .block(block)
