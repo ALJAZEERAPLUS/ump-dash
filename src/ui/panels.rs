@@ -12,7 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppState, FocusedPanel},
     domain::worktree::WorktreeMetroStatus,
-    ui::theme,
+    ui::{indicators::{spinner_frame, format_elapsed, task_short_label}, theme},
 };
 
 /// Renders the application title bar with double border.
@@ -79,7 +79,10 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             (true, true) => String::new(),
         };
 
-        // Status icons: always show Y (yarn) and /P (pods) with color indicating freshness
+        // Per-row running task lookup — Option<&TaskRecord> is Copy; safe to use twice below.
+        let task = crate::app::state::task_for_worktree(state, &wt.id);
+
+        // Status icons: always show Y (yarn) and P (pods) with color indicating freshness
         let mut icon_spans: Vec<Span> = Vec::new();
 
         // Metro indicator: play icon when running, space placeholder when not
@@ -89,13 +92,36 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             icon_spans.push(Span::raw("  "));
         }
 
-        // Yarn staleness: Y always shown, green=fresh, red=stale
-        let yarn_color = if wt.stale { Color::Red } else { Color::Green };
-        icon_spans.push(Span::styled("Y", Style::default().fg(yarn_color)));
+        // Y cell: yellow spinner if yarn-install running (D-02/D-09), else staleness color
+        if let Some(record) = task {
+            if matches!(&record.spec, crate::domain::command::CommandSpec::YarnInstall) {
+                let frame = spinner_frame(record.started_at.elapsed());
+                icon_spans.push(Span::styled(frame, Style::default().fg(Color::Yellow)));
+            } else {
+                let yarn_color = if wt.stale { Color::Red } else { Color::Green };
+                icon_spans.push(Span::styled("Y", Style::default().fg(yarn_color)));
+            }
+        } else {
+            let yarn_color = if wt.stale { Color::Red } else { Color::Green };
+            icon_spans.push(Span::styled("Y", Style::default().fg(yarn_color)));
+        }
 
-        // Pods staleness: /P always shown, green=fresh, red=stale
-        let pods_color = if wt.stale_pods { Color::Red } else { Color::Green };
-        icon_spans.push(Span::styled("/P", Style::default().fg(pods_color)));
+        // Space separator — replaces the slash (D-03)
+        icon_spans.push(Span::raw(" "));
+
+        // P cell: yellow spinner if pod-install running (D-02/D-09), else staleness color
+        if let Some(record) = task {
+            if matches!(&record.spec, crate::domain::command::CommandSpec::YarnPodInstall) {
+                let frame = spinner_frame(record.started_at.elapsed());
+                icon_spans.push(Span::styled(frame, Style::default().fg(Color::Yellow)));
+            } else {
+                let pods_color = if wt.stale_pods { Color::Red } else { Color::Green };
+                icon_spans.push(Span::styled("P", Style::default().fg(pods_color)));
+            }
+        } else {
+            let pods_color = if wt.stale_pods { Color::Red } else { Color::Green };
+            icon_spans.push(Span::styled("P", Style::default().fg(pods_color)));
+        }
 
         let row_style = if wt.metro_status == WorktreeMetroStatus::Running {
             Style::default()
