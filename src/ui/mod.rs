@@ -10,6 +10,7 @@ pub mod error_overlay;
 pub mod modals;
 pub mod panels;
 pub mod theme;
+pub mod indicators;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout},
