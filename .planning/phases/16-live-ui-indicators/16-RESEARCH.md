@@ -594,7 +594,7 @@ Constraint::Length(20) → 2-char margin, safe for all labels
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should git ops (non-cancellable) show a spinner in the task column while running?**
    - What we know: D-04 says "every running task that is not yarn-install or pod-install" — git ops are running tasks.
