@@ -137,11 +137,31 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             .unwrap_or("")
             .to_string();
 
+        // Task column: spinner + short label + elapsed for non-yarn/pod tasks (D-04/UI-02)
+        // YarnInstall/YarnPodInstall animate in Y/P cells; task column empty for them.
+        let task_cell: String = match task {
+            Some(record) if !matches!(
+                &record.spec,
+                crate::domain::command::CommandSpec::YarnInstall
+                    | crate::domain::command::CommandSpec::YarnPodInstall
+            ) => {
+                let elapsed = record.started_at.elapsed();
+                format!(
+                    "{} {} {}",
+                    spinner_frame(elapsed),
+                    task_short_label(&record.spec),
+                    format_elapsed(elapsed)
+                )
+            }
+            _ => String::new(),
+        };
+
         rows.push(Row::new(vec![
             Cell::from(Line::from(icon_spans)),
             Cell::from(truncate(branch, 18)),
             Cell::from(ticket_display),
             Cell::from(dir_name),
+            Cell::from(task_cell),  // new 5th column — empty String when no task (D-04)
         ])
         .style(row_style));
 
@@ -156,6 +176,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
                         Style::default().fg(Color::Cyan),
                     )),
                     Cell::from(""),
+                    Cell::from(""),  // task column — always empty for detail rows (Pitfall 1)
                 ])
                 .style(Style::default().bg(Color::Rgb(0, 60, 0)));
                 detail_row_indices.push(rows.len());
@@ -182,10 +203,11 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(8),  // Status icons (metro + Y + /P)
+            Constraint::Length(8),  // Status icons (metro + Y + P)
             Constraint::Length(20), // Branch
-            Constraint::Min(20),   // Ticket (merged number + title)
+            Constraint::Min(20),    // Ticket (merged number + title)
             Constraint::Length(16), // Dir
+            Constraint::Length(20), // Task (◐ unit-tests 12:03 = 18 chars + 2 margin)
         ],
     )
     .block(block)
