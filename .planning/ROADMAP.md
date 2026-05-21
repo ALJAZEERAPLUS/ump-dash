@@ -170,7 +170,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   2. When a yarn-family task is running for a worktree, the `Y` cell shows a rotating 6-frame yellow spinner (inline `const SPINNER_FRAMES: [&str; 6]`, frame = `elapsed.as_millis() / 150 % 6`); same for `P` during pod-family tasks; run/test tasks show an equivalent animated indicator in the appropriate position; all indicators return to static letters when idle
   3. Each active worktree row shows a live MM:SS elapsed counter that updates on every 250ms tick, computed as `started_at.elapsed()` in the render function with no mutable frame-counter field in `AppState`
 **Plans**: 2 plans across 2 waves
-  - [ ] 16-01-PLAN.md — Pure ui/indicators.rs helpers: SPINNER_FRAMES const + spinner_frame + format_elapsed + exhaustive task_short_label (UI-02/UI-03 helpers)
+  - [x] 16-01-PLAN.md — Pure ui/indicators.rs helpers: SPINNER_FRAMES const + spinner_frame + format_elapsed + exhaustive task_short_label (UI-02/UI-03 helpers)
   - [ ] 16-02-PLAN.md — Wire helpers into render_worktree_table: split Y/P cells, task column, live elapsed; terminal-alignment checkpoint (UI-01/UI-02/UI-03)
 **UI hint**: yes
 
@@ -185,4 +185,4 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/9 | Planned | - |
 | 15. Task Cancellation + Collision + Semaphore | v1.3 | 7/7 | Complete   | 2026-05-19 |
-| 16. Live UI Indicators | v1.3 | 0/2 | Planned | - |
+| 16. Live UI Indicators | v1.3 | 1/2 | In Progress|  |
