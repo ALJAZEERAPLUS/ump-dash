@@ -8,28 +8,55 @@ use std::time::Duration;
 
 use crate::domain::command::CommandSpec;
 
-/// Half-circle spinner frames. 6 frames, 150ms per frame → full rotation in 900ms.
-///
-/// This const is the single swap point: to use the braille fallback set
-/// `["⠋", "⠙", "⠹", "⠸", "⠼", "⠴"]` (all narrow, east_asian_width=N) or
-/// ASCII `["-", "\\", "|", "/", "-", "\\"]`, only this line needs changing —
-/// no layout or call-site change required. The type annotation `[&str; 6]` is
-/// exact so any swap is type-checked at compile time.
-///
-/// Glyph width: braille dots U+2800-block all have east_asian_width=N (Narrow),
-/// so they render single-cell in every terminal and align with the width-1 Y/P
-/// letters. (Half-circles ◐◑ are east_asian_width=A/Ambiguous and rendered fine
-/// in tmux+iTerm2 but did not visually line up with the letters — braille does.)
-pub const SPINNER_FRAMES: [&str; 6] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴"];
+/// Half-circle spinner frames (the default). 6 frames, 150ms each → full
+/// rotation in 900ms. `◐◑` are east_asian_width=A (Ambiguous); they render fine
+/// in tmux+iTerm2 but may not sit flush under the width-1 Y/P letters in every
+/// terminal — use [`SpinnerStyle::Braille`] there.
+pub const SPINNER_FRAMES_CIRCLES: [&str; 6] = ["◐", "◓", "◑", "◒", "◐", "◓"];
 
-/// Returns the current spinner glyph for a running task.
+/// Braille spinner frames. All glyphs are east_asian_width=N (Narrow), so they
+/// render single-cell in every terminal and align with the width-1 Y/P letters.
+pub const SPINNER_FRAMES_BRAILLE: [&str; 6] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴"];
+
+/// Selectable spinner glyph set (config key `spinner_style` in config.toml).
+/// Defaults to [`SpinnerStyle::Circles`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpinnerStyle {
+    /// Half-circles `◐◓◑◒` — the default.
+    #[default]
+    Circles,
+    /// Braille dots `⠋⠙⠹⠸⠼⠴` — guaranteed single-cell width.
+    Braille,
+}
+
+impl SpinnerStyle {
+    /// Maps the config string to a style. `"braille"`/`"dots"` → Braille;
+    /// everything else (including `"circles"`, empty, or unknown) → the
+    /// default Circles. Case- and whitespace-insensitive.
+    pub fn from_config(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "braille" | "dots" => SpinnerStyle::Braille,
+            _ => SpinnerStyle::Circles,
+        }
+    }
+
+    /// The 6-frame glyph set for this style.
+    fn frames(self) -> &'static [&'static str; 6] {
+        match self {
+            SpinnerStyle::Circles => &SPINNER_FRAMES_CIRCLES,
+            SpinnerStyle::Braille => &SPINNER_FRAMES_BRAILLE,
+        }
+    }
+}
+
+/// Returns the current spinner glyph for a running task in the given style.
 ///
 /// Frame index = `elapsed.as_millis() / 150 % 6` (D-05 / UI-02).
 /// No stored or incremented counter — the index is derived freshly from
 /// the `elapsed` argument every call.
-pub fn spinner_frame(elapsed: Duration) -> &'static str {
+pub fn spinner_frame(elapsed: Duration, style: SpinnerStyle) -> &'static str {
     let idx = (elapsed.as_millis() / 150 % 6) as usize;
-    SPINNER_FRAMES[idx]
+    style.frames()[idx]
 }
 
 /// Formats elapsed duration for display in the task column (D-08 / UI-03).
@@ -92,36 +119,65 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    // --- spinner_frame: boundary cases (D-05) ---
+    // --- spinner_frame: boundary cases (D-05), default style = Circles ---
 
     #[test]
     fn frame_at_0ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(0)), "⠋");
+        assert_eq!(spinner_frame(Duration::from_millis(0), SpinnerStyle::Circles), "◐");
     }
 
     #[test]
     fn frame_at_149ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(149)), "⠋");
+        assert_eq!(spinner_frame(Duration::from_millis(149), SpinnerStyle::Circles), "◐");
     }
 
     #[test]
     fn frame_at_150ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(150)), "⠙");
+        assert_eq!(spinner_frame(Duration::from_millis(150), SpinnerStyle::Circles), "◓");
     }
 
     #[test]
     fn frame_at_749ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(749)), "⠼");
+        assert_eq!(spinner_frame(Duration::from_millis(749), SpinnerStyle::Circles), "◐");
     }
 
     #[test]
     fn frame_at_750ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(750)), "⠴");
+        assert_eq!(spinner_frame(Duration::from_millis(750), SpinnerStyle::Circles), "◓");
     }
 
     #[test]
     fn frame_wraps_at_900ms() {
-        assert_eq!(spinner_frame(Duration::from_millis(900)), "⠋");
+        assert_eq!(spinner_frame(Duration::from_millis(900), SpinnerStyle::Circles), "◐");
+    }
+
+    // --- spinner_frame: braille style at the same boundaries ---
+
+    #[test]
+    fn braille_frames_at_boundaries() {
+        assert_eq!(spinner_frame(Duration::from_millis(0), SpinnerStyle::Braille), "⠋");
+        assert_eq!(spinner_frame(Duration::from_millis(149), SpinnerStyle::Braille), "⠋");
+        assert_eq!(spinner_frame(Duration::from_millis(150), SpinnerStyle::Braille), "⠙");
+        assert_eq!(spinner_frame(Duration::from_millis(749), SpinnerStyle::Braille), "⠼");
+        assert_eq!(spinner_frame(Duration::from_millis(750), SpinnerStyle::Braille), "⠴");
+        assert_eq!(spinner_frame(Duration::from_millis(900), SpinnerStyle::Braille), "⠋");
+    }
+
+    // --- SpinnerStyle: config mapping + default ---
+
+    #[test]
+    fn style_default_is_circles() {
+        assert_eq!(SpinnerStyle::default(), SpinnerStyle::Circles);
+    }
+
+    #[test]
+    fn style_from_config_maps_braille_and_defaults_to_circles() {
+        assert_eq!(SpinnerStyle::from_config("braille"), SpinnerStyle::Braille);
+        assert_eq!(SpinnerStyle::from_config("dots"), SpinnerStyle::Braille);
+        assert_eq!(SpinnerStyle::from_config("  BRAILLE "), SpinnerStyle::Braille);
+        assert_eq!(SpinnerStyle::from_config("circles"), SpinnerStyle::Circles);
+        assert_eq!(SpinnerStyle::from_config(""), SpinnerStyle::Circles);
+        assert_eq!(SpinnerStyle::from_config("nonsense"), SpinnerStyle::Circles);
     }
 
     // --- format_elapsed: boundary cases (D-08) ---

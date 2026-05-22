@@ -12,7 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppState, FocusedPanel},
     domain::worktree::WorktreeMetroStatus,
-    ui::{indicators::{spinner_frame, format_elapsed, task_short_label}, theme},
+    ui::{indicators::{spinner_frame, format_elapsed, task_short_label, SpinnerStyle}, theme},
 };
 
 /// Renders the application title bar with double border.
@@ -64,6 +64,14 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     // Track visual row indices that are detail rows (not selectable worktree rows).
     let mut detail_row_indices: Vec<usize> = Vec::new();
 
+    // Spinner glyph set — read once from config (default Circles). Pure UI choice.
+    let spinner_style = state
+        .app_config
+        .config
+        .as_ref()
+        .map(|c| SpinnerStyle::from_config(&c.spinner_style))
+        .unwrap_or_default();
+
     for wt in state.worktree_browser.worktrees.iter() {
         let branch = &wt.branch;
 
@@ -95,7 +103,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         // Y cell: yellow spinner if yarn-install running (D-02/D-09), else staleness color
         if let Some(record) = task {
             if matches!(&record.spec, crate::domain::command::CommandSpec::YarnInstall) {
-                let frame = spinner_frame(record.started_at.elapsed());
+                let frame = spinner_frame(record.started_at.elapsed(), spinner_style);
                 icon_spans.push(Span::styled(frame, Style::default().fg(Color::Yellow)));
             } else {
                 let yarn_color = if wt.stale { Color::Red } else { Color::Green };
@@ -112,7 +120,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         // P cell: yellow spinner if pod-install running (D-02/D-09), else staleness color
         if let Some(record) = task {
             if matches!(&record.spec, crate::domain::command::CommandSpec::YarnPodInstall) {
-                let frame = spinner_frame(record.started_at.elapsed());
+                let frame = spinner_frame(record.started_at.elapsed(), spinner_style);
                 icon_spans.push(Span::styled(frame, Style::default().fg(Color::Yellow)));
             } else {
                 let pods_color = if wt.stale_pods { Color::Red } else { Color::Green };
@@ -148,7 +156,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
                 let elapsed = record.started_at.elapsed();
                 format!(
                     "{} {} {}",
-                    spinner_frame(elapsed),
+                    spinner_frame(elapsed, spinner_style),
                     task_short_label(&record.spec),
                     format_elapsed(elapsed)
                 )

@@ -32,3 +32,10 @@ jira_token = "your-api-token-here"
 # Flags passed when launching Claude Code.
 # Default: "--dangerously-skip-permissions"
 # claude_flags = "--dangerously-skip-permissions"
+
+# Spinner glyph set for live task indicators:
+#   "circles" → half-circles ◐◓◑◒ (default)
+#   "braille" → braille dots ⠋⠙⠹⠸⠼⠴ (guaranteed single-cell width; use if the
+#               half-circles don't line up under the Y/P letters in your terminal)
+# Default: "circles"
+# spinner_style = "circles"

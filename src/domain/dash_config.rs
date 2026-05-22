@@ -25,6 +25,10 @@ fn default_app_title() -> String {
     "RN Dash".to_string()
 }
 
+fn default_spinner_style() -> String {
+    "circles".to_string()
+}
+
 /// Application configuration stored in ~/.config/rn-dash/config.toml.
 ///
 /// Security note: this file is written with 0600 permissions on Unix because
@@ -72,6 +76,12 @@ pub struct DashConfig {
     /// prompts instead of showing a confirmation modal. Defaults to false.
     #[serde(default)]
     pub auto_sync: bool,
+
+    /// Spinner glyph set for live task indicators: `"circles"` (half-circles
+    /// ◐◓◑◒, the default) or `"braille"`/`"dots"` (⠋⠙⠹⠸⠼⠴, guaranteed
+    /// single-cell width). Parsed via `ui::indicators::SpinnerStyle::from_config`.
+    #[serde(default = "default_spinner_style")]
+    pub spinner_style: String,
 }
 
 impl DashConfig {
