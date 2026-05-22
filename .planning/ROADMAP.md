@@ -47,7 +47,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 - [x] **Phase 13: Audit-Driven Refactors** — Resolve all Critical and Major findings from the audit; type-driven cancellability; domain-level prerequisite ordering (completed 2026-04-25)
 - [x] **Phase 14: Per-Worktree Task System Foundation** — Replace global task state with per-worktree task map; parallel execution across worktrees; correct output routing (completed 2026-04-28)
 - [x] **Phase 15: Task Cancellation + Collision + Semaphore** — Individual task cancellation with SIGTERM/SIGKILL; uniqueness-based collision policy; shared-resource semaphore for yarn installs (completed 2026-05-19)
-- [ ] **Phase 16: Live UI Indicators** — Split Y/P cells; 6-frame inline spinner replacing Y/P during active tasks; live MM:SS elapsed time computed in render path
+- [x] **Phase 16: Live UI Indicators** — Split Y/P cells; 6-frame inline spinner replacing Y/P during active tasks; live MM:SS elapsed time computed in render path (completed 2026-05-22)
 
 ## Phase Details
 
@@ -171,7 +171,7 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
   3. Each active worktree row shows a live MM:SS elapsed counter that updates on every 250ms tick, computed as `started_at.elapsed()` in the render function with no mutable frame-counter field in `AppState`
 **Plans**: 2 plans across 2 waves
   - [x] 16-01-PLAN.md — Pure ui/indicators.rs helpers: SPINNER_FRAMES const + spinner_frame + format_elapsed + exhaustive task_short_label (UI-02/UI-03 helpers)
-  - [ ] 16-02-PLAN.md — Wire helpers into render_worktree_table: split Y/P cells, task column, live elapsed; terminal-alignment checkpoint (UI-01/UI-02/UI-03)
+  - [x] 16-02-PLAN.md — Wire helpers into render_worktree_table: split Y/P cells, task column, live elapsed; terminal-alignment checkpoint (UI-01/UI-02/UI-03)
 **UI hint**: yes
 
 ## Progress
@@ -185,4 +185,4 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/9 | Planned | - |
 | 15. Task Cancellation + Collision + Semaphore | v1.3 | 7/7 | Complete   | 2026-05-19 |
-| 16. Live UI Indicators | v1.3 | 1/2 | In Progress|  |
+| 16. Live UI Indicators | v1.3 | 2/2 | Complete   | 2026-05-22 |
