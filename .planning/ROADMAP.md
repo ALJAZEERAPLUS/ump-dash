@@ -185,4 +185,4 @@ See: `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 13. Audit-Driven Refactors | v1.3 | 0/TBD | Not started | - |
 | 14. Per-Worktree Task System Foundation | v1.3 | 0/9 | Planned | - |
 | 15. Task Cancellation + Collision + Semaphore | v1.3 | 7/7 | Complete   | 2026-05-19 |
-| 16. Live UI Indicators | v1.3 | 2/2 | Complete   | 2026-05-22 |
+| 16. Live UI Indicators | v1.3 | 2/2 | Complete    | 2026-05-22 |

@@ -46,7 +46,7 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 
 ### Live UI Indicators (UI)
 
-- [ ] **UI-01**: The worktree table renders `Y` and `P` as two independent cells/characters (not a merged "Y/P" string). Each can independently show its letter or a spinner.
+- [x] **UI-01**: The worktree table renders `Y` and `P` as two independent cells/characters (not a merged "Y/P" string). Each can independently show its letter or a spinner.
 - [x] **UI-02**: When a yarn-family task is running for a worktree, its `Y` cell is replaced by a rotating 6-frame yellow spinner (frame index = `elapsed.as_millis() / 150 % 6`, or whatever convention the chosen frame set requires). Same rule for `P` cell when a pod-family task is running. Other cancellable task categories (run-android, run-ios, tests, shell) get an equivalent animated indicator in the appropriate row position.
 - [x] **UI-03**: The worktree row shows live MM:SS elapsed time for the currently-running task, computed in the render path from `started_at.elapsed()` with no mutable tick state stored in `AppState`.
 
@@ -95,6 +95,6 @@ Test coverage that must land before any audit-driven refactor or task-system cha
 | TASK-04 | Phase 15 | Pending |
 | TASK-05 | Phase 15 | Pending |
 | TASK-06 | Phase 15 | Pending |
-| UI-01 | Phase 16 | Pending |
+| UI-01 | Phase 16 | Complete |
 | UI-02 | Phase 16 | Complete |
 | UI-03 | Phase 16 | Complete |
