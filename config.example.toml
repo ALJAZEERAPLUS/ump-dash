@@ -39,3 +39,13 @@ jira_token = "your-api-token-here"
 #               half-circles don't line up under the Y/P letters in your terminal)
 # Default: "circles"
 # spinner_style = "circles"
+
+# Worktree table column widths.
+# Defaults match the built-in layout. The ticket column is the flexible
+# minimum-width column; the others are fixed widths.
+# [columns]
+# status = 4
+# branch = 20
+# ticket = 20
+# dir = 16
+# task = 20

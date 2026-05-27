@@ -203,14 +203,21 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             .add_modifier(Modifier::BOLD)
     };
 
+    let columns = state
+        .app_config
+        .config
+        .as_ref()
+        .map(|c| c.columns)
+        .unwrap_or_default();
+
     let table = Table::new(
         rows,
         [
-            Constraint::Length(4),  // Status icons (Y + space + P + 1 trailing pad)
-            Constraint::Length(20), // Branch
-            Constraint::Min(20),    // Ticket (merged number + title)
-            Constraint::Length(16), // Dir
-            Constraint::Length(20), // Task (⠋ unit-tests 12:03 = 18 chars + 2 margin)
+            Constraint::Length(columns.status), // Status icons (Y + space + P + 1 trailing pad)
+            Constraint::Length(columns.branch), // Branch
+            Constraint::Min(columns.ticket),    // Ticket (merged number + title)
+            Constraint::Length(columns.dir),    // Dir
+            Constraint::Length(columns.task),   // Task (spinner + label + elapsed)
         ],
     )
     .block(block)

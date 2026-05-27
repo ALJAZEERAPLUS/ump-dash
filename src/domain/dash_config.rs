@@ -29,6 +29,56 @@ fn default_spinner_style() -> String {
     "circles".to_string()
 }
 
+fn default_column_status() -> u16 {
+    4
+}
+
+fn default_column_branch() -> u16 {
+    20
+}
+
+fn default_column_ticket() -> u16 {
+    20
+}
+
+fn default_column_dir() -> u16 {
+    16
+}
+
+fn default_column_task() -> u16 {
+    20
+}
+
+/// Worktree table column widths.
+///
+/// `ticket` is used as the minimum width for the flexible ticket/title column;
+/// the other values are fixed column widths.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorktreeTableColumns {
+    #[serde(default = "default_column_status")]
+    pub status: u16,
+    #[serde(default = "default_column_branch")]
+    pub branch: u16,
+    #[serde(default = "default_column_ticket")]
+    pub ticket: u16,
+    #[serde(default = "default_column_dir")]
+    pub dir: u16,
+    #[serde(default = "default_column_task")]
+    pub task: u16,
+}
+
+impl Default for WorktreeTableColumns {
+    fn default() -> Self {
+        Self {
+            status: default_column_status(),
+            branch: default_column_branch(),
+            ticket: default_column_ticket(),
+            dir: default_column_dir(),
+            task: default_column_task(),
+        }
+    }
+}
+
 /// Application configuration stored in ~/.config/rn-dash/config.toml.
 ///
 /// Security note: this file is written with 0600 permissions on Unix because
@@ -82,6 +132,10 @@ pub struct DashConfig {
     /// single-cell width). Parsed via `ui::indicators::SpinnerStyle::from_config`.
     #[serde(default = "default_spinner_style")]
     pub spinner_style: String,
+
+    /// Worktree table column widths. Defaults preserve the built-in layout.
+    #[serde(default)]
+    pub columns: WorktreeTableColumns,
 }
 
 impl DashConfig {
@@ -96,5 +150,54 @@ impl DashConfig {
                 std::path::PathBuf::from(s)
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_config(extra: &str) -> DashConfig {
+        toml::from_str(&format!(
+            r#"
+jira_base_url = "https://example.atlassian.net"
+jira_token = "token"
+{extra}
+"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn columns_default_to_current_worktree_table_layout() {
+        let config = parse_config("");
+
+        assert_eq!(
+            config.columns,
+            WorktreeTableColumns {
+                status: 4,
+                branch: 20,
+                ticket: 20,
+                dir: 16,
+                task: 20,
+            }
+        );
+    }
+
+    #[test]
+    fn partial_columns_config_uses_per_field_defaults() {
+        let config = parse_config(
+            r#"
+[columns]
+branch = 32
+ticket = 40
+"#,
+        );
+
+        assert_eq!(config.columns.status, 4);
+        assert_eq!(config.columns.branch, 32);
+        assert_eq!(config.columns.ticket, 40);
+        assert_eq!(config.columns.dir, 16);
+        assert_eq!(config.columns.task, 20);
     }
 }

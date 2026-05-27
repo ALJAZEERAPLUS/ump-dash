@@ -61,6 +61,11 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 | `jira_project_prefix` | string | `"UMP"` | JIRA project key prefix used in branch names, e.g. `PROJ` for `PROJ-1234`. |
 | `app_title` | string | `"RN Dash"` | Title shown in the dashboard header. |
 | `claude_flags` | string | `"--dangerously-skip-permissions"` | Flags passed when launching Claude Code. |
+| `[columns].status` | integer | `4` | Worktree table status icon column width. |
+| `[columns].branch` | integer | `20` | Worktree table branch column width. |
+| `[columns].ticket` | integer | `20` | Minimum width for the flexible ticket/title column. |
+| `[columns].dir` | integer | `16` | Worktree table directory column width. |
+| `[columns].task` | integer | `20` | Worktree table task column width. |
 
 See `config.example.toml` for an annotated template.
 
