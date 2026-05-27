@@ -214,8 +214,9 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         ],
     )
     .block(block)
-    .row_highlight_style(highlight_style)
-    .highlight_symbol("> ");
+    .row_highlight_style(highlight_style);
+    // No highlight_symbol — selection is conveyed by row bg only, so the
+    // left gutter (`> ` for selected, blank for others) is not reserved.
 
     // Map logical selection index to visual index (offset by any detail rows inserted before it)
     if let Some(logical) = state.worktree_browser.worktree_table_state.selected() {
