@@ -90,15 +90,9 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         // Per-row running task lookup — Option<&TaskRecord> is Copy; safe to use twice below.
         let task = crate::app::state::task_for_worktree(state, &wt.id);
 
-        // Status icons: always show Y (yarn) and P (pods) with color indicating freshness
+        // Status icons: Y (yarn) and P (pods) with color indicating freshness.
+        // Metro state surfaces via row bg + detail row, not via an icon column.
         let mut icon_spans: Vec<Span> = Vec::new();
-
-        // Metro indicator: play icon when running, space placeholder when not
-        if wt.metro_status == WorktreeMetroStatus::Running {
-            icon_spans.push(Span::styled("\u{25B6} ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)));
-        } else {
-            icon_spans.push(Span::raw("  "));
-        }
 
         // Y cell: yellow spinner if yarn-install running (D-02/D-09), else staleness color
         if let Some(record) = task {
@@ -114,10 +108,8 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             icon_spans.push(Span::styled("Y", Style::default().fg(yarn_color)));
         }
 
-        // Space separator — replaces the slash (D-03)
-        icon_spans.push(Span::raw(" "));
-
         // P cell: yellow spinner if pod-install running (D-02/D-09), else staleness color
+        // No separator between Y and P (D-03 — slash dropped; flush for compactness)
         if let Some(record) = task {
             if matches!(&record.spec, crate::domain::command::CommandSpec::YarnPodInstall) {
                 let frame = spinner_frame(record.started_at.elapsed(), spinner_style);
@@ -211,7 +203,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(8),  // Status icons (metro + Y + P)
+            Constraint::Length(3),  // Status icons (Y + P + 1 trailing pad)
             Constraint::Length(20), // Branch
             Constraint::Min(20),    // Ticket (merged number + title)
             Constraint::Length(16), // Dir
