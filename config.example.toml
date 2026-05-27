@@ -17,7 +17,10 @@ jira_email = "you@example.com"
 # JIRA API token (Cloud) or Personal Access Token (Data Center).
 jira_token = "your-api-token-here"
 
-# Authentication mode: "cloud" (Basic Auth) or "datacenter" (Bearer PAT).
+# Authentication mode.
+# Possible values:
+#   "cloud"      -> Basic Auth using jira_email + jira_token
+#   "datacenter" -> Bearer auth using jira_token as a PAT
 # Default: "cloud"
 # auth_mode = "cloud"
 
@@ -33,19 +36,36 @@ jira_token = "your-api-token-here"
 # Default: "--dangerously-skip-permissions"
 # claude_flags = "--dangerously-skip-permissions"
 
+# Automatically accept sync-before-run and sync-before-metro prompts.
+# Possible values: true, false
+# Default: false
+# auto_sync = false
+
 # Spinner glyph set for live task indicators:
-#   "circles" → half-circles ◐◓◑◒ (default)
-#   "braille" → braille dots ⠋⠙⠹⠸⠼⠴ (guaranteed single-cell width; use if the
-#               half-circles don't line up under the Y/P letters in your terminal)
+# Possible values:
+#   "circles" -> half-circles ◐◓◑◒ (default)
+#   "braille" -> braille dots ⠋⠙⠹⠸⠼⠴ (guaranteed single-cell width; use if the
+#                half-circles don't line up under the Y/P letters in your terminal)
+#   "dots"    -> alias for "braille"
 # Default: "circles"
 # spinner_style = "circles"
 
 # Worktree table column widths.
 # Defaults match the built-in layout. The ticket column is the flexible
-# minimum-width column; the others are fixed widths.
+# minimum-width column; the others are fixed widths. Values are TOML integers
+# from 0 to 65535; positive values are recommended because 0 collapses a column.
 # [columns]
 # status = 4
 # branch = 20
 # ticket = 20
 # dir = 16
 # task = 20
+
+# Invalid config behavior:
+# - Malformed TOML, missing required fields, wrong types, or out-of-range
+#   numbers make rn-dash ignore the whole config for that launch and log a
+#   warning.
+# - Unknown keys are ignored.
+# - Unknown spinner_style strings fall back to "circles".
+# - Unknown auth_mode strings use Cloud-style Basic Auth unless exactly
+#   "datacenter".

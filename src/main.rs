@@ -28,7 +28,13 @@ async fn main() -> color_eyre::Result<()> {
     tracing::info!("rn-dash starting");
 
     // Step 4: Load config + persisted preferences (synchronous I/O at startup).
-    let config = rn_dash::infra::config::load_config().ok().flatten();
+    let config = match rn_dash::infra::config::load_config() {
+        Ok(config) => config,
+        Err(e) => {
+            tracing::warn!("config load failed: {e}");
+            None
+        }
+    };
     let jira_title_cache = rn_dash::infra::jira_cache::load_jira_cache().unwrap_or_default();
     let android_mode_persisted = rn_dash::infra::android_prefs::load_android_mode();
     let sim_history = rn_dash::infra::sim_history::load_sim_history();

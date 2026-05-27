@@ -51,21 +51,38 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 
 ### Config reference
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `repo_root` | string | — (required) | Absolute path to your React Native monorepo root. Supports `~/`. |
-| `jira_base_url` | string | — | Base URL for your JIRA instance, e.g. `https://your-org.atlassian.net`. |
-| `jira_email` | string | — | JIRA account email. Required for Cloud auth mode. |
-| `jira_token` | string | — | JIRA API token (Cloud) or Personal Access Token (Data Center). |
-| `auth_mode` | string | `"cloud"` | Authentication mode: `"cloud"` (Basic Auth) or `"datacenter"` (Bearer PAT). |
-| `jira_project_prefix` | string | `"UMP"` | JIRA project key prefix used in branch names, e.g. `PROJ` for `PROJ-1234`. |
-| `app_title` | string | `"RN Dash"` | Title shown in the dashboard header. |
-| `claude_flags` | string | `"--dangerously-skip-permissions"` | Flags passed when launching Claude Code. |
-| `[columns].status` | integer | `4` | Worktree table status icon column width. |
-| `[columns].branch` | integer | `20` | Worktree table branch column width. |
-| `[columns].ticket` | integer | `20` | Minimum width for the flexible ticket/title column. |
-| `[columns].dir` | integer | `16` | Worktree table directory column width. |
-| `[columns].task` | integer | `20` | Worktree table task column width. |
+| Field | Type | Default | Accepted values | Description |
+|-------|------|---------|-----------------|-------------|
+| `repo_root` | string | launch directory | Any path string; absolute or `~/` recommended | React Native monorepo root. |
+| `jira_base_url` | string | — (required in config file) | Any JIRA base URL, e.g. `https://your-org.atlassian.net` | Base URL for your JIRA instance. |
+| `jira_email` | string | — | Any email string, or omit | JIRA account email. Required for Cloud auth mode. |
+| `jira_token` | string | — (required in config file) | Any API token or PAT string | JIRA API token (Cloud) or Personal Access Token (Data Center). |
+| `auth_mode` | string | `"cloud"` | `"cloud"`, `"datacenter"` | JIRA authentication mode. |
+| `jira_project_prefix` | string | `"UMP"` | Any exact branch ticket prefix, e.g. `"PROJ"` | Project key used to extract tickets like `PROJ-1234` from branch names. |
+| `app_title` | string | `"RN Dash"` | Any string | Title shown in the dashboard header. |
+| `claude_flags` | string | `"--dangerously-skip-permissions"` | Any string | Flags passed when launching Claude Code. |
+| `auto_sync` | boolean | `false` | `true`, `false` | Automatically accept sync-before-run and sync-before-metro prompts. |
+| `spinner_style` | string | `"circles"` | `"circles"`, `"braille"`, `"dots"` | Spinner glyph set for live task indicators. |
+| `[columns].status` | integer | `4` | `0`-`65535`; positive recommended | Worktree table status icon column width. |
+| `[columns].branch` | integer | `20` | `0`-`65535`; positive recommended | Worktree table branch column width. |
+| `[columns].ticket` | integer | `20` | `0`-`65535`; positive recommended | Minimum width for the flexible ticket/title column. |
+| `[columns].dir` | integer | `16` | `0`-`65535`; positive recommended | Worktree table directory column width. |
+| `[columns].task` | integer | `20` | `0`-`65535`; positive recommended | Worktree table task column width. |
+
+### Invalid config values
+
+Malformed TOML, missing required fields in an existing config file, wrong types
+such as `auto_sync = "yes"`, or out-of-range column values such as
+`branch = 70000` make the config fail to load. rn-dash logs a warning and runs
+as if no config file was present for that launch.
+
+Unknown keys are ignored. Unknown `spinner_style` strings fall back to
+`"circles"`. Unknown `auth_mode` strings are not rejected, but JIRA requests use
+Cloud-style Basic Auth unless the value is exactly `"datacenter"`.
+
+The `[columns]` table may be omitted or partial; missing column widths use their
+defaults. A column width of `0` is accepted by the parser and collapses that
+column, so use positive values unless you intentionally want that effect.
 
 See `config.example.toml` for an annotated template.
 
