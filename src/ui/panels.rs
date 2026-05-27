@@ -108,8 +108,11 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             icon_spans.push(Span::styled("Y", Style::default().fg(yarn_color)));
         }
 
+        // Space separator between Y and P — prevents spinner glyph overlap with P
+        // (spinner cell is east_asian_width=Ambiguous; some terminals render >1 cell wide).
+        icon_spans.push(Span::raw(" "));
+
         // P cell: yellow spinner if pod-install running (D-02/D-09), else staleness color
-        // No separator between Y and P (D-03 — slash dropped; flush for compactness)
         if let Some(record) = task {
             if matches!(&record.spec, crate::domain::command::CommandSpec::YarnPodInstall) {
                 let frame = spinner_frame(record.started_at.elapsed(), spinner_style);
@@ -203,7 +206,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(3),  // Status icons (Y + P + 1 trailing pad)
+            Constraint::Length(4),  // Status icons (Y + space + P + 1 trailing pad)
             Constraint::Length(20), // Branch
             Constraint::Min(20),    // Ticket (merged number + title)
             Constraint::Length(16), // Dir
