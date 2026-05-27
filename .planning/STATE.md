@@ -126,7 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 260527-qlh | Make worktree table columns configurable and update docs/examples | 2026-05-27 | c3eb089 | [260527-qlh-let-s-make-the-columns-configurable-and-](./quick/260527-qlh-let-s-make-the-columns-configurable-and-/) |
+| 260527-qlh | Make worktree table columns configurable and update docs/examples | 2026-05-27 | 50ee6c9 | [260527-qlh-let-s-make-the-columns-configurable-and-](./quick/260527-qlh-let-s-make-the-columns-configurable-and-/) |
 | 260527-q74 | Remove the first column that only highlights the current row | 2026-05-27 | 7fd6cdd | [260527-q74-let-s-remove-the-first-column-which-only](./quick/260527-q74-let-s-remove-the-first-column-which-only/) |
 
 ## Session Continuity

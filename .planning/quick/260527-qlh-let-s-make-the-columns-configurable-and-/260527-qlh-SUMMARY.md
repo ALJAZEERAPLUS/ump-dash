@@ -1,7 +1,7 @@
 ---
 quick_id: 260527-qlh
 status: complete
-commit: c3eb089
+commit: 50ee6c9
 date: 2026-05-27
 files_changed: 6
 ---
@@ -28,4 +28,4 @@ files_changed: 6
 
 ## Commit
 
-`c3eb089` feat(config): make columns configurable
+`50ee6c9` feat(config): make columns configurable
