@@ -29,54 +29,47 @@ fn default_spinner_style() -> String {
     "circles".to_string()
 }
 
-fn default_column_status() -> u16 {
-    4
+pub const DEFAULT_WORKTREE_COLUMNS: [WorktreeTableColumn; 5] = [
+    WorktreeTableColumn::Status,
+    WorktreeTableColumn::Branch,
+    WorktreeTableColumn::Ticket,
+    WorktreeTableColumn::Dir,
+    WorktreeTableColumn::Task,
+];
+
+fn default_worktree_columns() -> Vec<WorktreeTableColumn> {
+    DEFAULT_WORKTREE_COLUMNS.to_vec()
 }
 
-fn default_column_branch() -> u16 {
-    20
-}
-
-fn default_column_ticket() -> u16 {
-    20
-}
-
-fn default_column_dir() -> u16 {
-    16
-}
-
-fn default_column_task() -> u16 {
-    20
-}
-
-/// Worktree table column widths.
-///
-/// `ticket` is used as the minimum width for the flexible ticket/title column;
-/// the other values are fixed column widths.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-pub struct WorktreeTableColumns {
-    #[serde(default = "default_column_status")]
-    pub status: u16,
-    #[serde(default = "default_column_branch")]
-    pub branch: u16,
-    #[serde(default = "default_column_ticket")]
-    pub ticket: u16,
-    #[serde(default = "default_column_dir")]
-    pub dir: u16,
-    #[serde(default = "default_column_task")]
-    pub task: u16,
-}
-
-impl Default for WorktreeTableColumns {
-    fn default() -> Self {
-        Self {
-            status: default_column_status(),
-            branch: default_column_branch(),
-            ticket: default_column_ticket(),
-            dir: default_column_dir(),
-            task: default_column_task(),
+fn deserialize_worktree_columns<'de, D>(
+    deserializer: D,
+) -> Result<Vec<WorktreeTableColumn>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let columns = Vec::<WorktreeTableColumn>::deserialize(deserializer)?;
+    let mut seen = Vec::new();
+    for column in &columns {
+        if seen.contains(column) {
+            return Err(serde::de::Error::custom(format!(
+                "duplicate worktree table column: {column:?}"
+            )));
         }
+        seen.push(*column);
     }
+    Ok(columns)
+}
+
+/// Worktree table columns. The configured list controls both display order and
+/// visibility; omit a column name to hide it.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorktreeTableColumn {
+    Status,
+    Branch,
+    Ticket,
+    Dir,
+    Task,
 }
 
 /// Application configuration stored in ~/.config/rn-dash/config.toml.
@@ -133,9 +126,12 @@ pub struct DashConfig {
     #[serde(default = "default_spinner_style")]
     pub spinner_style: String,
 
-    /// Worktree table column widths. Defaults preserve the built-in layout.
-    #[serde(default)]
-    pub columns: WorktreeTableColumns,
+    /// Worktree table columns in display order. Omit names to hide columns.
+    #[serde(
+        default = "default_worktree_columns",
+        deserialize_with = "deserialize_worktree_columns"
+    )]
+    pub columns: Vec<WorktreeTableColumn>,
 }
 
 impl DashConfig {
@@ -169,35 +165,45 @@ jira_token = "token"
     }
 
     #[test]
-    fn columns_default_to_current_worktree_table_layout() {
+    fn columns_default_to_current_worktree_table_order() {
         let config = parse_config("");
+
+        assert_eq!(config.columns, DEFAULT_WORKTREE_COLUMNS);
+    }
+
+    #[test]
+    fn columns_config_controls_order_and_visibility() {
+        let config = parse_config(r#"columns = ["ticket", "branch", "task"]"#);
 
         assert_eq!(
             config.columns,
-            WorktreeTableColumns {
-                status: 4,
-                branch: 20,
-                ticket: 20,
-                dir: 16,
-                task: 20,
-            }
+            vec![
+                WorktreeTableColumn::Ticket,
+                WorktreeTableColumn::Branch,
+                WorktreeTableColumn::Task,
+            ]
         );
     }
 
     #[test]
-    fn partial_columns_config_uses_per_field_defaults() {
-        let config = parse_config(
-            r#"
-[columns]
-branch = 32
-ticket = 40
-"#,
-        );
+    fn unknown_column_name_rejects_config() {
+        let config = r#"
+jira_base_url = "https://example.atlassian.net"
+jira_token = "token"
+columns = ["ticket", "owner"]
+"#;
 
-        assert_eq!(config.columns.status, 4);
-        assert_eq!(config.columns.branch, 32);
-        assert_eq!(config.columns.ticket, 40);
-        assert_eq!(config.columns.dir, 16);
-        assert_eq!(config.columns.task, 20);
+        assert!(toml::from_str::<DashConfig>(config).is_err());
+    }
+
+    #[test]
+    fn duplicate_column_name_rejects_config() {
+        let config = r#"
+jira_base_url = "https://example.atlassian.net"
+jira_token = "token"
+columns = ["ticket", "ticket"]
+"#;
+
+        assert!(toml::from_str::<DashConfig>(config).is_err());
     }
 }

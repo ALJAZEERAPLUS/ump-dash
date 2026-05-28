@@ -63,26 +63,22 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 | `claude_flags` | string | `"--dangerously-skip-permissions"` | Any string | Flags passed when launching Claude Code. |
 | `auto_sync` | boolean | `false` | `true`, `false` | Automatically accept sync-before-run and sync-before-metro prompts. |
 | `spinner_style` | string | `"circles"` | `"circles"`, `"braille"`, `"dots"` | Spinner glyph set for live task indicators. |
-| `[columns].status` | integer | `4` | `0`-`65535`; positive recommended | Worktree table status icon column width. |
-| `[columns].branch` | integer | `20` | `0`-`65535`; positive recommended | Worktree table branch column width. |
-| `[columns].ticket` | integer | `20` | `0`-`65535`; positive recommended | Minimum width for the flexible ticket/title column. |
-| `[columns].dir` | integer | `16` | `0`-`65535`; positive recommended | Worktree table directory column width. |
-| `[columns].task` | integer | `20` | `0`-`65535`; positive recommended | Worktree table task column width. |
+| `columns` | array of strings | `["status", "branch", "ticket", "dir", "task"]` | `"status"`, `"branch"`, `"ticket"`, `"dir"`, `"task"` | Worktree table columns in display order. Omit a value to hide that column. |
 
 ### Invalid config values
 
 Malformed TOML, missing required fields in an existing config file, wrong types
-such as `auto_sync = "yes"`, or out-of-range column values such as
-`branch = 70000` make the config fail to load. rn-dash logs a warning and runs
-as if no config file was present for that launch.
+such as `auto_sync = "yes"`, a non-array `columns` value, an unknown column
+name such as `"owner"`, or a duplicate column name make the config fail to
+load. rn-dash logs a warning and runs as if no config file was present for that
+launch.
 
 Unknown keys are ignored. Unknown `spinner_style` strings fall back to
 `"circles"`. Unknown `auth_mode` strings are not rejected, but JIRA requests use
 Cloud-style Basic Auth unless the value is exactly `"datacenter"`.
 
-The `[columns]` table may be omitted or partial; missing column widths use their
-defaults. A column width of `0` is accepted by the parser and collapses that
-column, so use positive values unless you intentionally want that effect.
+The `columns` array may be omitted; the default order is used. An empty array is
+valid and hides every worktree table column.
 
 See `config.example.toml` for an annotated template.
 

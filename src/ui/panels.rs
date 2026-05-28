@@ -11,7 +11,7 @@ use ratatui::{
 };
 use crate::{
     app::{AppState, FocusedPanel},
-    domain::worktree::WorktreeMetroStatus,
+    domain::{dash_config::WorktreeTableColumn, worktree::WorktreeMetroStatus},
     ui::{indicators::{spinner_frame, format_elapsed, task_short_label, SpinnerStyle}, theme},
 };
 
@@ -38,6 +38,28 @@ fn truncate(s: &str, max_width: usize) -> String {
         return s[..max_width].to_string();
     }
     format!("{}...", &s[..max_width - 3])
+}
+
+fn worktree_column_constraint(column: WorktreeTableColumn) -> Constraint {
+    match column {
+        WorktreeTableColumn::Status => Constraint::Length(4),
+        WorktreeTableColumn::Branch => Constraint::Length(20),
+        WorktreeTableColumn::Ticket => Constraint::Min(20),
+        WorktreeTableColumn::Dir => Constraint::Length(16),
+        WorktreeTableColumn::Task => Constraint::Length(20),
+    }
+}
+
+fn activity_column_index(columns: &[WorktreeTableColumn]) -> Option<usize> {
+    columns
+        .iter()
+        .position(|column| matches!(column, WorktreeTableColumn::Ticket))
+        .or_else(|| {
+            columns
+                .iter()
+                .position(|column| !matches!(column, WorktreeTableColumn::Status))
+        })
+        .or_else(|| (!columns.is_empty()).then_some(0))
 }
 
 /// Renders the worktree table (bottom section) with structured columns.
@@ -71,6 +93,12 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         .as_ref()
         .map(|c| SpinnerStyle::from_config(&c.spinner_style))
         .unwrap_or_default();
+    let columns = state
+        .app_config
+        .config
+        .as_ref()
+        .map(|c| c.columns.as_slice())
+        .unwrap_or(&crate::domain::dash_config::DEFAULT_WORKTREE_COLUMNS);
 
     for wt in state.worktree_browser.worktrees.iter() {
         let branch = &wt.branch;
@@ -159,29 +187,34 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             _ => String::new(),
         };
 
-        rows.push(Row::new(vec![
-            Cell::from(Line::from(icon_spans)),
-            Cell::from(truncate(branch, 18)),
-            Cell::from(ticket_display),
-            Cell::from(dir_name),
-            Cell::from(task_cell),  // new 5th column — empty String when no task (D-04)
-        ])
-        .style(row_style));
+        let row_cells = columns
+            .iter()
+            .map(|column| match column {
+                WorktreeTableColumn::Status => Cell::from(Line::from(icon_spans.clone())),
+                WorktreeTableColumn::Branch => Cell::from(truncate(branch, 18)),
+                WorktreeTableColumn::Ticket => Cell::from(ticket_display.clone()),
+                WorktreeTableColumn::Dir => Cell::from(dir_name.clone()),
+                WorktreeTableColumn::Task => Cell::from(task_cell.clone()),
+            })
+            .collect::<Vec<_>>();
 
-        // If this worktree is running metro and we have activity info, add a detail row
+        rows.push(Row::new(row_cells).style(row_style));
+
+        // If this worktree is running metro and we have activity info, add a detail row.
         if wt.metro_status == WorktreeMetroStatus::Running
             && let Some(ref activity) = state.metro.activity {
-                let detail_row = Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(Span::styled(
+                let mut detail_cells = columns
+                    .iter()
+                    .map(|_| Cell::from(""))
+                    .collect::<Vec<_>>();
+                if let Some(idx) = activity_column_index(columns) {
+                    detail_cells[idx] = Cell::from(Span::styled(
                         format!("\u{2502} {activity}"),
                         Style::default().fg(Color::Cyan),
-                    )),
-                    Cell::from(""),
-                    Cell::from(""),  // task column — always empty for detail rows (Pitfall 1)
-                ])
-                .style(Style::default().bg(Color::Rgb(0, 60, 0)));
+                    ));
+                }
+                let detail_row = Row::new(detail_cells)
+                    .style(Style::default().bg(Color::Rgb(0, 60, 0)));
                 detail_row_indices.push(rows.len());
                 rows.push(detail_row);
         }
@@ -203,23 +236,13 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             .add_modifier(Modifier::BOLD)
     };
 
-    let columns = state
-        .app_config
-        .config
-        .as_ref()
-        .map(|c| c.columns)
-        .unwrap_or_default();
+    let constraints = columns
+        .iter()
+        .copied()
+        .map(worktree_column_constraint)
+        .collect::<Vec<_>>();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(columns.status), // Status icons (Y + space + P + 1 trailing pad)
-            Constraint::Length(columns.branch), // Branch
-            Constraint::Min(columns.ticket),    // Ticket (merged number + title)
-            Constraint::Length(columns.dir),    // Dir
-            Constraint::Length(columns.task),   // Task (spinner + label + elapsed)
-        ],
-    )
+    let table = Table::new(rows, constraints)
     .block(block)
     .row_highlight_style(highlight_style);
     // No highlight_symbol — selection is conveyed by row bg only, so the

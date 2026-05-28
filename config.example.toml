@@ -50,21 +50,21 @@ jira_token = "your-api-token-here"
 # Default: "circles"
 # spinner_style = "circles"
 
-# Worktree table column widths.
-# Defaults match the built-in layout. The ticket column is the flexible
-# minimum-width column; the others are fixed widths. Values are TOML integers
-# from 0 to 65535; positive values are recommended because 0 collapses a column.
-# [columns]
-# status = 4
-# branch = 20
-# ticket = 20
-# dir = 16
-# task = 20
+# Worktree table columns, in display order.
+# Possible values:
+#   "status" -> Yarn/pod freshness icons
+#   "branch" -> Git branch name
+#   "ticket" -> JIRA ticket key + title
+#   "dir"    -> Worktree directory name
+#   "task"   -> Running task spinner + label + elapsed time
+# Omit a value to hide that column. Widths are fixed by rn-dash.
+# Default: ["status", "branch", "ticket", "dir", "task"]
+# columns = ["status", "branch", "ticket", "dir", "task"]
 
 # Invalid config behavior:
-# - Malformed TOML, missing required fields, wrong types, or out-of-range
-#   numbers make rn-dash ignore the whole config for that launch and log a
-#   warning.
+# - Malformed TOML, missing required fields, wrong types, unknown column names,
+#   or duplicate column names make rn-dash ignore the whole config for that
+#   launch and log a warning.
 # - Unknown keys are ignored.
 # - Unknown spinner_style strings fall back to "circles".
 # - Unknown auth_mode strings use Cloud-style Basic Auth unless exactly
