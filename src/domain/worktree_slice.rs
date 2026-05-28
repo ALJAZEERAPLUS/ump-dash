@@ -16,10 +16,17 @@
 #![allow(dead_code)]
 
 use crate::domain::action::Action;
-use crate::domain::command::CommandSpec;
+use crate::domain::command::{CommandSpec, RunVariant};
 use crate::domain::task::TaskRecord;
 use crate::domain::worktree::WorktreeId;
 use std::collections::VecDeque;
+
+/// Last fully selected UMP run config for one platform in one worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastRunConfig {
+    pub device_id: String,
+    pub variant: RunVariant,
+}
 
 /// Per-worktree state. One slice per `WorktreeId` lives in
 /// `AppState.worktrees: HashMap<WorktreeId, WorktreeSlice>` (D-16).
@@ -31,6 +38,8 @@ pub struct WorktreeSlice {
     pub output: VecDeque<String>,
     pub output_scroll: usize,
     pub post_drain: Option<Box<Action>>,
+    pub last_android_run: Option<LastRunConfig>,
+    pub last_ios_run: Option<LastRunConfig>,
 }
 
 #[cfg(test)]
@@ -43,6 +52,8 @@ mod tests {
         assert!(s.task.is_none());
         assert!(s.queue.is_empty());
         assert!(s.post_drain.is_none());
+        assert!(s.last_android_run.is_none());
+        assert!(s.last_ios_run.is_none());
     }
 
     #[test]

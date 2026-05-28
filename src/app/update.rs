@@ -16,6 +16,7 @@ use super::state::{active_output, active_worktree_id, AppState, ErrorState, Focu
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
+use crate::domain::worktree_slice::LastRunConfig;
 use std::path::PathBuf;
 
 // Plan 13-09 (F-204 consumer): the 11 inline prereq sites are rewritten to
@@ -173,6 +174,35 @@ fn command_with_run_variant(spec: CommandSpec, variant: RunVariant) -> CommandSp
             variant: Some(variant),
         },
         other => other,
+    }
+}
+
+fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec) {
+    let Some(wt_id) = active_worktree_id(state) else {
+        return;
+    };
+
+    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+        crate::domain::worktree_slice::WorktreeSlice {
+            id: wt_id,
+            ..Default::default()
+        }
+    });
+
+    match spec {
+        CommandSpec::UmpRunAndroid { device_id, variant: Some(variant) } => {
+            slice.last_android_run = Some(LastRunConfig {
+                device_id: device_id.clone(),
+                variant: *variant,
+            });
+        }
+        CommandSpec::UmpRunIos { device_id, variant: Some(variant) } => {
+            slice.last_ios_run = Some(LastRunConfig {
+                device_id: device_id.clone(),
+                variant: *variant,
+            });
+        }
+        _ => {}
     }
 }
 
@@ -493,6 +523,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::CommandRun(spec) => {
             // Clear palette mode whenever a command is dispatched
             state.modal_stack.palette_mode = None;
+            remember_ump_run_config(state, &spec);
 
             // Get selected worktree (needed for all branches)
             let wt_branch = if !state.worktree_browser.worktrees.is_empty() {
@@ -1193,6 +1224,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if boot_android_emulator
                     && let CommandSpec::UmpRunAndroid { device_id, .. } = &real_spec
                 {
+                    remember_ump_run_config(state, &real_spec);
                     let boot = CommandSpec::ShellCommand {
                         command: format!("emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device"),
                     };

@@ -161,17 +161,8 @@ mod palette_resolution {
         let mut state = base_state();
         state.modal_stack.palette_mode = Some(PaletteMode::Android);
 
-        // 'd' composes a ShellCommand at call time — match the outer variant
-        // (the command-string format is internal and not the invariant we lock).
-        match handle_key(&state, key('d')) {
-            Some(Action::CommandRun(CommandSpec::ShellCommand { .. })) => {}
-            other => panic!("android 'd' must produce ShellCommand; got {other:?}"),
-        }
-
-        match handle_key(&state, key('e')) {
-            Some(Action::CommandRun(CommandSpec::RnRunAndroid { .. })) => {}
-            other => panic!("android 'e' must produce RnRunAndroid; got {other:?}"),
-        }
+        assert_eq!(handle_key(&state, key('d')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('e')), Some(Action::ModalCancel));
 
         assert_eq!(
             handle_key(&state, key('r')),
@@ -203,18 +194,8 @@ mod palette_resolution {
         let mut state = base_state();
         state.modal_stack.palette_mode = Some(PaletteMode::Ios);
 
-        assert_eq!(
-            handle_key(&state, key('d')),
-            Some(Action::CommandRun(CommandSpec::RnRunIosDevice))
-        );
-        match handle_key(&state, key('e')) {
-            Some(Action::CommandRun(CommandSpec::RnRunIos { device_id })) => {
-                assert_eq!(device_id, "");
-            }
-            other => panic!(
-                "ios 'e' must produce RnRunIos with empty device_id; got {other:?}"
-            ),
-        }
+        assert_eq!(handle_key(&state, key('d')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('e')), Some(Action::ModalCancel));
         assert_eq!(
             handle_key(&state, key('p')),
             Some(Action::CommandRun(CommandSpec::YarnPodInstall))
@@ -719,6 +700,61 @@ mod ump_run_dialog {
             state.modal_stack.modal,
             Some(ModalState::RunVariantPicker { selected: 0, .. })
         ));
+    }
+
+    #[test]
+    fn uppercase_r_repeats_last_android_run_config_for_selected_worktree() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 1,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: None,
+            }),
+            boot_android_emulator: false,
+        });
+
+        let _ = update(&mut state, Action::ModalRunVariantConfirm);
+        state.modal_stack.palette_mode = Some(PaletteMode::Android);
+
+        assert_eq!(
+            handle_key(&state, key('R')),
+            Some(Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: Some(RunVariant::Dev),
+            }))
+        );
+    }
+
+    #[test]
+    fn uppercase_r_uses_selected_worktree_run_history_only() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-a", "wt-b");
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 2,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: "ios-wt-a".into(),
+                variant: None,
+            }),
+            boot_android_emulator: false,
+        });
+
+        let _ = update(&mut state, Action::ModalRunVariantConfirm);
+
+        state.worktree_browser.worktree_table_state.select(Some(1));
+        state.modal_stack.palette_mode = Some(PaletteMode::Ios);
+        assert_eq!(handle_key(&state, key('R')), Some(Action::ModalCancel));
+
+        state.worktree_browser.worktree_table_state.select(Some(0));
+        state.modal_stack.palette_mode = Some(PaletteMode::Ios);
+        assert_eq!(
+            handle_key(&state, key('R')),
+            Some(Action::CommandRun(CommandSpec::UmpRunIos {
+                device_id: "ios-wt-a".into(),
+                variant: Some(RunVariant::Prod),
+            }))
+        );
     }
 }
 

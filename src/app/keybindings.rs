@@ -18,9 +18,10 @@
 
 #![allow(dead_code)]
 
-use super::state::{AppState, FocusedPanel, PaletteMode};
+use super::state::{active_worktree_id, AppState, FocusedPanel, PaletteMode};
 use crate::domain::action::Action;
 use crate::domain::command::{CommandSpec, ModalState};
+use crate::domain::worktree_slice::LastRunConfig;
 use ratatui::crossterm::event::KeyCode;
 
 #[derive(Debug, Clone)]
@@ -450,20 +451,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
 
     // ==== Palette: Android ====
     KeyBinding {
-        key: KeyCode::Char('d'),
-        label: "d", short_desc: "run-android", long_desc: "Run Android (default device)",
-        context: BindingContext::Palette(PaletteMode::Android),
-        action: android_palette_d,
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('e'),
-        label: "e", short_desc: "device list", long_desc: "Pick Android device",
-        context: BindingContext::Palette(PaletteMode::Android),
-        action: |s| Some(Action::CommandRun(CommandSpec::RnRunAndroid { device_id: String::new(), mode: s.app_config.android_mode.clone() })),
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Char('r'),
         label: "r", short_desc: "run", long_desc: "Run Android via UMP script",
         context: BindingContext::Palette(PaletteMode::Android),
@@ -472,6 +459,13 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
             variant: None,
         })),
         visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('R'),
+        label: "R", short_desc: "repeat", long_desc: "Repeat last Android run",
+        context: BindingContext::Palette(PaletteMode::Android),
+        action: repeat_last_android_run,
+        visible: has_last_android_run,
     },
     KeyBinding {
         key: KeyCode::Char('m'),
@@ -490,20 +484,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
 
     // ==== Palette: iOS ====
     KeyBinding {
-        key: KeyCode::Char('d'),
-        label: "d", short_desc: "run-ios --device", long_desc: "Run iOS on physical device",
-        context: BindingContext::Palette(PaletteMode::Ios),
-        action: |_| Some(Action::CommandRun(CommandSpec::RnRunIosDevice)),
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('e'),
-        label: "e", short_desc: "simulator list", long_desc: "Pick iOS simulator",
-        context: BindingContext::Palette(PaletteMode::Ios),
-        action: |_| Some(Action::CommandRun(CommandSpec::RnRunIos { device_id: String::new() })),
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Char('p'),
         label: "p", short_desc: "pod-install", long_desc: "yarn pod-install",
         context: BindingContext::Palette(PaletteMode::Ios),
@@ -519,6 +499,13 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
             variant: None,
         })),
         visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('R'),
+        label: "R", short_desc: "repeat", long_desc: "Repeat last iOS run",
+        context: BindingContext::Palette(PaletteMode::Ios),
+        action: repeat_last_ios_run,
+        visible: has_last_ios_run,
     },
     KeyBinding {
         key: KeyCode::Esc,
@@ -1088,15 +1075,46 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
 // cannot capture state).
 // ---------------------------------------------------------------------------
 
-fn android_palette_d(state: &AppState) -> Option<Action> {
-    let mode_flag = state
-        .app_config
-        .android_mode
-        .as_ref()
-        .map(|m| format!(" --mode {m}"))
-        .unwrap_or_default();
-    Some(Action::CommandRun(CommandSpec::ShellCommand {
-        command: format!("npx react-native run-android{mode_flag}"),
+fn active_last_run_config(
+    state: &AppState,
+    pick: fn(&crate::domain::worktree_slice::WorktreeSlice) -> Option<&LastRunConfig>,
+) -> Option<&LastRunConfig> {
+    let id = active_worktree_id(state)?;
+    let slice = state.worktrees.get(&id)?;
+    pick(slice)
+}
+
+fn last_android_run(state: &AppState) -> Option<&LastRunConfig> {
+    active_last_run_config(state, |slice| slice.last_android_run.as_ref())
+}
+
+fn last_ios_run(state: &AppState) -> Option<&LastRunConfig> {
+    active_last_run_config(state, |slice| slice.last_ios_run.as_ref())
+}
+
+fn has_last_android_run(state: &AppState) -> bool {
+    last_android_run(state).is_some()
+}
+
+fn has_last_ios_run(state: &AppState) -> bool {
+    last_ios_run(state).is_some()
+}
+
+fn repeat_last_android_run(state: &AppState) -> Option<Action> {
+    Some(last_android_run(state).map_or(Action::ModalCancel, |config| {
+        Action::CommandRun(CommandSpec::UmpRunAndroid {
+            device_id: config.device_id.clone(),
+            variant: Some(config.variant),
+        })
+    }))
+}
+
+fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
+    Some(last_ios_run(state).map_or(Action::ModalCancel, |config| {
+        Action::CommandRun(CommandSpec::UmpRunIos {
+            device_id: config.device_id.clone(),
+            variant: Some(config.variant),
+        })
     }))
 }
 
