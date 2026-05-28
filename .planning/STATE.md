@@ -4,7 +4,7 @@ milestone: v1.3
 milestone_name: Per-Worktree Tasks + Architecture Audit
 status: executing
 stopped_at: Phase 16 context gathered
-last_updated: "2026-05-28T04:44:03Z"
+last_updated: "2026-05-28T07:29:01Z"
 progress:
   total_phases: 6
   completed_phases: 6
@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260528-fec | Change iOS/Android run keychords to UMP scripts with target and run-type picker | 2026-05-28 | b093803 | [260528-fec-let-s-change-the-keychords-for-running-w](./quick/260528-fec-let-s-change-the-keychords-for-running-w/) |
 | 260527-qlh | Make worktree table column order/visibility configurable and update docs/examples | 2026-05-27 | 0c28a1c | [260527-qlh-let-s-make-the-columns-configurable-and-](./quick/260527-qlh-let-s-make-the-columns-configurable-and-/) |
 | 260527-q74 | Remove the first column that only highlights the current row | 2026-05-27 | 7fd6cdd | [260527-q74-let-s-remove-the-first-column-which-only](./quick/260527-q74-let-s-remove-the-first-column-which-only/) |
 
