@@ -14,11 +14,19 @@ use tokio::process::Child;
 /// Production implementation that calls `tokio::process::Command` directly.
 pub struct TokioProcessClient;
 
+fn metro_spawn_program() -> &'static str {
+    "yarn"
+}
+
+fn metro_spawn_args() -> [&'static str; 2] {
+    ["start:rozenite", "--reset-cache"]
+}
+
 #[async_trait::async_trait]
 impl ProcessPort for TokioProcessClient {
     async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<Child> {
-        let mut cmd = tokio::process::Command::new("yarn");
-        cmd.args(["start", "--reset-cache"])
+        let mut cmd = tokio::process::Command::new(metro_spawn_program());
+        cmd.args(metro_spawn_args())
             .current_dir(worktree_path)
             // CRITICAL: process_group(0) puts yarn + all Node children in their own
             // process group. kill() on the Child will send SIGKILL to the whole group,
@@ -33,5 +41,14 @@ impl ProcessPort for TokioProcessClient {
             .stdin(std::process::Stdio::piped());
 
         Ok(cmd.spawn()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn metro_spawn_argv_uses_ump_rozenite_script_with_reset_cache() {
+        assert_eq!(super::metro_spawn_program(), "yarn");
+        assert_eq!(super::metro_spawn_args(), ["start:rozenite", "--reset-cache"]);
     }
 }

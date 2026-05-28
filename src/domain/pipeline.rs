@@ -37,6 +37,8 @@ impl CommandSpec {
             CommandSpec::RnRunAndroid { .. }
             | CommandSpec::RnRunIos { .. }
             | CommandSpec::RnRunIosDevice
+            | CommandSpec::UmpRunAndroid { .. }
+            | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild => vec![Prerequisite::MetroRunning],
             // Sync prerequisites come from Recipe::SyncThenRun — not per-variant.
             _ => vec![],

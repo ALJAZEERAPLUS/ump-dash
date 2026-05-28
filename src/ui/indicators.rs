@@ -97,6 +97,8 @@ pub fn task_short_label(spec: &CommandSpec) -> &'static str {
         CommandSpec::RnRunAndroid { .. }   => "run-and",
         CommandSpec::RnRunIos { .. }       => "run-ios",
         CommandSpec::RnRunIosDevice        => "run-ios",
+        CommandSpec::UmpRunAndroid { .. }  => "run-and",
+        CommandSpec::UmpRunIos { .. }      => "run-ios",
         CommandSpec::RnReleaseBuild        => "release",
         CommandSpec::AdbInstallApk         => "adb",
         CommandSpec::ShellCommand { .. }   => "shell",
@@ -256,7 +258,7 @@ mod tests {
 
     // --- task_short_label: drift-guard meta-test ---
 
-    /// Constructs one instance of all 23 CommandSpec variants, asserts count == 23,
+    /// Constructs one instance of all 25 CommandSpec variants, asserts count == 25,
     /// and asserts every label is non-empty. Mirrors `collision_policy_covers_every_variant`
     /// at src/domain/command.rs:501-562.
     #[test]
@@ -287,6 +289,14 @@ mod tests {
                 device_id: "simulator-uuid".into(),
             },
             CommandSpec::RnRunIosDevice,
+            CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: Some(crate::domain::command::RunVariant::Local),
+            },
+            CommandSpec::UmpRunIos {
+                device_id: "simulator-uuid".into(),
+                variant: Some(crate::domain::command::RunVariant::Dev),
+            },
             CommandSpec::YarnUnitTests,
             CommandSpec::YarnJest {
                 filter: "MyTest".into(),
@@ -304,8 +314,8 @@ mod tests {
 
         assert_eq!(
             variants.len(),
-            23,
-            "Expected 23 CommandSpec variants — update this test when adding a new variant"
+            25,
+            "Expected 25 CommandSpec variants — update this test when adding a new variant"
         );
 
         for v in &variants {

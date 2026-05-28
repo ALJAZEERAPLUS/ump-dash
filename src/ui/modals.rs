@@ -18,6 +18,9 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState) {
         ModalState::DevicePicker { devices, selected, filter, .. } => {
             render_device_picker_modal(f, devices, *selected, filter)
         }
+        ModalState::RunVariantPicker { selected, .. } => {
+            render_run_variant_picker_modal(f, *selected)
+        }
         ModalState::CleanToggle { options } => render_clean_modal(f, options),
         ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods } => {
             render_sync_prompt(f, run_command, *needs_yarn, *needs_pods)
@@ -32,6 +35,35 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState) {
             render_branch_picker_modal(f, branches, *selected, filter)
         }
     }
+}
+
+fn render_run_variant_picker_modal(f: &mut Frame, selected: usize) {
+    let area = centered_rect(f.area(), 40, 35, 28, 6);
+    let block = Block::default()
+        .title(" Select Run Type ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let items: Vec<ListItem> = crate::domain::command::RunVariant::ALL
+        .iter()
+        .map(|variant| ListItem::new(Line::from(variant.label())))
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ")
+        .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
+
+    let mut ls = ListState::default();
+    ls.select(Some(selected.min(crate::domain::command::RunVariant::ALL.len() - 1)));
+
+    f.render_widget(Clear, area);
+    f.render_stateful_widget(list, area, &mut ls);
 }
 
 /// Renders a yes/no confirmation modal with a red border.

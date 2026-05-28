@@ -48,6 +48,7 @@ pub enum ModalKind {
     Confirm,
     TextInput,
     DevicePicker,
+    RunVariantPicker,
     CleanToggle,
     SyncBeforeRun,
     SyncBeforeMetro,
@@ -194,6 +195,50 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         label: "k", short_desc: "prev", long_desc: "Previous device",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalDevicePrev),
+        visible: |_| false,
+    },
+
+    // ==== Modal: RunVariantPicker (Enter/Esc/j/k/arrows) ====
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        context: BindingContext::Modal(ModalKind::RunVariantPicker),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Enter,
+        label: "Enter", short_desc: "select", long_desc: "Select run type",
+        context: BindingContext::Modal(ModalKind::RunVariantPicker),
+        action: |_| Some(Action::ModalRunVariantConfirm),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Down,
+        label: "Down", short_desc: "next", long_desc: "Next run type",
+        context: BindingContext::Modal(ModalKind::RunVariantPicker),
+        action: |_| Some(Action::ModalRunVariantNext),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Up,
+        label: "Up", short_desc: "prev", long_desc: "Previous run type",
+        context: BindingContext::Modal(ModalKind::RunVariantPicker),
+        action: |_| Some(Action::ModalRunVariantPrev),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Char('j'),
+        label: "j/k", short_desc: "navigate", long_desc: "Navigate run types",
+        context: BindingContext::Modal(ModalKind::RunVariantPicker),
+        action: |_| Some(Action::ModalRunVariantNext),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('k'),
+        label: "k", short_desc: "prev", long_desc: "Previous run type",
+        context: BindingContext::Modal(ModalKind::RunVariantPicker),
+        action: |_| Some(Action::ModalRunVariantPrev),
         visible: |_| false,
     },
 
@@ -420,9 +465,12 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     },
     KeyBinding {
         key: KeyCode::Char('r'),
-        label: "r", short_desc: "release build", long_desc: "Release build (assembleRelease)",
+        label: "r", short_desc: "run", long_desc: "Run Android via UMP script",
         context: BindingContext::Palette(PaletteMode::Android),
-        action: |_| Some(Action::CommandRun(CommandSpec::RnReleaseBuild)),
+        action: |_| Some(Action::CommandRun(CommandSpec::UmpRunAndroid {
+            device_id: String::new(),
+            variant: None,
+        })),
         visible: |_| true,
     },
     KeyBinding {
@@ -460,6 +508,16 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         label: "p", short_desc: "pod-install", long_desc: "yarn pod-install",
         context: BindingContext::Palette(PaletteMode::Ios),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnPodInstall)),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('r'),
+        label: "r", short_desc: "run", long_desc: "Run iOS via UMP script",
+        context: BindingContext::Palette(PaletteMode::Ios),
+        action: |_| Some(Action::CommandRun(CommandSpec::UmpRunIos {
+            device_id: String::new(),
+            variant: None,
+        })),
         visible: |_| true,
     },
     KeyBinding {
@@ -1016,6 +1074,7 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
         (Some(ModalState::Confirm { .. }), ModalKind::Confirm)
             | (Some(ModalState::TextInput { .. }), ModalKind::TextInput)
             | (Some(ModalState::DevicePicker { .. }), ModalKind::DevicePicker)
+            | (Some(ModalState::RunVariantPicker { .. }), ModalKind::RunVariantPicker)
             | (Some(ModalState::CleanToggle { .. }), ModalKind::CleanToggle)
             | (Some(ModalState::SyncBeforeRun { .. }), ModalKind::SyncBeforeRun)
             | (Some(ModalState::SyncBeforeMetro { .. }), ModalKind::SyncBeforeMetro)

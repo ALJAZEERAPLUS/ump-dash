@@ -72,6 +72,9 @@ pub enum Action {
     ModalDeviceNext,        // j/Down in device picker
     ModalDevicePrev,        // k/Up in device picker
     ModalDeviceConfirm,     // Enter on selected device
+    ModalRunVariantNext,    // j/Down in UMP run-type picker
+    ModalRunVariantPrev,    // k/Up in UMP run-type picker
+    ModalRunVariantConfirm, // Enter on selected UMP run type
 
     // Phase 3: Device enumeration (internal — sent by background task, not user)
     DevicesEnumerated(Vec<crate::domain::command::DeviceInfo>),

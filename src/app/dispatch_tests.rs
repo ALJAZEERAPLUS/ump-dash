@@ -5,7 +5,7 @@
 //!
 //! 1. Palette → Action resolution (`handle_key` palette branches): 5
 //!    `PaletteMode` variants × 2-7 keys each + unrecognized-key fallback.
-//! 2. Modal dismissal: 8 `ModalState` variants × dismiss keys. Post-condition:
+//! 2. Modal dismissal: 9 `ModalState` variants × dismiss keys. Post-condition:
 //!    `state.modal_stack.modal == None` after `update()`.
 //! 3. Command queue routing: `CommandQueuePush` appends; `CommandExited` drains.
 //!
@@ -19,7 +19,7 @@
 use super::*;
 use super::effect::Effect;
 use crate::domain::action::Action;
-use crate::domain::command::{CleanOptions, CommandSpec, ModalState};
+use crate::domain::command::{CleanOptions, CommandSpec, ModalState, RunVariant};
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
@@ -175,7 +175,10 @@ mod palette_resolution {
 
         assert_eq!(
             handle_key(&state, key('r')),
-            Some(Action::CommandRun(CommandSpec::RnReleaseBuild))
+            Some(Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }))
         );
         assert_eq!(
             handle_key(&state, key('m')),
@@ -215,6 +218,13 @@ mod palette_resolution {
         assert_eq!(
             handle_key(&state, key('p')),
             Some(Action::CommandRun(CommandSpec::YarnPodInstall))
+        );
+        assert_eq!(
+            handle_key(&state, key('r')),
+            Some(Action::CommandRun(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: None,
+            }))
         );
         assert_eq!(
             handle_key(&state, key_code(KeyCode::Esc)),
@@ -564,6 +574,151 @@ mod modal_dismissal {
         );
         let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal_stack.modal.is_none());
+    }
+
+    #[test]
+    fn run_variant_picker_modal_dismisses_on_esc() {
+        let mut state = base_state();
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: None,
+            }),
+            boot_android_emulator: false,
+        });
+        assert_eq!(
+            handle_key(&state, key_code(KeyCode::Esc)),
+            Some(Action::ModalCancel)
+        );
+        let _effects = update(&mut state, Action::ModalCancel);
+        assert!(state.modal_stack.modal.is_none());
+    }
+}
+
+mod ump_run_dialog {
+    use super::*;
+    use crate::domain::ports::device_port::DeviceKind;
+
+    #[test]
+    fn ump_android_run_loads_targets_before_variant_or_metro() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let effects = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::LoadDevices { kind: DeviceKind::Android }]),
+            "expected Android target load before run-type or metro; got {effects:?}"
+        );
+        assert!(matches!(
+            state.modal_stack.pending_device_command,
+            Some(CommandSpec::UmpRunAndroid { ref device_id, variant: None }) if device_id.is_empty()
+        ));
+    }
+
+    #[test]
+    fn selecting_target_opens_run_variant_picker_before_dispatch() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![
+                crate::domain::command::DeviceInfo {
+                    id: "emulator-5554".into(),
+                    name: "Pixel 8".into(),
+                },
+                crate::domain::command::DeviceInfo {
+                    id: "emulator-5556".into(),
+                    name: "Pixel Tablet".into(),
+                },
+            ],
+            selected: 1,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(effects.is_empty(), "target selection should only open run-type picker; got {effects:?}");
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                selected: 0,
+                pending_template,
+                boot_android_emulator: false,
+            }) if matches!(
+                pending_template.as_ref(),
+                CommandSpec::UmpRunAndroid { device_id, variant: None } if device_id == "emulator-5556"
+            )
+        ));
+    }
+
+    #[test]
+    fn run_variant_picker_uses_local_dev_prod_order_and_confirm_queues_final_run() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 2,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: "ios-udid-1".into(),
+                variant: None,
+            }),
+            boot_android_emulator: false,
+        });
+
+        let effects = update(&mut state, Action::ModalRunVariantConfirm);
+
+        assert!(
+            !effects.is_empty(),
+            "fully selected UMP run should proceed into the metro prerequisite path"
+        );
+        let queued = state
+            .worktrees
+            .values()
+            .next()
+            .and_then(|slice| slice.queue.front())
+            .cloned();
+        assert_eq!(
+            queued,
+            Some(CommandSpec::UmpRunIos {
+                device_id: "ios-udid-1".into(),
+                variant: Some(RunVariant::Prod),
+            })
+        );
+    }
+
+    #[test]
+    fn run_variant_navigation_wraps_in_local_dev_prod_order() {
+        let mut state = base_state();
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: "ios-udid-1".into(),
+                variant: None,
+            }),
+            boot_android_emulator: false,
+        });
+
+        let _ = update(&mut state, Action::ModalRunVariantPrev);
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker { selected: 2, .. })
+        ));
+
+        let _ = update(&mut state, Action::ModalRunVariantNext);
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker { selected: 0, .. })
+        ));
     }
 }
 

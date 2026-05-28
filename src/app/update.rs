@@ -14,7 +14,7 @@
 use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
-use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState};
+use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
 use std::path::PathBuf;
 
@@ -124,6 +124,76 @@ fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
         branch: wt.branch.clone(),
         repo_root: state.app_config.repo_root.clone(),
     })
+}
+
+fn is_ump_run(spec: &CommandSpec) -> bool {
+    matches!(
+        spec,
+        CommandSpec::UmpRunAndroid { .. } | CommandSpec::UmpRunIos { .. }
+    )
+}
+
+fn is_run_command(spec: &CommandSpec) -> bool {
+    matches!(
+        spec,
+        CommandSpec::RnRunAndroid { .. }
+            | CommandSpec::RnRunIos { .. }
+            | CommandSpec::RnRunIosDevice
+            | CommandSpec::UmpRunAndroid { .. }
+            | CommandSpec::UmpRunIos { .. }
+            | CommandSpec::RnReleaseBuild
+    )
+}
+
+fn is_ios_run_command(spec: &CommandSpec) -> bool {
+    matches!(
+        spec,
+        CommandSpec::RnRunIos { .. } | CommandSpec::RnRunIosDevice | CommandSpec::UmpRunIos { .. }
+    )
+}
+
+fn command_with_device(spec: CommandSpec, device_id: String) -> CommandSpec {
+    match spec {
+        CommandSpec::RnRunAndroid { mode, .. } => CommandSpec::RnRunAndroid { device_id, mode },
+        CommandSpec::RnRunIos { .. } => CommandSpec::RnRunIos { device_id },
+        CommandSpec::UmpRunAndroid { variant, .. } => CommandSpec::UmpRunAndroid { device_id, variant },
+        CommandSpec::UmpRunIos { variant, .. } => CommandSpec::UmpRunIos { device_id, variant },
+        other => other,
+    }
+}
+
+fn command_with_run_variant(spec: CommandSpec, variant: RunVariant) -> CommandSpec {
+    match spec {
+        CommandSpec::UmpRunAndroid { device_id, .. } => CommandSpec::UmpRunAndroid {
+            device_id,
+            variant: Some(variant),
+        },
+        CommandSpec::UmpRunIos { device_id, .. } => CommandSpec::UmpRunIos {
+            device_id,
+            variant: Some(variant),
+        },
+        other => other,
+    }
+}
+
+fn open_run_variant_picker_or_dispatch(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    spec: CommandSpec,
+    boot_android_emulator: bool,
+) {
+    if spec.needs_run_variant_selection() {
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 0,
+            pending_template: Box::new(spec),
+            boot_android_emulator,
+        });
+        return;
+    }
+
+    if let Some(eff) = dispatch_command(state, spec) {
+        effects.push(eff);
+    }
 }
 
 /// TEA update function — the ONLY place AppState is mutated.
@@ -433,6 +503,28 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 None
             };
 
+            if is_ump_run(&spec) {
+                if spec.needs_device_selection() {
+                    state.modal_stack.pending_device_command = Some(spec.clone());
+                    let kind = if matches!(spec, CommandSpec::UmpRunAndroid { .. }) {
+                        crate::domain::ports::device_port::DeviceKind::Android
+                    } else {
+                        crate::domain::ports::device_port::DeviceKind::Ios
+                    };
+                    effects.push(Effect::LoadDevices { kind });
+                    return effects;
+                }
+
+                if spec.needs_run_variant_selection() {
+                    state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+                        selected: 0,
+                        pending_template: Box::new(spec),
+                        boot_android_emulator: false,
+                    });
+                    return effects;
+                }
+            }
+
             // Sync-before-run: stale worktree + run command triggers prompt.
             // This MUST run BEFORE the metro start check — yarn install is a
             // dependency of metro, so running metro against stale deps boots it
@@ -440,8 +532,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // stale (yarn fresh, pods out of sync — e.g. after a git checkout
             // that only touched Podfile.lock).
             if let Some((_, yarn_stale)) = &wt_branch
-                && matches!(spec, CommandSpec::RnRunAndroid { .. } | CommandSpec::RnRunIos { .. } | CommandSpec::RnRunIosDevice | CommandSpec::RnReleaseBuild) {
-                    let is_ios = matches!(spec, CommandSpec::RnRunIos { .. } | CommandSpec::RnRunIosDevice);
+                && is_run_command(&spec) {
+                    let is_ios = is_ios_run_command(&spec);
                     let pods_stale = if is_ios {
                         let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
                         let wt_path = &state.worktree_browser.worktrees[idx.min(state.worktree_browser.worktrees.len() - 1)].path;
@@ -539,7 +631,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             if spec.needs_device_selection() {
                 state.modal_stack.pending_device_command = Some(spec.clone());
-                let kind = if matches!(spec, CommandSpec::RnRunAndroid { .. }) {
+                let kind = if matches!(spec, CommandSpec::RnRunAndroid { .. } | CommandSpec::UmpRunAndroid { .. }) {
                     crate::domain::ports::device_port::DeviceKind::Android
                 } else {
                     crate::domain::ports::device_port::DeviceKind::Ios
@@ -840,6 +932,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // arbitrary characters as text. (BranchPicker filter input
                 // arrives as Action::BranchPickerFilter, not ModalInputChar.)
                 Some(ModalState::Confirm { .. })
+                | Some(ModalState::RunVariantPicker { .. })
                 | Some(ModalState::CleanToggle { .. })
                 | Some(ModalState::SyncBeforeRun { .. })
                 | Some(ModalState::SyncBeforeMetro { .. })
@@ -864,6 +957,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // editable text buffers. (BranchPicker filter editing arrives
                 // as Action::BranchPickerBackspace.)
                 Some(ModalState::Confirm { .. })
+                | Some(ModalState::RunVariantPicker { .. })
                 | Some(ModalState::CleanToggle { .. })
                 | Some(ModalState::SyncBeforeRun { .. })
                 | Some(ModalState::SyncBeforeMetro { .. })
@@ -1031,8 +1125,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if let Some(device) = filtered.get(selected) {
                     let device_id = device.id.clone();
                     let device_name = device.name.clone();
-                    let is_ios = matches!(pending_template.as_ref(), CommandSpec::RnRunIos { .. });
+                    let is_ios = matches!(
+                        pending_template.as_ref(),
+                        CommandSpec::RnRunIos { .. } | CommandSpec::UmpRunIos { .. }
+                    );
                     let is_available_emulator = device_name.ends_with("(available)");
+
+                    if is_available_emulator && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. }) {
+                        let real_spec = command_with_device(*pending_template, device_id);
+                        open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
+                        return effects;
+                    }
 
                     // Available emulator: boot it, then run via shell command
                     if is_available_emulator {
@@ -1051,16 +1154,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         return effects;
                     }
 
-                    let real_spec = match *pending_template {
-                        CommandSpec::RnRunAndroid { mode, .. } => CommandSpec::RnRunAndroid {
-                            device_id: device_id.clone(),
-                            mode,
-                        },
-                        CommandSpec::RnRunIos { .. } => CommandSpec::RnRunIos {
-                            device_id: device_id.clone(),
-                        },
-                        other => other,
-                    };
+                    let real_spec = command_with_device(*pending_template, device_id.clone());
                     // Persist Android mode if present
                     if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
                         effects.push(Effect::SaveAndroidMode(m.clone()));
@@ -1069,10 +1163,55 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     if is_ios {
                         effects.push(Effect::ScheduleAction(Action::SimulatorUsed(device_id)));
                     }
-                    if let Some(eff) = dispatch_command(state, real_spec) {
+                    open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
+                }
+            }
+        }
+
+        Action::ModalRunVariantNext => {
+            if let Some(ModalState::RunVariantPicker { ref mut selected, .. }) = state.modal_stack.modal {
+                *selected = (*selected + 1) % RunVariant::ALL.len();
+            }
+        }
+
+        Action::ModalRunVariantPrev => {
+            if let Some(ModalState::RunVariantPicker { ref mut selected, .. }) = state.modal_stack.modal {
+                *selected = if *selected == 0 { RunVariant::ALL.len() - 1 } else { *selected - 1 };
+            }
+        }
+
+        Action::ModalRunVariantConfirm => {
+            if let Some(ModalState::RunVariantPicker {
+                selected,
+                pending_template,
+                boot_android_emulator,
+            }) = state.modal_stack.modal.take()
+            {
+                let variant = RunVariant::ALL[selected.min(RunVariant::ALL.len() - 1)];
+                let real_spec = command_with_run_variant(*pending_template, variant);
+
+                if boot_android_emulator
+                    && let CommandSpec::UmpRunAndroid { device_id, .. } = &real_spec
+                {
+                    let boot = CommandSpec::ShellCommand {
+                        command: format!("emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device"),
+                    };
+                    if let Some(eff) = dispatch_command(state, boot) {
                         effects.push(eff);
                     }
+                    if let Some(wt_id) = active_worktree_id(state) {
+                        let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                            crate::domain::worktree_slice::WorktreeSlice {
+                                id: wt_id,
+                                ..Default::default()
+                            }
+                        });
+                        slice.queue.push_back(real_spec);
+                    }
+                    return effects;
                 }
+
+                effects.extend(update(state, Action::CommandRun(real_spec)));
             }
         }
 
@@ -1096,6 +1235,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                         // Available emulator: boot it, then run via shell command
                         if is_available_emulator {
+                            if matches!(spec, CommandSpec::UmpRunAndroid { .. }) {
+                                let real_spec = command_with_device(spec, devices[0].id.clone());
+                                open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
+                                return effects;
+                            }
+
                             if let CommandSpec::RnRunAndroid { mode, .. } = spec {
                                 if let Some(ref m) = mode {
                                     effects.push(Effect::SaveAndroidMode(m.clone()));
@@ -1110,29 +1255,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 }
                             }
                         } else {
-                            let real_spec = match spec {
-                                CommandSpec::RnRunAndroid { mode, .. } => CommandSpec::RnRunAndroid {
-                                    device_id: devices[0].id.clone(),
-                                    mode,
-                                },
-                                CommandSpec::RnRunIos { .. } => CommandSpec::RnRunIos {
-                                    device_id: devices[0].id.clone(),
-                                },
-                                other => other,
-                            };
+                            let real_spec = command_with_device(spec, devices[0].id.clone());
                             if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
                                 effects.push(Effect::SaveAndroidMode(m.clone()));
                             }
-                            if let Some(eff) = dispatch_command(state, real_spec) {
-                                effects.push(eff);
-                            }
+                            open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
                         }
                     }
                     _ => {
                         // Multiple devices — show picker
                         // Sort iOS simulators by last-used from sim_history
                         let mut sorted_devices = devices;
-                        if matches!(spec, CommandSpec::RnRunIos { .. }) {
+                        if matches!(spec, CommandSpec::RnRunIos { .. } | CommandSpec::UmpRunIos { .. }) {
                             // Plan 13-08: sim_history is loaded into AppState at startup
                             // (src/main.rs) so update() never crosses the infra boundary.
                             let history = &state.app_config.sim_history;

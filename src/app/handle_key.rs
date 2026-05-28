@@ -75,6 +75,7 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
             // arbitrary char input here. (Their dismiss/confirm keys are
             // routed through the KEYBINDINGS registry above.)
             ModalState::Confirm { .. }
+            | ModalState::RunVariantPicker { .. }
             | ModalState::CleanToggle { .. }
             | ModalState::SyncBeforeRun { .. }
             | ModalState::SyncBeforeMetro { .. }
