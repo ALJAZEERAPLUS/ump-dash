@@ -21,6 +21,7 @@
 use crate::domain::metro::MetroActivity;
 use crate::domain::ports::metro_port::{MetroHandle, MetroPort};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Concrete `MetroPort` impl. Owns no state — one per process lifetime.
 pub struct TokioMetroAdapter;
@@ -68,14 +69,12 @@ impl MetroHandle for TokioMetroHandle {
         Ok(())
     }
     fn kill(mut self: Box<Self>) -> anyhow::Result<()> {
-        // Order mirrors the pre-13-07 inline logic at the MetroStop + shutdown
-        // call sites: signal kill first, then abort the background tasks. The
-        // metro_process_task observes kill_rx and performs the PGID SIGKILL +
-        // port-free wait itself.
+        // Signal the owner task and let it perform PGID SIGKILL, reap, and
+        // MetroActivity::Exited emission. Dropping a JoinHandle detaches the
+        // task; aborting it here would race with the kill signal.
         if let Some(kill_tx) = self.kill_tx.take() {
             let _ = kill_tx.send(());
         }
-        self.stream_task.abort();
         self.stdin_task.abort();
         Ok(())
     }
@@ -110,7 +109,13 @@ impl MetroPort for TokioMetroAdapter {
 
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
 
-        let stream_task = tokio::spawn(metro_process_task(child, stdout, stderr, kill_rx, on_activity));
+        let stream_task = tokio::spawn(metro_process_task(
+            child,
+            stdout,
+            stderr,
+            kill_rx,
+            on_activity,
+        ));
 
         let worktree_id = worktree
             .file_name()
@@ -146,37 +151,39 @@ async fn metro_process_task(
     mut child: tokio::process::Child,
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
-    kill_rx: tokio::sync::oneshot::Receiver<()>,
+    mut kill_rx: tokio::sync::oneshot::Receiver<()>,
     on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
 ) {
-    let drain_task = tokio::spawn(drain_metro_output(stdout, stderr, on_activity));
+    let on_activity: Arc<dyn Fn(MetroActivity) + Send + Sync> = Arc::from(on_activity);
+    let drain_task = tokio::spawn(drain_metro_output(stdout, stderr, on_activity.clone()));
 
     let pid = child.id();
 
     tokio::select! {
-        _ = kill_rx => {
+        kill_result = &mut kill_rx => {
             drain_task.abort();
-            // Kill the entire process group. process_group(0) in spawn_metro makes
-            // the child the group leader (PID == PGID). Sending SIGKILL to -PGID
-            // kills yarn AND the Node metro server that holds port 8081.
-            // child.kill() alone only kills yarn — the node subprocess survives.
-            if let Some(id) = pid {
-                unsafe { libc::kill(-(id as i32), libc::SIGKILL); }
-            }
-            // Reap the child to prevent zombie processes
-            let _ = child.wait().await;
-            for _ in 0..50 {
-                if crate::infra::port::port_is_free(8081) {
-                    break;
+            if kill_result.is_ok() {
+                // Kill the entire process group. process_group(0) in spawn_metro makes
+                // the child the group leader (PID == PGID). Sending SIGKILL to -PGID
+                // kills yarn AND the Node metro server that holds port 8081.
+                if let Some(id) = pid {
+                    unsafe { libc::kill(-(id as i32), libc::SIGKILL); }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let _ = child.wait().await;
+                for _ in 0..50 {
+                    if crate::infra::port::port_is_free(8081) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            } else {
+                let _ = child.wait().await;
             }
-            // Note: MetroExited signaling is done at the app layer via the
-            // effect_runner's SpawnMetro handler, which wires a completion
-            // channel for exit notification.
+            on_activity(MetroActivity::Exited);
         }
         _ = child.wait() => {
             drain_task.abort();
+            on_activity(MetroActivity::Exited);
         }
     }
 }
@@ -203,11 +210,12 @@ fn parse_metro_line(line: &str) -> Option<MetroActivity> {
     }
 
     // Error lines — skip source-map and deprecated noise
-    if lower.contains("error")
-        && !lower.contains("source-map")
-        && !lower.contains("deprecated")
-    {
-        let truncated = if line.len() > 80 { line[..80].to_string() } else { line.to_string() };
+    if lower.contains("error") && !lower.contains("source-map") && !lower.contains("deprecated") {
+        let truncated = if line.chars().count() > 80 {
+            line.chars().take(80).collect()
+        } else {
+            line.to_string()
+        };
         return Some(MetroActivity::Error(truncated));
     }
 
@@ -242,7 +250,7 @@ fn extract_percent(s: &str) -> Option<u8> {
 async fn drain_metro_output(
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
-    on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
+    on_activity: Arc<dyn Fn(MetroActivity) + Send + Sync>,
 ) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -274,7 +282,9 @@ async fn drain_metro_output(
                 }
             }
         }
-        if stdout_done && stderr_done { break; }
+        if stdout_done && stderr_done {
+            break;
+        }
     }
 }
 
@@ -332,6 +342,47 @@ mod tests {
             Some(MetroActivity::Bundling { percent: Some(75) }) => {}
             other => panic!("expected Bundling 75%; got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_metro_line_truncates_unicode_error_on_char_boundary() {
+        let line = format!("error: {}", "é".repeat(100));
+
+        match parse_metro_line(&line) {
+            Some(MetroActivity::Error(msg)) => assert!(msg.chars().count() <= 80),
+            other => panic!("expected unicode error activity; got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn metro_process_task_emits_exited_when_child_exits() -> anyhow::Result<()> {
+        let mut child = tokio::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+        let (_kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
+        let (activity_tx, mut activity_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        metro_process_task(
+            child,
+            stdout,
+            stderr,
+            kill_rx,
+            Box::new(move |activity| {
+                let _ = activity_tx.send(activity);
+            }),
+        )
+        .await;
+
+        let activity = tokio::time::timeout(std::time::Duration::from_secs(1), activity_rx.recv())
+            .await?
+            .expect("activity channel should stay open");
+        assert_eq!(activity, MetroActivity::Exited);
+
+        Ok(())
     }
 
     #[test]

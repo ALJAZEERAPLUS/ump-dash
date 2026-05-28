@@ -26,6 +26,7 @@ pub enum MetroActivity {
     Bundling { percent: Option<u8> },
     DeviceConnected,
     Error(String),
+    Exited,
 }
 
 impl std::fmt::Display for MetroActivity {
@@ -37,6 +38,7 @@ impl std::fmt::Display for MetroActivity {
             Self::Bundling { percent: None } => write!(f, "Bundling..."),
             Self::DeviceConnected => write!(f, "Device connected"),
             Self::Error(msg) => write!(f, "Error: {msg}"),
+            Self::Exited => write!(f, "Exited"),
         }
     }
 }

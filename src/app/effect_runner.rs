@@ -48,6 +48,17 @@ use crate::domain::metro::MetroActivity;
 use crate::domain::metro::MetroHandle;
 use tokio::sync::mpsc::UnboundedSender;
 
+fn forward_metro_activity(
+    activity: MetroActivity,
+    activity_tx: &UnboundedSender<Action>,
+    exited_tx: &UnboundedSender<Action>,
+) {
+    if matches!(&activity, MetroActivity::Exited) {
+        let _ = exited_tx.send(Action::MetroExited);
+    }
+    let _ = activity_tx.send(Action::MetroActivityUpdate(activity));
+}
+
 /// Effect interpreter. Owns the `Adapters` bundle (Plan 13-08) + the action
 /// stream + the handle-delivery channel.
 pub struct EffectRunner {
@@ -140,23 +151,12 @@ impl EffectRunner {
                 tokio::spawn(async move {
                     // The on_activity callback bridges the callback-style
                     // MetroPort trait to the existing Action channel that
-                    // update() consumes. Plan 13-08: we additionally wire a
-                    // natural-exit signal — when the adapter delivers
-                    // MetroActivity::Error("exited"-shaped) we forward
-                    // Action::MetroExited so the state machine clears the
-                    // handle. (See D-13-07-06 deferral.)
-                    let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> =
-                        Box::new(move |act| {
-                            // Heuristic: the adapter emits
-                            // MetroActivity::Error("...") when stdout/stderr
-                            // close unexpectedly. That's the natural-crash
-                            // signal — additionally fire MetroExited so
-                            // update() clears state.metro.
-                            if matches!(&act, MetroActivity::Error(_)) {
-                                let _ = exited_tx.send(Action::MetroExited);
-                            }
-                            let _ = activity_tx.send(Action::MetroActivityUpdate(act));
-                        });
+                    // update() consumes. Metro stderr errors are normal activity;
+                    // only the adapter's explicit Exited activity clears the
+                    // registered handle.
+                    let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> = Box::new(move |act| {
+                        forward_metro_activity(act, &activity_tx, &exited_tx);
+                    });
                     match metro.start(worktree, on_activity).await {
                         Ok(handle) => {
                             // Deliver via the dedicated handle channel — the
@@ -570,5 +570,53 @@ impl EffectRunner {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect_forwarded_actions(activity: MetroActivity) -> Vec<Action> {
+        let (activity_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
+        let exited_tx = activity_tx.clone();
+
+        forward_metro_activity(activity, &activity_tx, &exited_tx);
+
+        let mut actions = Vec::new();
+        while let Ok(action) = action_rx.try_recv() {
+            actions.push(action);
+        }
+        actions
+    }
+
+    #[test]
+    fn metro_error_activity_does_not_emit_metro_exited() {
+        let actions = collect_forwarded_actions(MetroActivity::Error("bundle failed".to_string()));
+
+        assert!(
+            actions.contains(&Action::MetroActivityUpdate(MetroActivity::Error(
+                "bundle failed".to_string()
+            ))),
+            "expected Metro error output to be forwarded as activity; got {actions:?}"
+        );
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::MetroExited)),
+            "Metro error output must not be treated as process exit; got {actions:?}"
+        );
+    }
+
+    #[test]
+    fn metro_exited_activity_emits_metro_exited() {
+        let actions = collect_forwarded_actions(MetroActivity::Exited);
+
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, Action::MetroExited)),
+            "Metro exit activity must notify the state machine; got {actions:?}"
+        );
     }
 }
