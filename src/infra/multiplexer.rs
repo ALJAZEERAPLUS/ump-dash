@@ -70,9 +70,9 @@ pub struct GhosttyAdapter;
 
 impl MultiplexerPort for GhosttyAdapter {
     fn new_window(&self, path: &Path, name: &str, command: &str) -> anyhow::Result<()> {
-        let status = ghostty_new_window_command(path, name, command).status()?;
+        let status = ghostty_new_surface_command(path, name, command).status()?;
         if !status.success() {
-            anyhow::bail!("ghostty new window failed: exit code {:?}", status.code());
+            anyhow::bail!("ghostty new tab failed: exit code {:?}", status.code());
         }
         Ok(())
     }
@@ -82,15 +82,15 @@ impl MultiplexerPort for GhosttyAdapter {
     }
 }
 
-fn ghostty_new_window_command(path: &Path, name: &str, command: &str) -> Command {
-    let (program, args) = ghostty_new_window_command_parts(path, name, command);
+fn ghostty_new_surface_command(path: &Path, name: &str, command: &str) -> Command {
+    let (program, args) = ghostty_new_surface_command_parts(path, name, command);
     let mut cmd = Command::new(program);
     cmd.args(args);
     cmd
 }
 
 #[cfg(target_os = "macos")]
-fn ghostty_new_window_command_parts(
+fn ghostty_new_surface_command_parts(
     path: &Path,
     name: &str,
     command: &str,
@@ -118,11 +118,15 @@ fn ghostty_new_window_command_parts(
             "-e".into(),
             "set initial input of cfg to launchCommand & linefeed".into(),
             "-e".into(),
-            "set win to new window with configuration cfg".into(),
+            "set win to front window".into(),
+            "-e".into(),
+            "set t to new tab in win with configuration cfg".into(),
+            "-e".into(),
+            "select tab t".into(),
             "-e".into(),
             "try".into(),
             "-e".into(),
-            "set name of selected tab of win to tabName".into(),
+            "set name of t to tabName".into(),
             "-e".into(),
             "end try".into(),
             "-e".into(),
@@ -137,7 +141,7 @@ fn ghostty_new_window_command_parts(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn ghostty_new_window_command_parts(
+fn ghostty_new_surface_command_parts(
     path: &Path,
     name: &str,
     command: &str,
@@ -244,15 +248,18 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn ghostty_macos_command_uses_applescript_with_context_args() {
+    fn ghostty_macos_command_creates_tab_in_front_window() {
         let (program, args) =
-            ghostty_new_window_command_parts(Path::new("/repo/app"), "app-claude", "claude");
+            ghostty_new_surface_command_parts(Path::new("/repo/app"), "app-claude", "claude");
 
         assert_eq!(program, "osascript");
         assert!(args
             .iter()
             .any(|arg| arg.contains("new surface configuration")));
         assert!(args
+            .iter()
+            .any(|arg| arg.contains("new tab in win with configuration cfg")));
+        assert!(!args
             .iter()
             .any(|arg| arg.contains("new window with configuration cfg")));
         assert_eq!(
@@ -265,7 +272,7 @@ mod tests {
     #[test]
     fn ghostty_gtk_command_uses_new_window_with_cwd_title_and_shell_command() {
         let (program, args) =
-            ghostty_new_window_command_parts(Path::new("/repo/app"), "app-claude", "claude");
+            ghostty_new_surface_command_parts(Path::new("/repo/app"), "app-claude", "claude");
 
         assert_eq!(program, "ghostty");
         assert_eq!(
