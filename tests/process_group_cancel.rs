@@ -29,6 +29,36 @@ use ump_dash::infra::task_handle::TokioTaskHandle;
 
 use tokio::time::{sleep, timeout};
 
+fn process_state(pid: i32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "state=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if state.is_empty() {
+        None
+    } else {
+        Some(state)
+    }
+}
+
+fn pid_is_gone_or_zombie(pid: i32) -> bool {
+    // SAFETY: pid is validated by the caller; sig=0 is a POSIX existence probe.
+    if unsafe { libc::kill(pid, 0) } == -1 {
+        return true;
+    }
+
+    // `kill(pid, 0)` succeeds for zombies. On macOS CI the grandchild can be
+    // dead-but-unreaped for a short window after the PGID is empty, so treat a
+    // Z-state process as reaped for this test's "not live" invariant.
+    process_state(pid)
+        .as_deref()
+        .is_some_and(|state| state.starts_with('Z'))
+}
+
 /// End-to-end: spawn `sleep 60` as a backgrounded grandchild through the
 /// runner, abort the wrapping `TokioTaskHandle`, assert the process group is
 /// empty within 2 seconds and the specific grandchild PID is dead.
@@ -135,14 +165,25 @@ async fn cancel_via_task_handle_reaps_full_process_group() {
         start.elapsed()
     );
 
-    // 11) Final assertion: the specific grandchild sleep PID is dead. Extra
-    //     safety beyond the group probe — catches a hypothetical regression
-    //     where the PGID is reaped but the sleep was somehow detached.
-    // SAFETY: sleep_pid validated > 1; sig=0 existence probe.
-    let sleep_alive = unsafe { libc::kill(sleep_pid, 0) };
-    assert_eq!(
-        sleep_alive, -1,
-        "grandchild sleep_pid {sleep_pid} should be dead (ESRCH) after PGID reap"
+    // 11) Final assertion: the specific grandchild sleep PID is no longer a
+    //     live process. Extra safety beyond the group probe — catches a
+    //     hypothetical regression where the sleep detached into another PGID.
+    //     `kill(pid, 0)` succeeds for zombies, so accept ESRCH or Z-state.
+    let start = std::time::Instant::now();
+    let sleep_not_live = loop {
+        if pid_is_gone_or_zombie(sleep_pid) {
+            break true;
+        }
+        if start.elapsed() > Duration::from_millis(500) {
+            break false;
+        }
+        sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        sleep_not_live,
+        "grandchild sleep_pid {sleep_pid} should be dead or zombie after PGID reap \
+         (state {:?})",
+        process_state(sleep_pid)
     );
 
     // 12) Drain any remaining events so the runner's forwarding task can
