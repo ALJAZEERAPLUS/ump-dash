@@ -1,7 +1,7 @@
 // src/infra/config.rs
 //
 // Dashboard configuration persistence.
-// Config is stored at ~/.config/rn-dash/config.toml with 0600 permissions
+// Config is stored at ~/.config/ump-dash/config.toml with 0600 permissions
 // because it contains JIRA credentials (token/email).
 //
 // Plan 13-08: the `DashConfig` *type* lives in `crate::domain::dash_config`
@@ -13,10 +13,10 @@
 
 pub use crate::domain::dash_config::DashConfig;
 
-/// Returns the `~/.config/rn-dash/` config directory path.
+/// Returns the `~/.config/ump-dash/` config directory path.
 pub fn config_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
-    std::path::PathBuf::from(home).join(".config").join("rn-dash")
+    std::path::PathBuf::from(home).join(".config").join("ump-dash")
 }
 
 /// Loads the dashboard configuration from disk.

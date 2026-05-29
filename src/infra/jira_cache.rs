@@ -1,7 +1,7 @@
 // src/infra/jira_cache.rs
 //
 // Persistence for the JIRA ticket title cache.
-// Titles are stored at ~/.config/rn-dash/jira_cache.json as a flat JSON object:
+// Titles are stored at ~/.config/ump-dash/jira_cache.json as a flat JSON object:
 // { "PROJ-1234": "Fix login timeout", "PROJ-5678": "Add dark mode", ... }
 //
 // No 0600 permissions needed — ticket titles are not credentials.

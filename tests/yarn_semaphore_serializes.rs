@@ -123,7 +123,7 @@ async fn different_repo_roots_run_in_parallel() {
         // Use the test name + pid to avoid collisions if cargo runs tests
         // concurrently across processes.
         let repo_b = std::env::temp_dir().join(format!(
-            "rn-dash-yarn-semaphore-test-{}",
+            "ump-dash-yarn-semaphore-test-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&repo_b).expect("create sibling repo dir");

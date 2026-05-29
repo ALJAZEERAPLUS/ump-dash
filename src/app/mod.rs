@@ -17,7 +17,7 @@ pub mod runtime;
 pub mod state;
 pub mod update;
 
-// Re-exports — keeps rn_dash::app::* paths stable for tests, ui/, and main.rs
+// Re-exports — keeps ump_dash::app::* paths stable for tests, ui/, and main.rs
 pub use adapters::Adapters;
 pub use handle_key::handle_key;
 pub use runtime::run;

@@ -1,11 +1,11 @@
 // src/main.rs — composition root (Plan 13-08).
 //
 // All adapter construction happens here, plus startup-time config / cache /
-// preferences loading. The library crate (`rn_dash`) is now infra-free at the
-// boundary `rn_dash::app::run(terminal, adapters, state)`.
+// preferences loading. The library crate (`ump_dash`) is now infra-free at the
+// boundary `ump_dash::app::run(terminal, adapters, state)`.
 
-use rn_dash::app::{run, Adapters, AppState};
-use rn_dash::domain::ports::jira_port::JiraPort;
+use ump_dash::app::{run, Adapters, AppState};
+use ump_dash::domain::ports::jira_port::JiraPort;
 use std::sync::Arc;
 
 #[tokio::main]
@@ -24,25 +24,25 @@ async fn main() -> color_eyre::Result<()> {
 
     // Step 3: Set up file-based logging — NEVER use println!/eprintln! in a
     // TUI (corrupts rendering).
-    let _log_guard = rn_dash::tui::setup_logging()?;
-    tracing::info!("rn-dash starting");
+    let _log_guard = ump_dash::tui::setup_logging()?;
+    tracing::info!("ump-dash starting");
 
     // Step 4: Load config + persisted preferences (synchronous I/O at startup).
-    let config = match rn_dash::infra::config::load_config() {
+    let config = match ump_dash::infra::config::load_config() {
         Ok(config) => config,
         Err(e) => {
             tracing::warn!("config load failed: {e}");
             None
         }
     };
-    let jira_title_cache = rn_dash::infra::jira_cache::load_jira_cache().unwrap_or_default();
-    let android_mode_persisted = rn_dash::infra::android_prefs::load_android_mode();
-    let sim_history = rn_dash::infra::sim_history::load_sim_history();
+    let jira_title_cache = ump_dash::infra::jira_cache::load_jira_cache().unwrap_or_default();
+    let android_mode_persisted = ump_dash::infra::android_prefs::load_android_mode();
+    let sim_history = ump_dash::infra::sim_history::load_sim_history();
 
     // Step 5: Construct the Adapters bundle. Concrete `crate::infra::*` types
     // are referenced ONLY here — `src/app/` stays infra-free (G-01).
     let jira_port: Option<Arc<dyn JiraPort>> = config.as_ref().and_then(|cfg| {
-        match rn_dash::infra::jira::HttpJiraClient::new(cfg) {
+        match ump_dash::infra::jira::HttpJiraClient::new(cfg) {
             Ok(client) => Some(Arc::new(client) as Arc<dyn JiraPort>),
             Err(e) => {
                 tracing::warn!("JIRA client init failed: {e}");
@@ -50,14 +50,14 @@ async fn main() -> color_eyre::Result<()> {
             }
         }
     });
-    let multiplexer_port = rn_dash::infra::multiplexer::detect_multiplexer().map(Arc::from);
+    let multiplexer_port = ump_dash::infra::multiplexer::detect_multiplexer().map(Arc::from);
 
     let adapters = Adapters {
-        command_runner: Arc::new(rn_dash::infra::command_runner::TokioCommandRunner),
-        metro: Arc::new(rn_dash::infra::metro::TokioMetroAdapter::new()),
-        port_probe: Arc::new(rn_dash::infra::port::LsofPortProbe),
-        worktrees: Arc::new(rn_dash::infra::worktrees::GitWorktreeAdapter),
-        devices: Arc::new(rn_dash::infra::devices::AdbXcrunDevices),
+        command_runner: Arc::new(ump_dash::infra::command_runner::TokioCommandRunner),
+        metro: Arc::new(ump_dash::infra::metro::TokioMetroAdapter::new()),
+        port_probe: Arc::new(ump_dash::infra::port::LsofPortProbe),
+        worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter),
+        devices: Arc::new(ump_dash::infra::devices::AdbXcrunDevices),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),
     };
@@ -86,7 +86,7 @@ async fn main() -> color_eyre::Result<()> {
     ratatui::restore();
 
     tracing::info!(
-        "rn-dash exiting: {:?}",
+        "ump-dash exiting: {:?}",
         result.as_ref().map(|_| "ok").unwrap_or("err")
     );
 
@@ -95,7 +95,7 @@ async fn main() -> color_eyre::Result<()> {
 
 #[allow(clippy::field_reassign_with_default)]
 fn build_state(
-    config: Option<rn_dash::domain::dash_config::DashConfig>,
+    config: Option<ump_dash::domain::dash_config::DashConfig>,
     jira_title_cache: std::collections::HashMap<String, String>,
     android_mode_persisted: Option<String>,
     sim_history: Vec<String>,

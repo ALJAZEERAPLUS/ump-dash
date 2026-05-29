@@ -63,7 +63,7 @@ jobs:
 
           # Sign the binary
           IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
-          codesign --force --options runtime --sign "$IDENTITY" target/${{ matrix.target }}/release/rn-dash
+          codesign --force --options runtime --sign "$IDENTITY" target/${{ matrix.target }}/release/ump-dash
 
           # Clean up
           rm -f certificate.p12
@@ -76,28 +76,28 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           # Create a zip for notarization
-          ditto -c -k target/${{ matrix.target }}/release/rn-dash rn-dash-notarize.zip
+          ditto -c -k target/${{ matrix.target }}/release/ump-dash ump-dash-notarize.zip
 
           # Submit for notarization and wait
-          xcrun notarytool submit rn-dash-notarize.zip \
+          xcrun notarytool submit ump-dash-notarize.zip \
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD" \
             --wait
 
-          rm -f rn-dash-notarize.zip
+          rm -f ump-dash-notarize.zip
 
       - name: Package binary
         run: |
-          tar -czf rn-dash-${{ matrix.target }}.tar.gz \
+          tar -czf ump-dash-${{ matrix.target }}.tar.gz \
             -C target/${{ matrix.target }}/release \
-            rn-dash
+            ump-dash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rn-dash-${{ matrix.target }}
-          path: rn-dash-${{ matrix.target }}.tar.gz
+          name: ump-dash-${{ matrix.target }}
+          path: ump-dash-${{ matrix.target }}.tar.gz
 
   release:
     name: Create GitHub Release
@@ -113,6 +113,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: rn-dash-*.tar.gz
+          files: ump-dash-*.tar.gz
           generate_release_notes: true
           tag_name: ${{ github.ref_name }}

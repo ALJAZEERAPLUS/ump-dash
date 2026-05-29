@@ -21,7 +21,7 @@ use crate::{
 pub fn render_title_bar(f: &mut Frame, area: Rect, state: &AppState) {
     let title = state.app_config.config.as_ref()
         .map(|c| c.app_title.as_str())
-        .unwrap_or("RN Dash");
+        .unwrap_or("UMP Dash");
     let block = Block::bordered()
         .border_type(BorderType::Double)
         .title(format!(" {title} "))

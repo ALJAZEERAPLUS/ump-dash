@@ -11,7 +11,7 @@
 //! tokio channels required, so the helper can be called from plain `#[test]`
 //! functions (not just `#[tokio::test]`).
 
-use rn_dash::domain::ports::metro_port::MetroHandle;
+use ump_dash::domain::ports::metro_port::MetroHandle;
 
 /// Minimal `MetroHandle` impl used by integration tests that only need
 /// `MetroManager::register / is_running / take_handle` semantics — NOT for

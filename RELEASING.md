@@ -1,4 +1,4 @@
-# Releasing rn-dash
+# Releasing ump-dash
 
 The release pipeline is driven by `scripts/release.sh` and a changelog entry
 written by the agent. GitHub Actions handles the build + publish once a tag is

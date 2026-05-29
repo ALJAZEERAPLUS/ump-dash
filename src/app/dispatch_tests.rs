@@ -859,7 +859,7 @@ mod claude_tab {
     fn open_claude_code_opens_default_tab_without_suffix_prompt() {
         let mut state = base_state();
         state.app_config.multiplexer_available = true;
-        seed_one_worktree_id(&mut state, "rn-dash");
+        seed_one_worktree_id(&mut state, "ump-dash");
 
         let effects = update(&mut state, Action::OpenClaudeCode);
 
@@ -875,7 +875,7 @@ mod claude_tab {
                 name,
                 command,
             } => {
-                assert_eq!(worktree, &std::path::PathBuf::from("/tmp/rn-dash"));
+                assert_eq!(worktree, &std::path::PathBuf::from("/tmp/ump-dash"));
                 assert_eq!(name, "main-claude");
                 assert_eq!(command, "claude --dangerously-skip-permissions");
             }

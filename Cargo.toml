@@ -1,20 +1,20 @@
 [package]
-name = "rn-dash"
+name = "ump-dash"
 version = "1.2.0"
 edition = "2024"
-description = "Terminal dashboard for managing React Native worktrees, metro, and git"
+description = "Terminal dashboard for managing UMP React Native worktrees, Metro, and git"
 license = "MIT"
-repository = "https://github.com/cubicme/rn-dash"
-homepage = "https://github.com/cubicme/rn-dash"
+repository = "https://github.com/ALJAZEERAPLUS/ump-dash"
+homepage = "https://github.com/ALJAZEERAPLUS/ump-dash"
 keywords = ["ratatui", "react-native", "terminal", "dashboard", "worktree"]
 categories = ["command-line-utilities", "development-tools"]
 
 [lib]
-name = "rn_dash"
+name = "ump_dash"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rn-dash"
+name = "ump-dash"
 path = "src/main.rs"
 
 [dependencies]
@@ -61,4 +61,3 @@ libc = "0.2"
 # features on the runtime tokio do NOT flow into the integration-test crate.
 tokio = { version = "1.49", features = ["macros", "rt-multi-thread", "process", "time", "io-util", "sync"] }
 anyhow = "1"
-

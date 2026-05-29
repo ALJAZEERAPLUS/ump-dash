@@ -1,6 +1,6 @@
-# rn-dash
+# ump-dash
 
-Terminal dashboard for managing React Native worktrees, metro, and git.
+Terminal dashboard for managing UMP React Native worktrees, Metro, and git.
 
 Built with [Ratatui](https://ratatui.rs) in Rust.
 
@@ -8,7 +8,7 @@ Built with [Ratatui](https://ratatui.rs) in Rust.
 
 - Browse and switch between git worktrees
 - Start, stop, and reload Metro bundler with one key
-- Run React Native commands (iOS/Android) with device picker
+- Run UMP React Native commands (iOS/Android) with target and device pickers
 - Yarn and pod-install via command palette
 - JIRA ticket title integration (auto-fetches from branch names)
 - Open Claude Code in tmux, zellij, or Ghostty
@@ -19,32 +19,32 @@ Built with [Ratatui](https://ratatui.rs) in Rust.
 **Prerequisites:** Rust toolchain — install from [rustup.rs](https://rustup.rs)
 
 ```bash
-git clone https://github.com/cubicme/rn-dash.git
-cd rn-dash
+git clone https://github.com/ALJAZEERAPLUS/ump-dash.git
+cd ump-dash
 cargo build --release
-# Binary at target/release/rn-dash
+# Binary at target/release/ump-dash
 ```
 
 Optionally copy the binary to a directory on your PATH:
 
 ```bash
-cp target/release/rn-dash ~/.local/bin/
+cp target/release/ump-dash ~/.local/bin/
 ```
 
 **macOS Gatekeeper:** If downloading a prebuilt binary from GitHub Releases, macOS may block it. Clear the quarantine flag:
 
 ```bash
-xattr -cr /path/to/rn-dash
+xattr -cr /path/to/ump-dash
 ```
 
 ## Configuration
 
-Config file location: `~/.config/rn-dash/config.toml`
+Config file location: `~/.config/ump-dash/config.toml`
 
 Copy the example and fill in your values:
 
 ```bash
-cp config.example.toml ~/.config/rn-dash/config.toml
+cp config.example.toml ~/.config/ump-dash/config.toml
 ```
 
 The file is stored with `0600` permissions because it contains JIRA credentials.
@@ -53,13 +53,13 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 
 | Field | Type | Default | Accepted values | Description |
 |-------|------|---------|-----------------|-------------|
-| `repo_root` | string | launch directory | Any path string; absolute or `~/` recommended | React Native monorepo root. |
+| `repo_root` | string | launch directory | Any path string; absolute or `~/` recommended | UMP React Native monorepo root. |
 | `jira_base_url` | string | — (required in config file) | Any JIRA base URL, e.g. `https://your-org.atlassian.net` | Base URL for your JIRA instance. |
 | `jira_email` | string | — | Any email string, or omit | JIRA account email. Required for Cloud auth mode. |
 | `jira_token` | string | — (required in config file) | Any API token or PAT string | JIRA API token (Cloud) or Personal Access Token (Data Center). |
 | `auth_mode` | string | `"cloud"` | `"cloud"`, `"datacenter"` | JIRA authentication mode. |
 | `jira_project_prefix` | string | `"UMP"` | Any exact branch ticket prefix, e.g. `"PROJ"` | Project key used to extract tickets like `PROJ-1234` from branch names. |
-| `app_title` | string | `"RN Dash"` | Any string | Title shown in the dashboard header. |
+| `app_title` | string | `"UMP Dash"` | Any string | Title shown in the dashboard header. |
 | `claude_flags` | string | `"--dangerously-skip-permissions"` | Any string | Flags passed when launching Claude Code. |
 | `auto_sync` | boolean | `false` | `true`, `false` | Automatically accept sync-before-run and sync-before-metro prompts. |
 | `spinner_style` | string | `"circles"` | `"circles"`, `"braille"`, `"dots"` | Spinner glyph set for live task indicators. |
@@ -70,7 +70,7 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 Malformed TOML, missing required fields in an existing config file, wrong types
 such as `auto_sync = "yes"`, a non-array `columns` value, an unknown column
 name such as `"owner"`, or a duplicate column name make the config fail to
-load. rn-dash logs a warning and runs as if no config file was present for that
+load. ump-dash logs a warning and runs as if no config file was present for that
 launch.
 
 Unknown keys are ignored. Unknown `spinner_style` strings fall back to
@@ -87,7 +87,7 @@ See `config.example.toml` for an annotated template.
 Launch from a directory inside your monorepo, or anywhere if `repo_root` is set in config:
 
 ```bash
-rn-dash
+ump-dash
 # or from source:
 cargo run
 ```

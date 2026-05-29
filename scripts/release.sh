@@ -67,7 +67,7 @@ if [[ "$FINALIZE" == "--finalize" ]]; then
 
   echo ""
   echo "✓ Pushed $NEW_TAG — GitHub Actions will build and publish the release."
-  echo "  https://github.com/cubicme/rn-dash/actions"
+  echo "  https://github.com/ALJAZEERAPLUS/ump-dash/actions"
   exit 0
 fi
 

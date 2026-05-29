@@ -12,7 +12,7 @@
 //!
 //! GUARD ROLE: this test fails RED if `.process_group(0)` is removed from
 //! `src/infra/command_runner.rs::run_command`. The grandchild sleep PID would
-//! join the rn-dash process group, the PGID broadcast from `TokioTaskHandle::abort`
+//! join the ump-dash process group, the PGID broadcast from `TokioTaskHandle::abort`
 //! would fail to reach it, and the ESRCH polling loop would time out at 2s.
 //! Also fails RED if `TokioTaskHandle::abort` no longer sends SIGTERM/SIGKILL
 //! to the PGID (Plan 15-02 regression).
@@ -21,11 +21,11 @@
 
 use std::time::Duration;
 
-use rn_dash::domain::command::CommandSpec;
-use rn_dash::domain::ports::command_runner_port::{CommandEvent, CommandRunnerPort};
-use rn_dash::domain::ports::task_handle::TaskHandle;
-use rn_dash::infra::command_runner::TokioCommandRunner;
-use rn_dash::infra::task_handle::TokioTaskHandle;
+use ump_dash::domain::command::CommandSpec;
+use ump_dash::domain::ports::command_runner_port::{CommandEvent, CommandRunnerPort};
+use ump_dash::domain::ports::task_handle::TaskHandle;
+use ump_dash::infra::command_runner::TokioCommandRunner;
+use ump_dash::infra::task_handle::TokioTaskHandle;
 
 use tokio::time::{sleep, timeout};
 

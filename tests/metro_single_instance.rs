@@ -16,10 +16,10 @@
 mod common;
 
 use common::fake_metro_handle;
-use rn_dash::app::effect::Effect;
-use rn_dash::app::{update, AppState};
-use rn_dash::domain::action::Action;
-use rn_dash::domain::metro::MetroStatus;
+use ump_dash::app::effect::Effect;
+use ump_dash::app::{update, AppState};
+use ump_dash::domain::action::Action;
+use ump_dash::domain::metro::MetroStatus;
 
 #[test]
 fn metro_start_while_running_triggers_restart_not_double_spawn() {

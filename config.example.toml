@@ -1,8 +1,8 @@
-# rn-dash configuration
-# Copy to ~/.config/rn-dash/config.toml and fill in your values.
+# ump-dash configuration
+# Copy to ~/.config/ump-dash/config.toml and fill in your values.
 # File permissions are set to 0600 (contains credentials).
 
-# Absolute path to your React Native monorepo root (supports ~/).
+# Absolute path to the UMP React Native monorepo root (supports ~/).
 # Required.
 repo_root = "~/code/my-rn-app"
 
@@ -29,8 +29,8 @@ jira_token = "your-api-token-here"
 # jira_project_prefix = "UMP"
 
 # Title shown in the dashboard header.
-# Default: "RN Dash"
-# app_title = "RN Dash"
+# Default: "UMP Dash"
+# app_title = "UMP Dash"
 
 # Flags passed when launching Claude Code.
 # Default: "--dangerously-skip-permissions"
@@ -57,13 +57,13 @@ jira_token = "your-api-token-here"
 #   "ticket" -> JIRA ticket key + title
 #   "dir"    -> Worktree directory name
 #   "task"   -> Running task spinner + label + elapsed time
-# Omit a value to hide that column. Widths are fixed by rn-dash.
+# Omit a value to hide that column. Widths are fixed by ump-dash.
 # Default: ["status", "branch", "ticket", "dir", "task"]
 # columns = ["status", "branch", "ticket", "dir", "task"]
 
 # Invalid config behavior:
 # - Malformed TOML, missing required fields, wrong types, unknown column names,
-#   or duplicate column names make rn-dash ignore the whole config for that
+#   or duplicate column names make ump-dash ignore the whole config for that
 #   launch and log a warning.
 # - Unknown keys are ignored.
 # - Unknown spinner_style strings fall back to "circles".

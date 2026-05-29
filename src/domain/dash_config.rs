@@ -22,7 +22,7 @@ fn default_jira_prefix() -> String {
 }
 
 fn default_app_title() -> String {
-    "RN Dash".to_string()
+    "UMP Dash".to_string()
 }
 
 fn default_spinner_style() -> String {
@@ -72,7 +72,7 @@ pub enum WorktreeTableColumn {
     Task,
 }
 
-/// Application configuration stored in ~/.config/rn-dash/config.toml.
+/// Application configuration stored in ~/.config/ump-dash/config.toml.
 ///
 /// Security note: this file is written with 0600 permissions on Unix because
 /// `jira_token` is a credential. Never log or display the token value.
@@ -111,7 +111,7 @@ pub struct DashConfig {
     #[serde(default = "default_jira_prefix")]
     pub jira_project_prefix: String,
 
-    /// Title shown in the dashboard header. Defaults to "RN Dash".
+    /// Title shown in the dashboard header. Defaults to "UMP Dash".
     #[serde(default = "default_app_title")]
     pub app_title: String,
 

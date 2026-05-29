@@ -71,7 +71,7 @@ impl TaskHandle for TokioTaskHandle {
         // abort() is the domain trait surface — synchronous, infallible, no panic.
         let pid = self.child_pid as i32;
         // Pitfall 3 (15-RESEARCH): libc::kill(-1, SIG*) broadcasts to every
-        // process owned by this UID — that would include rn-dash itself.
+        // process owned by this UID — that would include ump-dash itself.
         // The placeholder pid=0 (Plan 15-03 will wire the real one) and the
         // init pid=1 are both refused silently. abort() must be infallible per
         // the domain trait, so we return rather than panic.
@@ -236,7 +236,7 @@ mod tests {
     fn abort_with_placeholder_pid_one_is_noop() {
         // Pitfall 3 guard (T-15-02-02): pid=1 is init on POSIX. Never send
         // libc::kill(-1, ..) — that would target every process owned by this
-        // UID, including rn-dash itself.
+        // UID, including ump-dash itself.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

@@ -7,6 +7,9 @@
 # Claude Code worktrees
 .claude/worktrees/
 
+# Local Serena project metadata
+.serena/
+
 # Credentials and config (never commit real config with tokens)
 config.json
 

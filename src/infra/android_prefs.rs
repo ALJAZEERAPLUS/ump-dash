@@ -1,5 +1,5 @@
 //! Android run preferences — persists last-used build mode for auto-application.
-//! Persists to ~/.config/rn-dash/android_prefs.json as JSON: {"mode": "debugOptimized"}.
+//! Persists to ~/.config/ump-dash/android_prefs.json as JSON: {"mode": "debugOptimized"}.
 
 use crate::infra::config::config_dir;
 
