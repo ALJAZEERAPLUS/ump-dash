@@ -128,9 +128,6 @@ pub struct ModalStackState {
     /// Pending device command — stored while async device enumeration is in flight.
     pub pending_device_command: Option<crate::domain::command::CommandSpec>,
 
-    /// Pending claude open — stores worktree dir name while TextInput modal is open for tab suffix.
-    pub pending_claude_open: Option<String>,
-
     /// Pending android mode change — set by StartSetAndroidMode, consumed by ModalInputSubmit.
     pub pending_android_mode: bool,
 

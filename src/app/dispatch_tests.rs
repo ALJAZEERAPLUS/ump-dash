@@ -849,6 +849,42 @@ mod command_queue {
 }
 
 // =========================================================================
+// Sub-module 3.5: Claude tab dispatch
+// =========================================================================
+
+mod claude_tab {
+    use super::*;
+
+    #[test]
+    fn open_claude_code_opens_default_tab_without_suffix_prompt() {
+        let mut state = base_state();
+        state.app_config.multiplexer_available = true;
+        seed_one_worktree_id(&mut state, "rn-dash");
+
+        let effects = update(&mut state, Action::OpenClaudeCode);
+
+        assert!(
+            state.modal_stack.modal.is_none(),
+            "OpenClaudeCode should not prompt for a custom suffix"
+        );
+        assert_eq!(effects.len(), 1, "expected exactly one effect, got {effects:?}");
+
+        match &effects[0] {
+            Effect::OpenInMultiplexer {
+                worktree,
+                name,
+                command,
+            } => {
+                assert_eq!(worktree, &std::path::PathBuf::from("/tmp/rn-dash"));
+                assert_eq!(name, "main-claude");
+                assert_eq!(command, "claude --dangerously-skip-permissions");
+            }
+            other => panic!("expected OpenInMultiplexer effect, got {other:?}"),
+        }
+    }
+}
+
+// =========================================================================
 // Sub-module 4: WorktreesLoaded — slice map population (Plan 14-03)
 // =========================================================================
 

@@ -938,7 +938,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ModalCancel => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_claude_open = None;       // prevent pending state leak on Esc
             state.modal_stack.pending_android_mode = false;
             state.modal_stack.pending_worktree_removal = None;  // discard any pending removal on cancel
             state.modal_stack.pending_worktree_add = false;     // discard any pending add on cancel
@@ -1038,33 +1037,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             }
                             state.worktree_browser.worktree_op_in_flight = true;
                             effects.push(Effect::AddWorktree { repo_root: state.app_config.repo_root.clone(), branch: branch_name });
-                        } else if let Some(wt_id) = state.modal_stack.pending_claude_open.take() {
-                            // Claude tab name modal submit
-                            let suffix = if buffer.trim().is_empty() {
-                                "claude".to_string()
-                            } else {
-                                buffer
-                            };
-                            let wt = state.worktree_browser.worktrees.iter()
-                                .find(|wt| wt.path.file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("") == wt_id)
-                                .cloned();
-                            if let Some(wt) = wt {
-                                let name = format!("{}-{}", wt.preferred_prefix(), suffix);
-                                let path = wt.path.clone();
-                                let flags = state.app_config.claude_flags.clone();
-                                let command = if flags.is_empty() {
-                                    "claude".to_string()
-                                } else {
-                                    format!("claude {flags}")
-                                };
-                                effects.push(Effect::OpenInMultiplexer {
-                                    worktree: path,
-                                    name,
-                                    command,
-                                });
-                            }
                         } else {
                             // Build the real CommandSpec by filling in the text
                             let real_spec = match *pending_template {
@@ -1420,21 +1392,22 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let wt = if !state.worktree_browser.worktrees.is_empty() {
                 let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0)
                     .min(state.worktree_browser.worktrees.len() - 1);
-                &state.worktree_browser.worktrees[idx]
+                state.worktree_browser.worktrees[idx].clone()
             } else {
                 return effects;
             };
-            // Store worktree dir name for later use when modal submits
-            state.modal_stack.pending_claude_open = Some(
-                wt.path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string()
-            );
-            state.modal_stack.modal = Some(ModalState::TextInput {
-                prompt: "Claude tab suffix:".to_string(),
-                buffer: String::new(),
-                pending_template: Box::new(crate::domain::command::CommandSpec::YarnLint), // sentinel — not used
+            let path = wt.path.clone();
+            let name = format!("{}-claude", wt.preferred_prefix());
+            let flags = state.app_config.claude_flags.clone();
+            let command = if flags.is_empty() {
+                "claude".to_string()
+            } else {
+                format!("claude {flags}")
+            };
+            effects.push(Effect::OpenInMultiplexer {
+                worktree: path,
+                name,
+                command,
             });
         }
 
