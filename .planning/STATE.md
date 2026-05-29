@@ -127,6 +127,7 @@ None.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260529-fs9 | Add Ghostty support for terminal surfaces | 2026-05-29 | 2839c35 | [260529-fs9-let-s-add-support-for-ghostty-the-same-w](./quick/260529-fs9-let-s-add-support-for-ghostty-the-same-w/) |
+| 260529-gv7 | remove the prompt that opens when opening a claude tab; no custom suffix needed | 2026-05-29 | a2b79bf | [260529-gv7-remove-the-prompt-that-opens-when-openin](./quick/260529-gv7-remove-the-prompt-that-opens-when-openin/) |
 | 260528-gku | Remove legacy run keys and add workspace-scoped UMP run repeat | 2026-05-28 | aa2a08a | [260528-gku-follow-up-to-previous-task-260528-fec-wi](./quick/260528-gku-follow-up-to-previous-task-260528-fec-wi/) |
 | 260528-fec | Change iOS/Android run keychords to UMP scripts with target and run-type picker | 2026-05-28 | b093803 | [260528-fec-let-s-change-the-keychords-for-running-w](./quick/260528-fec-let-s-change-the-keychords-for-running-w/) |
 | 260527-qlh | Make worktree table column order/visibility configurable and update docs/examples | 2026-05-27 | 0c28a1c | [260527-qlh-let-s-make-the-columns-configurable-and-](./quick/260527-qlh-let-s-make-the-columns-configurable-and-/) |
@@ -134,7 +135,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-05-29 - Completed quick task 260529-fs9: Add Ghostty support for terminal surfaces
+Last activity: 2026-05-29 - Completed quick task 260529-gv7: remove the prompt that opens when opening a claude tab; no custom suffix needed
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
