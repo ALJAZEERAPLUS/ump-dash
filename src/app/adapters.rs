@@ -10,7 +10,7 @@
 //! Two ports are `Option`-valued because their availability depends on
 //! runtime context:
 //! - `jira` is `None` when no `DashConfig` is loaded or no token is set.
-//! - `multiplexer` is `None` when the process is not inside `tmux` / `zellij`.
+//! - `multiplexer` is `None` when the process is not inside tmux, zellij, or Ghostty.
 //!
 //! `#[derive(Clone)]` is load-bearing: `EffectRunner::run_effect` clones
 //! adapter handles into `tokio::spawn` closures.
@@ -38,6 +38,6 @@ pub struct Adapters {
     pub devices: Arc<dyn DevicePort>,
     /// `None` when the dashboard config does not contain JIRA credentials.
     pub jira: Option<Arc<dyn JiraPort>>,
-    /// `None` when the process is not running inside tmux or zellij.
+    /// `None` when the process is not running inside tmux, zellij, or Ghostty.
     pub multiplexer: Option<Arc<dyn MultiplexerPort>>,
 }

@@ -2,7 +2,7 @@
 //!
 //! Every concrete adapter in `crate::infra` implements one of these traits.
 //! The domain + app layers depend only on the trait — never on the infra
-//! adapter type — so swapping a real HTTP/process/tmux client for a fake
+//! adapter type — so swapping a real HTTP/process/terminal client for a fake
 //! in tests happens without touching domain or app code.
 //!
 //! Other port modules added in 13-03 (metro), 13-04 (worktree/device/port_probe),

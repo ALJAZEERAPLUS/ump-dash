@@ -796,7 +796,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     },
     KeyBinding {
         key: KeyCode::Char('C'),
-        label: "C", short_desc: "claude", long_desc: "Open Claude Code (tmux/zellij)",
+        label: "C", short_desc: "claude", long_desc: "Open Claude Code (tmux/zellij/Ghostty)",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::OpenClaudeCode),
         visible: |_| true,

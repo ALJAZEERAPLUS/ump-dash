@@ -11,7 +11,7 @@ Built with [Ratatui](https://ratatui.rs) in Rust.
 - Run React Native commands (iOS/Android) with device picker
 - Yarn and pod-install via command palette
 - JIRA ticket title integration (auto-fetches from branch names)
-- Open Claude Code in tmux/zellij splits
+- Open Claude Code in tmux, zellij, or Ghostty
 - Context-sensitive keybindings with dynamic hints
 
 ## Installation / Build

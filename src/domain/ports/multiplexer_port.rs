@@ -1,9 +1,9 @@
-//! MultiplexerPort — domain-layer trait boundary for terminal multiplexer
-//! operations (tmux + zellij).
+//! MultiplexerPort — domain-layer trait boundary for terminal surface
+//! operations (tmux, zellij, and Ghostty).
 //!
 //! ARCH-02: Domain and app layers depend only on this trait; `infra::multiplexer`
-//! supplies `TmuxAdapter` and `ZellijAdapter` concrete implementations plus the
-//! `detect_multiplexer` auto-detection helper.
+//! supplies concrete implementations plus the `detect_multiplexer`
+//! auto-detection helper.
 
 #![allow(dead_code)]
 

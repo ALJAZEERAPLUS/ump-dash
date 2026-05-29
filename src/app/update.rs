@@ -1412,7 +1412,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::OpenClaudeCode => {
             if !state.app_config.multiplexer_available {
                 state.error_state = Some(ErrorState {
-                    message: "Cannot open Claude Code: not inside a tmux or zellij session".into(),
+                    message: "Cannot open Claude Code: not inside a tmux, zellij, or Ghostty session".into(),
                     can_retry: false,
                 });
                 return effects;
@@ -1441,7 +1441,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::OpenShellTab => {
             if !state.app_config.multiplexer_available {
                 state.error_state = Some(ErrorState {
-                    message: "Cannot open shell tab: not inside a tmux or zellij session".into(),
+                    message: "Cannot open shell tab: not inside a tmux, zellij, or Ghostty session".into(),
                     can_retry: false,
                 });
                 return effects;

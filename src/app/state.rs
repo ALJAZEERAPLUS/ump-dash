@@ -193,7 +193,7 @@ pub struct AppConfigState {
     /// sort iOS picker entries without crossing the infra boundary.
     pub sim_history: Vec<String>,
 
-    /// True when a terminal multiplexer (tmux or zellij) is detected at startup.
+    /// True when a supported terminal surface (tmux, zellij, or Ghostty) is detected at startup.
     /// Plan 13-08 replaced the `multiplexer: Option<Box<dyn MultiplexerPort>>` field —
     /// the port now lives in `Adapters` (constructed in `src/main.rs`).
     pub multiplexer_available: bool,
