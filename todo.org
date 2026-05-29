@@ -1,0 +1,57 @@
+* Inbox
+** TODO this also should be composable.
+the whole app state like this for sure won't scale to per-worktree everything
+
+[[file:~/aljazeera/dashboard/src/app.rs::// Repo root — worktrees are listed relative to this path]]
+** TODO why everything has to be here together?
+yarn can have it's own command, git its own and they can be composed here.
+Idealy the pod action itself should say i depend on something but i understand that maybe that's hard to resolve
+CommandSpec::GitResetHard => "git reset --hard HEAD",
+            CommandSpec::GitPull => "git pull",
+            CommandSpec::GitPush => "git push",
+            CommandSpec::GitRebase {  } => "git rebase <target>",
+            CommandSpec::GitCheckout { ..lf } => "git checkout <branch>",
+            CommandSpec::GitCheckoutNew { .. } => "git checkout -b <branch>",
+            CommandSpec::RnCleanAndroid => "Clean Android (react-native clean)",
+            CommandSpec::RnCleanCocoapods => "Clean CocoaPods (react-native clean)",
+            CommandSpec::RmNodeModules => "Remove node_modules",
+            CommandSpec::YarnInstall => "yarn install",
+            CommandSpec::YarnPodInstall => "yarn pod-install",
+            CommandSpec::RnRunAndroid { .. } => "Run on Android device",
+            CommandSpec::RnRunIos { .. } => "Run on iOS device",
+            CommandSpec::RnRunIosDevice => "Run on iOS device (auto)",
+            CommandSpec::YarnUnitTests => "yarn unit-tests",
+            CommandSpec::YarnJest { .. } => "yarn jest <filter>",
+            CommandSpec::YarnLint => "yarn lint --quiet --fix",
+            CommandSpec::YarnCheckTypes => "yarn check-types --incremental",
+            CommandSpec::GitFetch => "git fetch --all --tags",
+            CommandSpec::GitResetHardFetch => "git fetch + reset --hard origin/<branch>",
+            CommandSpec::RnReleaseBuild => "gradlew assembleRelease",
+            CommandSpec::AdbInstallApk => "adb install release APK",
+            C
+[[file:~/aljazeera/dashboard/src/domain/command.rs::CommandSpec::GitResetHard => "git reset --hard HEAD",
+ CommandSpec::GitPull => "git pull",
+ CommandSpec::GitPush => "git push",
+ CommandSpec::GitRebase { .. } => "git rebase <target>",
+ CommandSpec::GitCheckout { .. } => "git checkout <branch>",
+ CommandSpec::GitCheckoutNew { .. } => "git checkout -b <branch>",
+ CommandSpec::RnCleanAndroid => "Clean Android (react-native clean)",
+ CommandSpec::RnCleanCocoapods => "Clean CocoaPods (react-native clean)",
+ CommandSpec::RmNodeModules => "Remove node_modules",
+ CommandSpec::YarnInstall => "yarn install",
+ CommandSpec::YarnPodInstall => "yarn pod-install",
+ CommandSpec::RnRunAndroid { .. } => "Run on Android device",
+ CommandSpec::RnRunIos { .. } => "Run on iOS device",
+ CommandSpec::RnRunIosDevice => "Run on iOS device (auto)",
+ CommandSpec::YarnUnitTests => "yarn unit-tests",
+ CommandSpec::YarnJest { .. } => "yarn jest <filter>",
+ CommandSpec::YarnLint => "yarn lint --quiet --fix",
+ CommandSpec::YarnCheckTypes => "yarn check-types --incremental",
+ CommandSpec::GitFetch => "git fetch --all --tags",
+ CommandSpec::GitResetHardFetch => "git fetch + reset --hard origin/<branch>",
+ CommandSpec::RnReleaseBuild => "gradlew assembleRelease",
+ CommandSpec::AdbInstallApk => "adb install release APK",
+ C]]
+** TODO configurable columns
+** TODO configure show/hide headers
+** TODO shared native build
