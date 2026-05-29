@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-05-29
+
+### New
+- **Per-worktree tasks** — commands are now tracked per worktree, with live task indicators and safe parallel execution where commands do not conflict.
+- **Task cancellation and collision handling** — cancellable commands stop their process group cleanly, conflicting commands are blocked, and yarn-family jobs are serialized per repo.
+- **UMP run flow** — Android and iOS run keys now use UMP scripts with target/run-type pickers and a repeat-last-run shortcut.
+- **Configurable worktree table** — column order/visibility and spinner style can now be configured.
+- **Ghostty support** — Claude Code can now open in Ghostty in addition to tmux and zellij.
+- **Physical iOS devices** — the iOS picker now includes connected devices as well as simulators.
+
+### Fixed
+- Metro stays running when a React Native client reports an error.
+- Ghostty opens a new tab on macOS instead of reusing the current surface.
+- Claude Code launch no longer asks for an unused custom suffix.
+- Worktree status indicators no longer overlap, and the old highlight gutter has been removed.
+
+### Changed
+- Project identity is now UMP-specific: package, binary, config path, release artifacts, and GitHub links use `ump-dash` / `github.com/ALJAZEERAPLUS/ump-dash`.
+
 ## [1.2.0] - 2026-04-12
 
 ### New
@@ -23,4 +42,3 @@ All notable changes to this project will be documented in this file.
 ### Docs
 - README: corrected clone URL to match the actual repo.
 - README: added macOS Gatekeeper workaround for running unsigned development builds.
-
