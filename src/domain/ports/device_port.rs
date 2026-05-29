@@ -1,6 +1,6 @@
 //! Device enumeration port (F-105).
 //!
-//! Wraps `list_android_devices` + `list_ios_simulators` from
+//! Wraps `list_android_devices` + `list_ios_devices` from
 //! `src/infra/devices.rs` behind a single `list(kind)` method dispatched by
 //! `DeviceKind`. `AdbXcrunDevices` in `src/infra/devices.rs` is the production
 //! impl.
@@ -20,11 +20,11 @@ pub enum DeviceKind {
     Ios,
 }
 
-/// Trait boundary for device enumeration (adb + xcrun simctl).
+/// Trait boundary for device enumeration (adb + xcrun).
 #[async_trait::async_trait]
 pub trait DevicePort: Send + Sync {
     /// List available devices for the given family. Running devices and
-    /// emulator AVDs are merged for Android; available simulators are
-    /// returned for iOS.
+    /// emulator AVDs are merged for Android; physical devices and available
+    /// simulators are merged for iOS.
     async fn list(&self, kind: DeviceKind) -> anyhow::Result<Vec<DeviceInfo>>;
 }

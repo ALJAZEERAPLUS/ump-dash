@@ -272,13 +272,27 @@ pub async fn list_ios_physical_devices() -> anyhow::Result<Vec<DeviceInfo>> {
     Ok(parse_xctrace_devices(&text))
 }
 
+fn merge_ios_device_sources(
+    mut physical_devices: Vec<DeviceInfo>,
+    simulators: Vec<DeviceInfo>,
+) -> Vec<DeviceInfo> {
+    physical_devices.extend(simulators);
+    physical_devices
+}
+
+/// Runs both iOS device sources and returns physical devices followed by simulators.
+pub async fn list_ios_devices() -> anyhow::Result<Vec<DeviceInfo>> {
+    let (physical_devices, simulators) =
+        tokio::join!(list_ios_physical_devices(), list_ios_simulators(),);
+
+    Ok(merge_ios_device_sources(
+        physical_devices.unwrap_or_default(),
+        simulators?,
+    ))
+}
+
 /// F-105 adapter: dispatches by `DeviceKind` to the existing free fns
-/// (`list_android_devices` / `list_ios_simulators`).
-///
-/// Physical iOS devices (`list_ios_physical_devices`) are not yet part of the
-/// trait surface — the current app only consumes the simulator list for the
-/// iOS family. A future extension can add a `DeviceKind::IosPhysical` variant
-/// and dispatch accordingly without breaking existing consumers.
+/// (`list_android_devices` / `list_ios_devices`).
 pub struct AdbXcrunDevices;
 
 #[async_trait::async_trait]
@@ -291,7 +305,58 @@ impl crate::domain::ports::device_port::DevicePort for AdbXcrunDevices {
             crate::domain::ports::device_port::DeviceKind::Android => {
                 list_android_devices().await
             }
-            crate::domain::ports::device_port::DeviceKind::Ios => list_ios_simulators().await,
+            crate::domain::ports::device_port::DeviceKind::Ios => list_ios_devices().await,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ios_device_source_merges_physical_devices_with_simulators() {
+        let physical = parse_xctrace_devices(
+            r#"
+== Devices ==
+DeskBalls (ECEAA882-C823-558D-84E3-566954DC0910)
+
+== Devices Offline ==
+Dafone (26.5) (00008150-000121040E02401C)
+
+== Simulators ==
+iPhone 16 Pro Simulator (18.3.1) (3029FE94-EE71-4CF4-BC6A-4CE967633606)
+"#,
+        );
+        let simulators = parse_xcrun_simctl(
+            r#"{
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-3": [
+      {
+        "udid": "3029FE94-EE71-4CF4-BC6A-4CE967633606",
+        "isAvailable": true,
+        "state": "Shutdown",
+        "name": "iPhone 16 Pro"
+      }
+    ]
+  }
+}"#,
+        );
+
+        let merged = merge_ios_device_sources(physical, simulators);
+
+        assert!(
+            merged
+                .iter()
+                .any(|device| device.name.contains("Dafone")
+                    && device.id == "00008150-000121040E02401C"),
+            "iOS picker source must include physical xctrace devices; got {merged:?}"
+        );
+        assert!(
+            merged
+                .iter()
+                .any(|device| device.name == "iPhone 16 Pro (Shutdown)"),
+            "iOS picker source must keep simctl simulators; got {merged:?}"
+        );
     }
 }
