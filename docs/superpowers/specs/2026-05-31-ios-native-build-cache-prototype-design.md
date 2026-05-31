@@ -74,9 +74,8 @@ Initial inputs are intentionally conservative and easy to change:
 - `yarn.lock`
 - `package.json`
 - `ios/Podfile`
-- `ios/Podfile.lock`
 
-The prototype does not hash all of `ios/`. That would make false misses likely while we are still proving install/launch feasibility. Once the launch path is proven, the helper can expand to native-only globs such as `ios/**/*.swift`, `ios/**/*.m`, `ios/**/*.mm`, `ios/**/*.h`, `ios/**/*.xcodeproj/**`, and config files, while excluding heavy/generated paths such as `ios/Pods`, `ios/build`, `xcuserdata`, and DerivedData.
+The prototype deliberately excludes `ios/Podfile.lock` because it can create false misses while we are still proving install/launch feasibility. It also does not hash all of `ios/`. Once the launch path is proven, the helper can expand to native-only globs such as `ios/**/*.swift`, `ios/**/*.m`, `ios/**/*.mm`, `ios/**/*.h`, `ios/**/*.xcodeproj/**`, and config files, while excluding heavy/generated paths such as `ios/Pods`, `ios/build`, `xcuserdata`, and DerivedData.
 
 JavaScript and TypeScript app source should not invalidate the cache by default, because Metro serves JS at runtime.
 
