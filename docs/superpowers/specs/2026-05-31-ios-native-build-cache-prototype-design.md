@@ -162,3 +162,32 @@ Manual verification should cover:
 - CI/shared cache behavior.
 - Complete native-input fingerprint policy.
 - Build-folder snapshot caching.
+
+## Prototype Cache Seeding
+
+To seed a local iOS simulator cache entry:
+
+1. Build the UMP iOS simulator app once through the normal `i>r` flow.
+2. Compute the fingerprint from the worktree root:
+
+```bash
+cargo test domain::native_cache::tests::print_current_worktree_ios_fingerprint -- --ignored --nocapture
+```
+
+Expected output includes one line shaped like:
+
+```text
+ios-simulator fingerprint for /absolute/path/to/worktree: <64-hex-character-sha256>
+```
+
+3. Create:
+
+```text
+~/.cache/ump-dash/native-builds/ios-simulator/<fingerprint>/artifact.app
+~/.cache/ump-dash/native-builds/ios-simulator/<fingerprint>/metadata.json
+```
+
+4. Copy the built `.app` directory to `artifact.app`.
+5. Write `metadata.json` with the bundle id and the matching fingerprint.
+
+The prototype intentionally does not auto-populate the cache after misses.
