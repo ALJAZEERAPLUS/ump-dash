@@ -1017,11 +1017,8 @@ fn metro_running(state: &AppState) -> bool {
         .worktree_browser
         .worktrees
         .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
-        .and_then(|wt| wt.path.file_name())
-        .map(|name| {
-            let worktree_id = name.to_string_lossy();
-            state.metro.is_running_for(worktree_id.as_ref())
-        })
+        .and_then(|wt| state.worktrees.get(&wt.id))
+        .map(|slice| slice.metro.is_running())
         .unwrap_or(false)
 }
 

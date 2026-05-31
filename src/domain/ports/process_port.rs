@@ -42,5 +42,9 @@ pub trait ProcessPort: Send + Sync {
     /// (see research pitfall 5).
     ///
     /// Pipes stdout/stderr/stdin for capture by drain_metro_output.
-    async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<SpawnedMetroProcess>;
+    async fn spawn_metro(
+        &self,
+        worktree_path: PathBuf,
+        port: u16,
+    ) -> anyhow::Result<SpawnedMetroProcess>;
 }

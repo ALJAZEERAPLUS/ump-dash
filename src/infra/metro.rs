@@ -10,7 +10,7 @@
 //! - process_group(0) + kill_on_drop(true) on the spawn (from TokioProcessClient)
 //! - PGID broadcast via `libc::kill(-pid, SIGKILL)` when killing
 //! - 50 × 100ms selected-port-free wait loop before declaring the port free
-//! - per-worktree duplicate prevention enforced by the caller (MetroManager.register)
+//! - per-worktree duplicate prevention enforced by the caller (WorktreeMetro.register)
 //!
 //! Design note: `on_activity` is a `Box<dyn Fn(MetroActivity) + Send + Sync>`
 //! callback per Plan 13-03 Pitfall 8 — keeps the trait tokio-free while the
@@ -96,13 +96,14 @@ impl MetroPort for TokioMetroAdapter {
     async fn start(
         &self,
         worktree: PathBuf,
+        port: u16,
         on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
     ) -> anyhow::Result<Box<dyn MetroHandle>> {
         use crate::domain::ports::process_port::ProcessPort;
         use crate::infra::process::TokioProcessClient;
 
         let client = TokioProcessClient;
-        let spawned = client.spawn_metro(worktree.clone()).await?;
+        let spawned = client.spawn_metro(worktree.clone(), port).await?;
         let mut child = spawned.child;
         let port = spawned.port;
         let port_reservation = spawned.port_reservation;

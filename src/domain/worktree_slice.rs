@@ -17,6 +17,7 @@
 
 use crate::domain::action::Action;
 use crate::domain::command::{CommandSpec, RunVariant};
+use crate::domain::metro::WorktreeMetro;
 use crate::domain::task::TaskRecord;
 use crate::domain::worktree::WorktreeId;
 use std::collections::VecDeque;
@@ -33,6 +34,7 @@ pub struct LastRunConfig {
 #[derive(Debug, Default)]
 pub struct WorktreeSlice {
     pub id: WorktreeId,
+    pub metro: WorktreeMetro,
     pub task: Option<TaskRecord>,
     pub queue: VecDeque<CommandSpec>,
     pub output: VecDeque<String>,
@@ -70,5 +72,25 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s.id, WorktreeId("wt-test".into()));
+    }
+
+    #[test]
+    fn slice_owns_independent_metro_runtime_state() {
+        let mut a = WorktreeSlice {
+            id: WorktreeId("wt-a".into()),
+            ..Default::default()
+        };
+        let mut b = WorktreeSlice {
+            id: WorktreeId("wt-b".into()),
+            ..Default::default()
+        };
+
+        a.metro.reserve_start(8081);
+        b.metro.reserve_start(8082);
+
+        assert_eq!(a.metro.running_port(), Some(8081));
+        assert_eq!(b.metro.running_port(), Some(8082));
+        assert!(!a.metro.is_running());
+        assert!(!b.metro.is_running());
     }
 }

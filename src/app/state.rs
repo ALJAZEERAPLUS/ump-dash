@@ -3,9 +3,8 @@
 //! Plan 13-10 (F-209) regrouped AppState's ~30 pub fields into 6 sub-structs
 //! by domain concern: MetroState, WorktreeBrowserState, ModalStackState,
 //! JiraState, AppConfigState. The 4 cross-cutting fields
-//! (focused_panel, show_help, error_state, should_quit) and the MetroManager
-//! itself stay at the root — MetroManager keeps its `state.metro.is_running()`
-//! call site clear (avoiding a `state.metro_state.metro.is_running()` clash).
+//! (focused_panel, show_help, error_state, should_quit) stay at the root.
+//! Metro runtime state lives in each per-worktree `WorktreeSlice`.
 //!
 //! Plan 14-09: `CommandRunnerState` struct deleted — all 5 of its fields have
 //! been migrated to per-worktree `WorktreeSlice` entries in `state.worktrees`.
@@ -63,12 +62,10 @@ pub enum PaletteMode {
 
 // ---------------------------------------------------------------------------
 // Sub-structs (Plan 13-10 / F-209). Each groups a cohesive concern.
-// MetroManager itself stays at the AppState root to keep `state.metro.is_running()`
-// readable (see header doc).
+// Per-worktree Metro runtime state lives in WorktreeSlice.
 // ---------------------------------------------------------------------------
 
-/// Metro lifecycle coordination flags. The MetroManager itself lives at
-/// AppState root (avoid `state.metro_state.metro.is_running()` clash).
+/// Metro lifecycle coordination flags that are not owned by a specific slice.
 #[derive(Debug, Default)]
 pub struct MetroState {
     /// Active worktree path (updated from WorktreesLoaded + WorktreeSelectNext/Prev).
@@ -212,7 +209,7 @@ impl Default for AppConfigState {
 /// Application state — the single source of truth. All mutations happen in update().
 ///
 /// Plan 13-10 (F-209): regrouped from ~30 flat pub fields into 4 cross-cutting
-/// roots + MetroManager + 5 domain sub-structs (Plan 14-09 removed
+/// roots + 5 domain sub-structs (Plan 14-09 removed
 /// `CommandRunnerState`; its fields migrated to per-worktree `WorktreeSlice`).
 #[derive(Debug, Default)]
 pub struct AppState {
@@ -221,10 +218,6 @@ pub struct AppState {
     pub show_help: bool,
     pub error_state: Option<ErrorState>,
     pub should_quit: bool,
-
-    /// MetroManager kept at root (avoid name clash inside MetroState — keeps
-    /// `state.metro.is_running()` readable).
-    pub metro: crate::domain::metro::MetroManager,
 
     // --- Domain sub-structs ---
     pub metro_state: MetroState,

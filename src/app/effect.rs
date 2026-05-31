@@ -23,7 +23,7 @@ use std::path::PathBuf;
 pub enum Effect {
     // Metro lifecycle
     DetectExternalMetro { port: u16 },
-    SpawnMetro { worktree: PathBuf },
+    SpawnMetro { worktree: PathBuf, port: u16 },
     MetroHttpPost { url: String, body: String },
     KillProcess { pid: u32 },
 

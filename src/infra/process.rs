@@ -7,9 +7,7 @@
 
 #![allow(dead_code)]
 
-use crate::domain::ports::process_port::{
-    MetroPortReservation, ProcessPort, SpawnedMetroProcess,
-};
+use crate::domain::ports::process_port::{MetroPortReservation, ProcessPort, SpawnedMetroProcess};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
@@ -87,8 +85,12 @@ fn metro_spawn_args_for_port(port: u16) -> Vec<String> {
 
 #[async_trait::async_trait]
 impl ProcessPort for TokioProcessClient {
-    async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<SpawnedMetroProcess> {
-        let port_reservation = reserve_next_available_metro_port(DEFAULT_METRO_PORT)?;
+    async fn spawn_metro(
+        &self,
+        worktree_path: PathBuf,
+        port: u16,
+    ) -> anyhow::Result<SpawnedMetroProcess> {
+        let port_reservation = reserve_next_available_metro_port(port)?;
         let port = port_reservation.port();
         let mut cmd = tokio::process::Command::new(metro_spawn_program());
         cmd.args(metro_spawn_args_for_port(port))
@@ -139,6 +141,17 @@ mod tests {
             .parse()
             .expect("metro port must parse as u16");
         assert_ne!(port, 8081, "occupied default port must be skipped");
+    }
+
+    #[test]
+    fn metro_spawn_args_use_supplied_port() {
+        let args = super::metro_spawn_args_for_port(8097);
+
+        let port_flag_index = args
+            .iter()
+            .position(|arg| arg == "--port")
+            .expect("metro spawn args must include an explicit --port");
+        assert_eq!(args.get(port_flag_index + 1), Some(&"8097".to_string()));
     }
 
     #[test]

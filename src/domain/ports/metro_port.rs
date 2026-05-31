@@ -55,7 +55,7 @@ pub trait MetroHandle: Send + Sync + std::fmt::Debug {
     ///
     /// Takes `Box<Self>` so the trait stays object-safe — callers invoke
     /// `handle.kill()` on a `Box<dyn MetroHandle>` from
-    /// `MetroManager::take_handle()`.
+    /// `WorktreeMetro::take_handle()`.
     fn kill(self: Box<Self>) -> anyhow::Result<()>;
 }
 
@@ -67,11 +67,12 @@ pub trait MetroPort: Send + Sync {
     /// `MetroActivity` parsed from stdout/stderr — the adapter converts
     /// channel plumbing internally.
     ///
-    /// Returns an opaque handle; caller registers it via
-    /// `MetroManager::register`.
+    /// Returns an opaque handle; caller registers it in the selected
+    /// worktree's `WorktreeMetro`.
     async fn start(
         &self,
         worktree: PathBuf,
+        port: u16,
         on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
     ) -> anyhow::Result<Box<dyn MetroHandle>>;
 

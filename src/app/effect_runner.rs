@@ -11,14 +11,14 @@
 //! - `action_tx` — the canonical Action stream `update()` consumes.
 //! - `handle_tx` — a dedicated channel for `Box<dyn MetroHandle>` since
 //!   `Action` derives `Clone + PartialEq` (which `Box<dyn MetroHandle>` does
-//!   not implement) and the handle must reach the main thread for
-//!   `state.metro.register()`.
+//!   not implement) and the handle must reach the main thread for registration
+//!   in the matching WorktreeSlice.
 //!
 //! Effect coverage map (every variant has a match arm below):
 //!   ScheduleAction(a)                              → action_tx.send(a)
 //!   SpawnTask { task_id, worktree_id, spec, cwd, branch } → adapters.command_runner.spawn(...) + task_handle_tx
 //!   DetectExternalMetro { port }                   → adapters.port_probe.detect_external(port)
-//!   SpawnMetro { worktree }                        → adapters.metro.start(worktree, on_activity)
+//!   SpawnMetro { worktree, port }                  → adapters.metro.start(worktree, port, on_activity)
 //!   MetroHttpPost { url, body }                    → adapters.metro.http_post(url, body)
 //!   KillProcess { pid }                            → adapters.port_probe.kill_process(pid)
 //!   LoadDevices { kind }                           → adapters.devices.list(kind)
@@ -146,7 +146,7 @@ impl EffectRunner {
                 });
             }
 
-            Effect::SpawnMetro { worktree } => {
+            Effect::SpawnMetro { worktree, port } => {
                 let metro = self.adapters.metro.clone();
                 let action_tx = self.action_tx.clone();
                 let handle_tx = self.handle_tx.clone();
@@ -172,12 +172,12 @@ impl EffectRunner {
                                 &exited_tx,
                             );
                         });
-                    match metro.start(worktree, on_activity).await {
+                    match metro.start(worktree, port, on_activity).await {
                         Ok(handle) => {
                             // Deliver via the dedicated handle channel — the
-                            // event loop calls state.metro.register() on the
-                            // main thread. AppState is not Send across the
-                            // spawn boundary.
+                            // event loop registers the handle into the
+                            // matching WorktreeSlice on the main thread.
+                            // AppState is not Send across the spawn boundary.
                             let _ = handle_tx.send(handle);
                         }
                         Err(e) => {

@@ -931,8 +931,24 @@ mod worktrees_loaded {
             fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
         }
 
-        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
-        state.metro.register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+        state
+            .worktrees
+            .entry(WorktreeId("wt-A".into()))
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: WorktreeId("wt-A".into()),
+                ..Default::default()
+            })
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+        state
+            .worktrees
+            .entry(WorktreeId("wt-B".into()))
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: WorktreeId("wt-B".into()),
+                ..Default::default()
+            })
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
 
         let mut worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
         let _ = update(&mut state, Action::WorktreesLoaded(worktrees.clone()));
@@ -994,8 +1010,16 @@ mod parallelism {
             fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
             fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
         }
-        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into(), port: 8081 }));
-        assert!(state.metro.is_running_for("wt-B"), "precondition: metro running in wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .expect("wt-B slice seeded")
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into(), port: 8081 }));
+        assert!(
+            state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running(),
+            "precondition: metro running in wt-B"
+        );
 
         // Set active worktree to A (index 0) and dispatch MetroStart.
         state.worktree_browser.worktree_table_state.select(Some(0));
@@ -1007,11 +1031,48 @@ mod parallelism {
             !state.metro_state.pending_restart,
             "starting Metro on another worktree must not stop/restart the existing one"
         );
-        assert!(state.metro.is_running_for("wt-B"), "existing Metro must stay registered");
         assert!(
-            effects.iter().any(|effect| matches!(effect, Effect::SpawnMetro { worktree } if worktree.ends_with("wt-A"))),
+            state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running(),
+            "existing Metro must stay registered"
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(effect, Effect::SpawnMetro { worktree, .. } if worktree.ends_with("wt-A"))),
             "selected wt-A should get its own SpawnMetro effect; got {effects:?}"
         );
+    }
+
+    #[test]
+    fn metro_exited_clears_only_matching_worktree_slice() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+
+        #[derive(Debug)]
+        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
+            fn pid(&self) -> u32 { self.pid }
+            fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn port(&self) -> u16 { self.port }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+        }
+
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .unwrap()
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+
+        let _ = update(&mut state, Action::MetroExited("wt-A".into()));
+
+        assert!(!state.worktrees.get(&WorktreeId("wt-A".into())).unwrap().metro.is_running());
+        assert!(state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running());
     }
 }
 

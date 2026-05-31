@@ -69,13 +69,6 @@ fn metro_activity_label(activity: Option<&crate::domain::metro::MetroActivity>, 
     }
 }
 
-fn metro_worktree_id_from_path(path: &std::path::Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| path.to_string_lossy().to_string())
-}
-
 /// Renders the worktree table (bottom section) with structured columns.
 pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     let border_style = if state.focused_panel == FocusedPanel::WorktreeTable {
@@ -215,16 +208,17 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         rows.push(Row::new(row_cells).style(row_style));
 
         // If this worktree is running metro, add a detail row with activity and port.
-        let metro_worktree_id = metro_worktree_id_from_path(&wt.path);
+        let slice_metro = state.worktrees.get(&wt.id).map(|slice| &slice.metro);
         if wt.metro_status == WorktreeMetroStatus::Running
-            && let Some(port) = state.metro.running_port_for(&metro_worktree_id) {
+            && let Some(metro) = slice_metro
+            && let Some(port) = metro.running_port() {
                 let mut detail_cells = columns
                     .iter()
                     .map(|_| Cell::from(""))
                     .collect::<Vec<_>>();
                 if let Some(idx) = activity_column_index(columns) {
                     detail_cells[idx] = Cell::from(Span::styled(
-                        metro_activity_label(state.metro.activity_for(&metro_worktree_id), port),
+                        metro_activity_label(metro.activity(), port),
                         Style::default().fg(Color::Cyan),
                     ));
                 }
