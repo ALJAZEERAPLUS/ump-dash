@@ -540,6 +540,15 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
             {
+                let had_pending_cached_launch = slice.pending_cached_ios_launch.take().is_some();
+                if had_pending_cached_launch {
+                    slice
+                        .output
+                        .push_back("[cached-ios error] Metro exited before cached launch".into());
+                    while slice.output.len() > MAX_COMMAND_LINES {
+                        slice.output.pop_front();
+                    }
+                }
                 slice.metro.clear();
             }
             if state.metro_state.pending_restart {

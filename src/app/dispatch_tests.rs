@@ -1713,6 +1713,62 @@ mod parallelism {
                 .is_running()
         );
     }
+
+    #[test]
+    fn metro_exited_clears_pending_cached_ios_launch() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+        {
+            let slice = state
+                .worktrees
+                .get_mut(&WorktreeId("wt-1".into()))
+                .expect("slice should exist");
+            slice.metro.reserve_start(19003);
+            slice.pending_cached_ios_launch =
+                Some(crate::domain::native_cache::PendingCachedIosLaunch {
+                    device_id: "SIM-stale".into(),
+                    cache_hit: hit,
+                });
+        }
+
+        let _ = update(&mut state, Action::MetroExited("wt-1".into()));
+
+        let slice = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .expect("slice should exist");
+        assert!(slice.pending_cached_ios_launch.is_none());
+        assert!(
+            slice
+                .output
+                .iter()
+                .any(|line| line == "[cached-ios error] Metro exited before cached launch"),
+            "expected cached-ios Metro exit error in origin output; got {:?}",
+            slice.output
+        );
+
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .metro
+            .reserve_start(19004);
+        let effects = update(
+            &mut state,
+            Action::MetroActivityUpdate {
+                worktree_id: "wt-1".into(),
+                activity: crate::domain::metro::MetroActivity::Ready,
+            },
+        );
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::InstallAndLaunchCachedIosSimulator { .. })),
+            "stale cached iOS launch must not fire after later Metro Ready; got {effects:?}"
+        );
+    }
 }
 
 // =========================================================================
