@@ -14,10 +14,18 @@
 use std::path::PathBuf;
 use tokio::process::Child;
 
+/// Opaque reservation for a selected Metro port.
+///
+/// The concrete infra implementation releases the reservation on drop. Keeping
+/// this object alive with the Metro handle prevents a second spawn from
+/// choosing the same free-but-not-yet-bound port.
+pub trait MetroPortReservation: Send + Sync + std::fmt::Debug {}
+
 /// Spawned Metro child plus the port selected for this launch.
 pub struct SpawnedMetroProcess {
     pub child: Child,
     pub port: u16,
+    pub port_reservation: Box<dyn MetroPortReservation>,
 }
 
 /// Trait boundary for metro process spawning.

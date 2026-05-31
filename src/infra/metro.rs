@@ -20,6 +20,7 @@
 
 use crate::domain::metro::MetroActivity;
 use crate::domain::ports::metro_port::{MetroHandle, MetroPort};
+use crate::domain::ports::process_port::MetroPortReservation;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -49,6 +50,7 @@ struct TokioMetroHandle {
     pid: u32,
     worktree_id: String,
     port: u16,
+    port_reservation: Box<dyn MetroPortReservation>,
     stdin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     stream_task: tokio::task::JoinHandle<()>,
     stdin_task: tokio::task::JoinHandle<()>,
@@ -103,6 +105,7 @@ impl MetroPort for TokioMetroAdapter {
         let spawned = client.spawn_metro(worktree.clone()).await?;
         let mut child = spawned.child;
         let port = spawned.port;
+        let port_reservation = spawned.port_reservation;
 
         let pid = child.id().unwrap_or(0);
 
@@ -133,6 +136,7 @@ impl MetroPort for TokioMetroAdapter {
             pid,
             worktree_id,
             port,
+            port_reservation,
             stdin_tx,
             stream_task,
             stdin_task,
