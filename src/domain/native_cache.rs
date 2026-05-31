@@ -24,19 +24,14 @@ pub struct IosSimulatorCacheHit {
     pub artifact_path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IosSimulatorCacheState {
+    #[default]
     Unknown,
     Checking,
     Hit(IosSimulatorCacheHit),
     Miss,
     Error(String),
-}
-
-impl Default for IosSimulatorCacheState {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl IosSimulatorCacheState {
