@@ -15,6 +15,7 @@ use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
 use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
+use crate::domain::native_cache::IosSimulatorCacheState;
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::worktree::WorktreeId;
 use crate::domain::worktree_slice::LastRunConfig;
@@ -1600,6 +1601,29 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::SimulatorUsed(udid) => {
             // Fire-and-forget write to sim history via effect_runner
             effects.push(Effect::RecordSimUsed(udid));
+        }
+        Action::IosSimulatorCacheLookupFinished { worktree_id, result } => {
+            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                slice.ios_simulator_cache = match result {
+                    Ok(Some(hit)) => IosSimulatorCacheState::Hit(hit),
+                    Ok(None) => IosSimulatorCacheState::Miss,
+                    Err(message) => IosSimulatorCacheState::Error(message),
+                };
+            }
+        }
+        Action::CachedIosRun(_hit) => {
+            // Task 6 wires the launch flow; Task 3 only registers the action.
+        }
+        Action::CachedIosLaunchFinished { worktree_id, result } => {
+            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                slice.pending_cached_ios_launch = None;
+            }
+            if let crate::domain::native_cache::CachedIosLaunchResult::Failure(message) = result {
+                state.error_state = Some(ErrorState {
+                    message,
+                    can_retry: false,
+                });
+            }
         }
         Action::SyncBeforeRunAccept => {
             if let Some(ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods }) = state.modal_stack.modal.take() {

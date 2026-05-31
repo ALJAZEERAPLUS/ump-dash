@@ -22,6 +22,8 @@
 //!   MetroHttpPost { url, body }                    → adapters.metro.http_post(url, body)
 //!   KillProcess { pid }                            → adapters.port_probe.kill_process(pid)
 //!   LoadDevices { kind }                           → adapters.devices.list(kind)
+//!   LookupIosSimulatorCache { worktree_id, worktree_path } → adapters.native_cache.lookup_ios_simulator(...)
+//!   InstallAndLaunchCachedIosSimulator { worktree_id, request } → Task 6 implements launch behavior
 //!   ListWorktrees { repo_root }                    → adapters.worktrees.list(repo_root)
 //!   RemoveWorktree { repo_root, path }             → adapters.worktrees.remove(...)
 //!   AddWorktree { repo_root, branch }              → adapters.worktrees.add(...)
@@ -222,6 +224,32 @@ impl EffectRunner {
                             let _ = tx.send(Action::DevicesEnumerated(vec![]));
                         }
                     }
+                });
+            }
+
+            Effect::LookupIosSimulatorCache { worktree_id, worktree_path } => {
+                let native_cache = self.adapters.native_cache.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result = native_cache
+                        .lookup_ios_simulator(worktree_path)
+                        .await
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(Action::IosSimulatorCacheLookupFinished { worktree_id, result });
+                });
+            }
+
+            Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request } => {
+                tracing::warn!(
+                    bundle_id = %request.bundle_id,
+                    simulator_udid = %request.simulator_udid,
+                    "cached iOS simulator launch effect is not implemented yet"
+                );
+                let _ = self.action_tx.send(Action::CachedIosLaunchFinished {
+                    worktree_id,
+                    result: crate::domain::native_cache::CachedIosLaunchResult::Failure(
+                        "cached iOS simulator launch is not implemented yet".into(),
+                    ),
                 });
             }
 

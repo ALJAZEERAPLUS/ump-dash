@@ -83,6 +83,7 @@ async fn main() -> color_eyre::Result<()> {
         port_probe: Arc::new(ump_dash::infra::port::LsofPortProbe),
         worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter::new(seed_files)),
         devices: Arc::new(ump_dash::infra::devices::AdbXcrunDevices),
+        native_cache: Arc::new(ump_dash::infra::native_cache::LocalNativeCache),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),
     };

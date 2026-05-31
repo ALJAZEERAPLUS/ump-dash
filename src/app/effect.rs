@@ -13,6 +13,7 @@
 #![allow(dead_code)]
 
 use crate::domain::command::CommandSpec;
+use crate::domain::native_cache::CachedIosLaunchRequest;
 use crate::domain::ports::device_port::DeviceKind;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -47,6 +48,14 @@ pub enum Effect {
         repo_root: std::path::PathBuf,
     },
     LoadDevices { kind: DeviceKind },
+    LookupIosSimulatorCache {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        worktree_path: PathBuf,
+    },
+    InstallAndLaunchCachedIosSimulator {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        request: CachedIosLaunchRequest,
+    },
 
     // Worktrees — Plan 13-08: variants now carry repo_root from update().
     ListWorktrees { repo_root: PathBuf },
@@ -123,6 +132,20 @@ mod tests {
     #[test]
     fn effect_variants_compile() {
         let _ = Effect::DetectExternalMetro { port: 8081 };
+        let worktree_id = crate::domain::worktree::WorktreeId("wt-a".into());
+        let _ = Effect::LookupIosSimulatorCache {
+            worktree_id: worktree_id.clone(),
+            worktree_path: PathBuf::from("."),
+        };
+        let _ = Effect::InstallAndLaunchCachedIosSimulator {
+            worktree_id,
+            request: crate::domain::native_cache::CachedIosLaunchRequest {
+                simulator_udid: "SIM-1".into(),
+                app_path: PathBuf::from("build/app.app"),
+                bundle_id: "com.aljazeera.test".into(),
+                metro_port: 8081,
+            },
+        };
         let _ = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
         let _ = Effect::ListRemoteBranches { repo_root: PathBuf::from(".") };
         let _ = Effect::KillProcess { pid: 999 };
@@ -159,6 +182,8 @@ mod tests {
                 Effect::OpenInMultiplexer { .. } => 13,
                 Effect::FetchJiraTitles { .. } => 14,
                 Effect::ScheduleAction(_) => 15,
+                Effect::LookupIosSimulatorCache { .. } => 16,
+                Effect::InstallAndLaunchCachedIosSimulator { .. } => 17,
             }
         }
         let e = Effect::ListWorktrees { repo_root: PathBuf::from(".") };

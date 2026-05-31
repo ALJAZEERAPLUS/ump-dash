@@ -119,6 +119,15 @@ pub enum Action {
 
     // Phase 5.1: Simulator history
     SimulatorUsed(String),  // record UDID after successful iOS run start
+    IosSimulatorCacheLookupFinished {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        result: Result<Option<crate::domain::native_cache::IosSimulatorCacheHit>, String>,
+    },
+    CachedIosRun(crate::domain::native_cache::IosSimulatorCacheHit),
+    CachedIosLaunchFinished {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        result: crate::domain::native_cache::CachedIosLaunchResult,
+    },
 
     // Phase 5.1: Sync-before-run
     SyncBeforeRunAccept,    // user said "Yes" to sync prompt
