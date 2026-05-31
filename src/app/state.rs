@@ -125,6 +125,9 @@ pub struct ModalStackState {
     /// Pending device command — stored while async device enumeration is in flight.
     pub pending_device_command: Option<crate::domain::command::CommandSpec>,
 
+    /// Pending cached iOS run — stored while async simulator enumeration is in flight.
+    pub pending_cached_ios_run: Option<crate::domain::native_cache::IosSimulatorCacheHit>,
+
     /// Worktree removal — set when w>d is pressed, consumed by ModalConfirm.
     pub pending_worktree_removal:
         Option<(crate::domain::worktree::WorktreeId, std::path::PathBuf, String)>,

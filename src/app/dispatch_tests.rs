@@ -739,6 +739,195 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn cached_ios_run_loads_ios_devices() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.palette_mode = Some(PaletteMode::Ios);
+        let hit = cached_ios_hit_fixture();
+
+        let effects = update(&mut state, Action::CachedIosRun(hit.clone()));
+
+        assert!(state.modal_stack.modal.is_none());
+        assert!(state.modal_stack.palette_mode.is_none());
+        assert_eq!(state.modal_stack.pending_cached_ios_run, Some(hit));
+        assert!(matches!(
+            state.modal_stack.pending_device_command,
+            Some(CommandSpec::UmpRunIos {
+                ref device_id,
+                variant: Some(RunVariant::Local),
+            }) if device_id.is_empty()
+        ));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::LoadDevices {
+                    kind: DeviceKind::Ios
+                }]
+            ),
+            "expected cached iOS run to load iOS devices; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_device_selection_starts_metro_when_needed() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+        state.modal_stack.pending_cached_ios_run = Some(hit.clone());
+        state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunIos {
+            device_id: String::new(),
+            variant: Some(RunVariant::Local),
+        });
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "SIM-1".into(),
+                name: "iPhone 15".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(state.modal_stack.pending_cached_ios_run.is_none());
+        assert!(state.modal_stack.pending_device_command.is_none());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|slice| slice.pending_cached_ios_launch.as_ref())
+                .map(|pending| (&pending.device_id, &pending.cache_hit)),
+            Some((&"SIM-1".to_string(), &hit))
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::ScheduleAction(Action::SimulatorUsed(udid)) if udid == "SIM-1"
+            )),
+            "cached launch should record simulator usage; got {effects:?}"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::SpawnMetro { .. })),
+            "cached launch should start Metro when no port is running; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_device_selection_launches_when_metro_already_running() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .metro
+            .reserve_start(19001);
+        state.modal_stack.pending_cached_ios_run = Some(hit.clone());
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "SIM-2".into(),
+                name: "iPhone 15 Pro".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.simulator_udid == "SIM-2"
+                        && request.bundle_id == "com.aljazeera.test"
+                        && request.app_path.as_path() == std::path::Path::new("/tmp/cached.app")
+                        && request.metro_port == 19001
+            )),
+            "expected cached install/launch effect with selected simulator and metro port; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_launch_runs_after_deferred_metro_ready() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+        {
+            let slice = state
+                .worktrees
+                .get_mut(&WorktreeId("wt-1".into()))
+                .expect("slice should exist");
+            slice.metro.reserve_start(19002);
+            slice.pending_cached_ios_launch =
+                Some(crate::domain::native_cache::PendingCachedIosLaunch {
+                    device_id: "SIM-3".into(),
+                    cache_hit: hit.clone(),
+                });
+        }
+
+        let effects = update(
+            &mut state,
+            Action::MetroActivityUpdate {
+                worktree_id: "wt-1".into(),
+                activity: crate::domain::metro::MetroActivity::Ready,
+            },
+        );
+
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("slice should exist")
+                .pending_cached_ios_launch
+                .is_none()
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.simulator_udid == "SIM-3"
+                        && request.bundle_id == "com.aljazeera.test"
+                        && request.app_path.as_path() == std::path::Path::new("/tmp/cached.app")
+                        && request.metro_port == 19002
+            )),
+            "expected deferred cached install/launch after Metro Ready; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_run_with_zero_devices_appends_error() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.pending_cached_ios_run = Some(cached_ios_hit_fixture());
+        state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunIos {
+            device_id: String::new(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = update(&mut state, Action::DevicesEnumerated(vec![]));
+
+        assert!(effects.is_empty());
+        assert!(state.modal_stack.pending_cached_ios_run.is_none());
+        assert_eq!(
+            slice_output(&state, "wt-1").last().map(String::as_str),
+            Some("[error] no iOS simulators found for cached run")
+        );
+    }
+
+    #[test]
     fn selecting_target_opens_run_variant_picker_before_dispatch() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
