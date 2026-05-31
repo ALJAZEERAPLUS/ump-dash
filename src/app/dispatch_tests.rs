@@ -243,6 +243,54 @@ impl crate::domain::ports::task_handle::TaskHandle for NoopHandle {
     fn abort(&self) {}
 }
 
+#[derive(Debug)]
+struct FakeMetroHandle {
+    pid: u32,
+    worktree_id: String,
+    port: u16,
+}
+
+impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
+    fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    fn worktree_id(&self) -> &str {
+        &self.worktree_id
+    }
+
+    fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn kill(self: Box<Self>) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+fn register_ready_metro(state: &mut AppState, id: &str, port: u16) {
+    state
+        .worktrees
+        .get_mut(&WorktreeId(id.into()))
+        .expect("slice should exist")
+        .metro
+        .register(Box::new(FakeMetroHandle {
+            pid: 9001,
+            worktree_id: id.into(),
+            port,
+        }));
+    state
+        .worktrees
+        .get_mut(&WorktreeId(id.into()))
+        .expect("slice should exist")
+        .metro
+        .record_activity(crate::domain::metro::MetroActivity::Ready);
+}
+
 /// Build a synthetic `TaskRecord` for unit tests (no real runtime needed).
 fn synthetic_task_record(
     id_value: u64,
@@ -1000,12 +1048,7 @@ mod ump_run_dialog {
         let mut state = base_state();
         seed_one_worktree(&mut state);
         let hit = cached_ios_hit_fixture();
-        state
-            .worktrees
-            .get_mut(&WorktreeId("wt-1".into()))
-            .expect("slice should exist")
-            .metro
-            .reserve_start(19001);
+        register_ready_metro(&mut state, "wt-1", 19001);
         state.modal_stack.pending_cached_ios_run =
             Some(pending_cached_ios_run_fixture("wt-1", hit.clone()));
         state.modal_stack.modal = Some(ModalState::DevicePicker {
@@ -1034,6 +1077,57 @@ mod ump_run_dialog {
                         && request.metro_port == 19001
             )),
             "expected cached install/launch effect with selected simulator and metro port; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_device_selection_defers_when_metro_is_starting() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .metro
+            .reserve_start(19005);
+        state.modal_stack.pending_cached_ios_run =
+            Some(pending_cached_ios_run_fixture("wt-1", hit.clone()));
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "SIM-4".into(),
+                name: "iPhone 15 Pro".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        let pending = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .pending_cached_ios_launch
+            .as_ref()
+            .expect("cached iOS launch should wait for Metro Ready");
+        assert_eq!(pending.device_id, "SIM-4");
+        assert_eq!(pending.cache_hit, hit);
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::InstallAndLaunchCachedIosSimulator { .. })),
+            "cached launch should not run while Metro is only starting; got {effects:?}"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::SpawnMetro { .. })),
+            "cached launch should not spawn a duplicate Metro while one is starting; got {effects:?}"
         );
     }
 

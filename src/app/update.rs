@@ -356,7 +356,7 @@ fn begin_cached_ios_launch(
         device_id.clone(),
     )));
 
-    let running_port = {
+    let (ready_port, should_start_metro) = {
         let slice = state
             .worktrees
             .entry(worktree_id.clone())
@@ -364,10 +364,21 @@ fn begin_cached_ios_launch(
                 id: worktree_id.clone(),
                 ..Default::default()
             });
-        slice.metro.running_port()
+        let ready_port = if slice.metro.is_running()
+            && matches!(
+                slice.metro.activity(),
+                Some(crate::domain::metro::MetroActivity::Ready)
+            ) {
+            slice.metro.running_port()
+        } else {
+            None
+        };
+        let has_running_or_reserved_metro =
+            slice.metro.is_running() || slice.metro.running_port().is_some();
+        (ready_port, !has_running_or_reserved_metro)
     };
 
-    if let Some(port) = running_port {
+    if let Some(port) = ready_port {
         effects.push(Effect::InstallAndLaunchCachedIosSimulator {
             worktree_id,
             request: cached_ios_launch_request(&cache_hit, device_id, port),
@@ -375,26 +386,33 @@ fn begin_cached_ios_launch(
         return;
     }
 
-    let port = next_available_reserved_metro_port(state);
     {
         let slice = state
             .worktrees
             .entry(worktree_id.clone())
             .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
-                id: worktree_id,
+                id: worktree_id.clone(),
                 ..Default::default()
             });
-        slice.metro.reserve_start(port);
         slice.pending_cached_ios_launch =
             Some(crate::domain::native_cache::PendingCachedIosLaunch {
                 device_id,
                 cache_hit,
             });
     }
-    effects.push(Effect::SpawnMetro {
-        worktree: worktree_path,
-        port,
-    });
+    if should_start_metro {
+        let port = next_available_reserved_metro_port(state);
+        state
+            .worktrees
+            .get_mut(&worktree_id)
+            .expect("cached iOS launch slice should exist")
+            .metro
+            .reserve_start(port);
+        effects.push(Effect::SpawnMetro {
+            worktree: worktree_path,
+            port,
+        });
+    }
 }
 
 /// TEA update function — the ONLY place AppState is mutated.
