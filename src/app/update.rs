@@ -12,7 +12,10 @@
 //! - no HTTP client or process-launch imports anywhere under src/app/ (G-05)
 
 use super::effect::Effect;
-use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
+use super::state::{
+    AppState, ErrorState, FocusedPanel, MAX_COMMAND_LINES, PaletteMode, active_output,
+    active_worktree_id,
+};
 use crate::domain::action::Action;
 use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
@@ -47,7 +50,11 @@ fn metro_worktree_id_from_path(path: &Path) -> String {
 }
 
 fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
-    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    let idx = state
+        .worktree_browser
+        .worktree_table_state
+        .selected()
+        .unwrap_or(0);
     state
         .worktree_browser
         .worktrees
@@ -55,8 +62,14 @@ fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
         .map(|wt| wt.path.clone())
 }
 
-fn active_worktree_snapshot(state: &AppState) -> Option<(crate::domain::worktree::WorktreeId, PathBuf)> {
-    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+fn active_worktree_snapshot(
+    state: &AppState,
+) -> Option<(crate::domain::worktree::WorktreeId, PathBuf)> {
+    let idx = state
+        .worktree_browser
+        .worktree_table_state
+        .selected()
+        .unwrap_or(0);
     let wt = state
         .worktree_browser
         .worktrees
@@ -84,7 +97,13 @@ fn slice_id_for_metro_worktree_id(state: &AppState, worktree_id: &str) -> Option
         .iter()
         .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
         .map(|wt| wt.id.clone())
-        .or_else(|| state.worktrees.keys().find(|id| id.0 == worktree_id).cloned())
+        .or_else(|| {
+            state
+                .worktrees
+                .keys()
+                .find(|id| id.0 == worktree_id)
+                .cloned()
+        })
 }
 
 fn active_metro_slice_id(state: &AppState) -> WorktreeId {
@@ -135,12 +154,19 @@ fn next_available_reserved_metro_port(state: &AppState) -> u16 {
 ///   dispatch with the new task_id.
 fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
     let wt = if !state.worktree_browser.worktrees.is_empty() {
-        let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+        let idx = state
+            .worktree_browser
+            .worktree_table_state
+            .selected()
+            .unwrap_or(0);
         let idx = idx.min(state.worktree_browser.worktrees.len() - 1);
         state.worktree_browser.worktrees[idx].clone()
     } else {
         // No worktrees loaded yet — can't dispatch; log to a fallback message (no per-worktree key)
-        tracing::warn!("dispatch_command: no worktree selected, dropping command {:?}", spec.label());
+        tracing::warn!(
+            "dispatch_command: no worktree selected, dropping command {:?}",
+            spec.label()
+        );
         return None;
     };
 
@@ -164,9 +190,7 @@ fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
         false
     };
 
-    if collision_cancel_previous
-        && let Some(slice) = state.worktrees.get_mut(&wt_id)
-    {
+    if collision_cancel_previous && let Some(slice) = state.worktrees.get_mut(&wt_id) {
         if let Some(record) = slice.task.take() {
             record.handle.abort();
         }
@@ -230,7 +254,9 @@ fn is_ios_run_command(spec: &CommandSpec) -> bool {
 
 fn command_with_device(spec: CommandSpec, device_id: String) -> CommandSpec {
     match spec {
-        CommandSpec::UmpRunAndroid { variant, .. } => CommandSpec::UmpRunAndroid { device_id, variant },
+        CommandSpec::UmpRunAndroid { variant, .. } => {
+            CommandSpec::UmpRunAndroid { device_id, variant }
+        }
         CommandSpec::UmpRunIos { variant, .. } => CommandSpec::UmpRunIos { device_id, variant },
         other => other,
     }
@@ -263,13 +289,19 @@ fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec) {
     });
 
     match spec {
-        CommandSpec::UmpRunAndroid { device_id, variant: Some(variant) } => {
+        CommandSpec::UmpRunAndroid {
+            device_id,
+            variant: Some(variant),
+        } => {
             slice.last_android_run = Some(LastRunConfig {
                 device_id: device_id.clone(),
                 variant: *variant,
             });
         }
-        CommandSpec::UmpRunIos { device_id, variant: Some(variant) } => {
+        CommandSpec::UmpRunIos {
+            device_id,
+            variant: Some(variant),
+        } => {
             slice.last_ios_run = Some(LastRunConfig {
                 device_id: device_id.clone(),
                 variant: *variant,
@@ -320,17 +352,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::FocusUp => {
             if state.focused_panel == FocusedPanel::CommandOutput
                 && let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id) {
-                    slice.output_scroll = slice.output_scroll.saturating_sub(1);
-                }
+                && let Some(slice) = state.worktrees.get_mut(&id)
+            {
+                slice.output_scroll = slice.output_scroll.saturating_sub(1);
+            }
         }
         Action::FocusDown => {
             if state.focused_panel == FocusedPanel::CommandOutput {
                 let max = active_output(state).len();
                 if let Some(id) = active_worktree_id(state)
                     && let Some(slice) = state.worktrees.get_mut(&id)
-                    && slice.output_scroll < max {
-                        slice.output_scroll += 1;
+                    && slice.output_scroll < max
+                {
+                    slice.output_scroll += 1;
                 }
             }
         }
@@ -348,7 +382,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::Quit => state.should_quit = true,
 
         // --- Metro control actions ---
-
         Action::MetroStart => {
             state.modal_stack.palette_mode = None;
             if active_worktree_has_metro(state) {
@@ -427,7 +460,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // clear the queue so a stale deferred command doesn't fire on the
             // next successful start.
             if !state.metro_state.pending_restart
-                && let Some(slice_id) = state.worktree_browser.worktrees
+                && let Some(slice_id) = state
+                    .worktree_browser
+                    .worktrees
                     .iter()
                     .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
                     .map(|wt| wt.id.clone())
@@ -452,9 +487,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             effects.extend(update(state, Action::RefreshWorktrees));
         }
 
-        Action::MetroSpawnFailed { worktree_id, message } => {
+        Action::MetroSpawnFailed {
+            worktree_id,
+            message,
+        } => {
             // Plan 13-09: clear queue + post-drain action; pending flags gone.
-            if let Some(slice_id) = state.worktree_browser.worktrees
+            if let Some(slice_id) = state
+                .worktree_browser
+                .worktrees
                 .iter()
                 .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
                 .map(|wt| wt.id.clone())
@@ -475,7 +515,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
         }
 
-        Action::MetroActivityUpdate { worktree_id, activity } => {
+        Action::MetroActivityUpdate {
+            worktree_id,
+            activity,
+        } => {
             if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
             {
@@ -490,15 +533,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if matches!(activity, crate::domain::metro::MetroActivity::Ready) {
                 // Phase 14 D-13 PRIMARY: drain the queue for the worktree whose
                 // Metro instance just became ready.
-                let candidate_id = state.worktrees.iter()
+                let candidate_id = state
+                    .worktrees
+                    .iter()
                     .find(|(id, s)| {
-                        state.worktree_browser.worktrees
+                        state
+                            .worktree_browser
+                            .worktrees
                             .iter()
                             .find(|wt| &wt.id == *id)
                             .map(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
                             .unwrap_or(false)
-                            &&
-                        s.task.is_none()
+                            && s.task.is_none()
                             && s.queue.front().map(|c| c.needs_metro()).unwrap_or(false)
                     })
                     .map(|(id, _)| id.clone());
@@ -529,30 +575,47 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Worktree navigation ---
-
         Action::WorktreeSelectNext => {
             let len = state.worktree_browser.worktrees.len();
             if len > 0 {
-                let i = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+                let i = state
+                    .worktree_browser
+                    .worktree_table_state
+                    .selected()
+                    .unwrap_or(0);
                 let next = if i >= len - 1 { 0 } else { i + 1 };
-                state.worktree_browser.worktree_table_state.select(Some(next));
+                state
+                    .worktree_browser
+                    .worktree_table_state
+                    .select(Some(next));
                 // Update stable selection id
-                state.worktree_browser.selected_worktree_id = Some(state.worktree_browser.worktrees[next].id.clone());
+                state.worktree_browser.selected_worktree_id =
+                    Some(state.worktree_browser.worktrees[next].id.clone());
                 // Update active worktree for metro
-                state.metro_state.active_worktree_path = Some(state.worktree_browser.worktrees[next].path.clone());
+                state.metro_state.active_worktree_path =
+                    Some(state.worktree_browser.worktrees[next].path.clone());
             }
         }
 
         Action::WorktreeSelectPrev => {
             let len = state.worktree_browser.worktrees.len();
             if len > 0 {
-                let i = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+                let i = state
+                    .worktree_browser
+                    .worktree_table_state
+                    .selected()
+                    .unwrap_or(0);
                 let prev = if i == 0 { len - 1 } else { i - 1 };
-                state.worktree_browser.worktree_table_state.select(Some(prev));
+                state
+                    .worktree_browser
+                    .worktree_table_state
+                    .select(Some(prev));
                 // Update stable selection id
-                state.worktree_browser.selected_worktree_id = Some(state.worktree_browser.worktrees[prev].id.clone());
+                state.worktree_browser.selected_worktree_id =
+                    Some(state.worktree_browser.worktrees[prev].id.clone());
                 // Update active worktree for metro
-                state.metro_state.active_worktree_path = Some(state.worktree_browser.worktrees[prev].path.clone());
+                state.metro_state.active_worktree_path =
+                    Some(state.worktree_browser.worktrees[prev].path.clone());
             }
         }
 
@@ -560,7 +623,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Re-derive jira_key and re-apply cached JIRA titles using the configured prefix.
             // jira_key is set here (not in list_worktrees) because the prefix comes from config.
             for wt in &mut worktrees {
-                if let Some(key) = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira.project_prefix) {
+                if let Some(key) =
+                    crate::domain::jira::extract_jira_key(&wt.branch, &state.jira.project_prefix)
+                {
                     if let Some(title) = state.jira.title_cache.get(&key) {
                         wt.jira_title = Some(title.clone());
                     }
@@ -596,24 +661,44 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     .worktree_browser
                     .selected_worktree_id
                     .as_ref()
-                    .and_then(|id| state.worktree_browser.worktrees.iter().position(|wt| &wt.id == id))
+                    .and_then(|id| {
+                        state
+                            .worktree_browser
+                            .worktrees
+                            .iter()
+                            .position(|wt| &wt.id == id)
+                    })
                     .unwrap_or(0);
-                state.worktree_browser.worktree_table_state.select(Some(selected_idx));
-                state.metro_state.active_worktree_path = Some(state.worktree_browser.worktrees[selected_idx].path.clone());
+                state
+                    .worktree_browser
+                    .worktree_table_state
+                    .select(Some(selected_idx));
+                state.metro_state.active_worktree_path =
+                    Some(state.worktree_browser.worktrees[selected_idx].path.clone());
             }
 
             // Phase 4: fetch titles for uncached branches
             if state.jira.available {
-                let keys_to_fetch: Vec<String> = state.worktree_browser.worktrees.iter()
+                let keys_to_fetch: Vec<String> = state
+                    .worktree_browser
+                    .worktrees
+                    .iter()
                     .filter_map(|wt| {
-                        let key = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira.project_prefix)?;
-                        if state.jira.title_cache.contains_key(&key) { return None; }
+                        let key = crate::domain::jira::extract_jira_key(
+                            &wt.branch,
+                            &state.jira.project_prefix,
+                        )?;
+                        if state.jira.title_cache.contains_key(&key) {
+                            return None;
+                        }
                         Some(key)
                     })
                     .collect();
 
                 if !keys_to_fetch.is_empty() {
-                    effects.push(Effect::FetchJiraTitles { keys: keys_to_fetch });
+                    effects.push(Effect::FetchJiraTitles {
+                        keys: keys_to_fetch,
+                    });
                 }
             }
         }
@@ -623,11 +708,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 tracing::debug!("skipping periodic refresh — worktree op in flight");
                 return effects;
             }
-            effects.push(Effect::ListWorktrees { repo_root: state.app_config.repo_root.clone() });
+            effects.push(Effect::ListWorktrees {
+                repo_root: state.app_config.repo_root.clone(),
+            });
         }
 
         // --- Phase 3: Command dispatch ---
-
         Action::CommandRun(spec) => {
             // Clear palette mode whenever a command is dispatched
             state.modal_stack.palette_mode = None;
@@ -635,9 +721,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             // Get selected worktree (needed for all branches)
             let wt_branch = if !state.worktree_browser.worktrees.is_empty() {
-                let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+                let idx = state
+                    .worktree_browser
+                    .worktree_table_state
+                    .selected()
+                    .unwrap_or(0);
                 let idx = idx.min(state.worktree_browser.worktrees.len() - 1);
-                Some((state.worktree_browser.worktrees[idx].branch.clone(), state.worktree_browser.worktrees[idx].stale))
+                Some((
+                    state.worktree_browser.worktrees[idx].branch.clone(),
+                    state.worktree_browser.worktrees[idx].stale,
+                ))
             } else {
                 None
             };
@@ -671,54 +764,66 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // stale (yarn fresh, pods out of sync — e.g. after a git checkout
             // that only touched Podfile.lock).
             if let Some((_, yarn_stale)) = &wt_branch
-                && is_run_command(&spec) {
-                    let is_ios = is_ios_run_command(&spec);
-                    let pods_stale = if is_ios {
-                        let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
-                        let wt_path = &state.worktree_browser.worktrees[idx.min(state.worktree_browser.worktrees.len() - 1)].path;
-                        crate::domain::staleness::check_stale_pods(wt_path)
-                    } else {
-                        false
-                    };
+                && is_run_command(&spec)
+            {
+                let is_ios = is_ios_run_command(&spec);
+                let pods_stale = if is_ios {
+                    let idx = state
+                        .worktree_browser
+                        .worktree_table_state
+                        .selected()
+                        .unwrap_or(0);
+                    let wt_path = &state.worktree_browser.worktrees
+                        [idx.min(state.worktree_browser.worktrees.len() - 1)]
+                    .path;
+                    crate::domain::staleness::check_stale_pods(wt_path)
+                } else {
+                    false
+                };
 
-                    if *yarn_stale || pods_stale {
-                        if state.app_config.config.as_ref().is_some_and(|c| c.auto_sync) {
-                            // Plan 13-09 (F-204 site 1): Recipe::SyncThenRun replaces
-                            // the inline yarn/pod sequencing. Auto-sync fast path —
-                            // skip the modal, expand the recipe, queue + dispatch.
-                            let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
-                            let mut sequence = Recipe::SyncThenRun(spec).expand(&deps);
-                            let first = sequence.remove(0);
+                if *yarn_stale || pods_stale {
+                    if state
+                        .app_config
+                        .config
+                        .as_ref()
+                        .is_some_and(|c| c.auto_sync)
+                    {
+                        // Plan 13-09 (F-204 site 1): Recipe::SyncThenRun replaces
+                        // the inline yarn/pod sequencing. Auto-sync fast path —
+                        // skip the modal, expand the recipe, queue + dispatch.
+                        let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
+                        let mut sequence = Recipe::SyncThenRun(spec).expand(&deps);
+                        let first = sequence.remove(0);
 
-                            // D-12: push to slice queue for the originating worktree.
-                            let resolved_id = active_worktree_id(state);
-                            if let Some(ref wt_id) = resolved_id {
-                                let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
-                                    crate::domain::worktree_slice::WorktreeSlice {
-                                        id: wt_id.clone(),
-                                        ..Default::default()
-                                    }
-                                });
-                                for cmd in sequence {
-                                    slice.queue.push_back(cmd);
+                        // D-12: push to slice queue for the originating worktree.
+                        let resolved_id = active_worktree_id(state);
+                        if let Some(ref wt_id) = resolved_id {
+                            let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                                crate::domain::worktree_slice::WorktreeSlice {
+                                    id: wt_id.clone(),
+                                    ..Default::default()
                                 }
+                            });
+                            for cmd in sequence {
+                                slice.queue.push_back(cmd);
                             }
-
-                            state.modal_stack.palette_mode = None;
-                            if let Some(eff) = dispatch_command(state, first) {
-                                effects.push(eff);
-                            }
-                            return effects;
                         }
-                        state.modal_stack.modal = Some(ModalState::SyncBeforeRun {
-                            run_command: Box::new(spec),
-                            needs_yarn: *yarn_stale,
-                            needs_pods: pods_stale,
-                        });
+
                         state.modal_stack.palette_mode = None;
+                        if let Some(eff) = dispatch_command(state, first) {
+                            effects.push(eff);
+                        }
                         return effects;
                     }
+                    state.modal_stack.modal = Some(ModalState::SyncBeforeRun {
+                        run_command: Box::new(spec),
+                        needs_yarn: *yarn_stale,
+                        needs_pods: pods_stale,
+                    });
+                    state.modal_stack.palette_mode = None;
+                    return effects;
                 }
+            }
 
             // Plan 13-09 (F-204 site 2): Metro prerequisite — native run commands
             // need metro running first. The deferred spec is pushed to the
@@ -782,7 +887,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Plan 13-09 (F-204 site 3): RnReleaseBuild → Recipe::ReleaseBuildAndInstall
             // Android release build: queue adb install to run after assembleRelease completes.
             if matches!(spec, CommandSpec::RnReleaseBuild) {
-                let mut sequence = Recipe::ReleaseBuildAndInstall.expand(&DependencyState::new(false, false, false));
+                let mut sequence = Recipe::ReleaseBuildAndInstall
+                    .expand(&DependencyState::new(false, false, false));
                 let first = sequence.remove(0);
 
                 // D-12: push to slice queue for the originating worktree.
@@ -808,7 +914,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Plan 13-09 (F-204 site 4): GitResetHardFetch → Recipe::GitFetchThenReset
             // Two-step — dispatch fetch, queue reset --hard origin/<branch>.
             if matches!(spec, CommandSpec::GitResetHardFetch) {
-                let mut sequence = Recipe::GitFetchThenReset.expand(&DependencyState::new(false, false, false));
+                let mut sequence =
+                    Recipe::GitFetchThenReset.expand(&DependencyState::new(false, false, false));
                 let first = sequence.remove(0);
 
                 // D-12: push to slice queue for the originating worktree.
@@ -838,11 +945,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Command output events ---
-
         Action::CommandOutputLine { task_id, line } => {
             // D-08: route by task_id. Late stdout from a cancelled task lands
             // here with no matching slice → silently dropped.
-            if let Some(slice) = state.worktrees
+            if let Some(slice) = state
+                .worktrees
                 .values_mut()
                 .find(|s| s.task.as_ref().map(|t| t.id) == Some(task_id))
             {
@@ -855,14 +962,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::CommandExited { task_id, status: _ } => {
             // Phase 14 D-11 PRIMARY: find the slice whose task matches task_id.
-            let target_id = state.worktrees
+            let target_id = state
+                .worktrees
                 .iter()
                 .find(|(_, s)| s.task.as_ref().map(|t| t.id) == Some(task_id))
                 .map(|(id, _)| id.clone());
 
             // Take the slice's task (clearing it) and extract the spec for refresh classification.
             let completed_cmd = if let Some(ref id) = target_id {
-                state.worktrees.get_mut(id).and_then(|s| s.task.take()).map(|t| t.spec)
+                state
+                    .worktrees
+                    .get_mut(id)
+                    .and_then(|s| s.task.take())
+                    .map(|t| t.spec)
             } else {
                 None
             };
@@ -875,7 +987,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if refresh.worktrees {
                     // Full worktree reload (also re-checks staleness and triggers JIRA fetch
                     // via WorktreesLoaded handler when branch names change)
-                    effects.push(Effect::ListWorktrees { repo_root: state.app_config.repo_root.clone() });
+                    effects.push(Effect::ListWorktrees {
+                        repo_root: state.app_config.repo_root.clone(),
+                    });
                 } else if refresh.staleness {
                     // Staleness refresh: re-check ALL worktrees (cheap I/O, ensures
                     // correct state even if user changed selection during command)
@@ -957,9 +1071,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::CommandOutputClear => {
             if let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id) {
-                    slice.output.clear();
-                    slice.output_scroll = 0;
+                && let Some(slice) = state.worktrees.get_mut(&id)
+            {
+                slice.output.clear();
+                slice.output_scroll = 0;
             }
         }
 
@@ -994,7 +1109,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 5.1: Command queue actions ---
-
         Action::CommandQueuePush(spec) => {
             // D-12: push to slice queue for the originating worktree.
             if let Some(wt_id) = active_worktree_id(state) {
@@ -1015,10 +1129,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Modal actions ---
-
         Action::ModalConfirm => {
             // Check for pending worktree removal BEFORE falling through to normal confirm
-            if let Some((wt_id, wt_path, _branch)) = state.modal_stack.pending_worktree_removal.take() {
+            if let Some((wt_id, wt_path, _branch)) =
+                state.modal_stack.pending_worktree_removal.take()
+            {
                 state.modal_stack.modal = None;
 
                 // Stop metro if it's running on the worktree being removed
@@ -1039,20 +1154,35 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     state.worktree_browser.selected_worktree_id = None;
                     state.metro_state.active_worktree_path = None;
                 } else {
-                    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0)
+                    let idx = state
+                        .worktree_browser
+                        .worktree_table_state
+                        .selected()
+                        .unwrap_or(0)
                         .min(state.worktree_browser.worktrees.len() - 1);
-                    state.worktree_browser.worktree_table_state.select(Some(idx));
-                    state.worktree_browser.selected_worktree_id = Some(state.worktree_browser.worktrees[idx].id.clone());
-                    state.metro_state.active_worktree_path = Some(state.worktree_browser.worktrees[idx].path.clone());
+                    state
+                        .worktree_browser
+                        .worktree_table_state
+                        .select(Some(idx));
+                    state.worktree_browser.selected_worktree_id =
+                        Some(state.worktree_browser.worktrees[idx].id.clone());
+                    state.metro_state.active_worktree_path =
+                        Some(state.worktree_browser.worktrees[idx].path.clone());
                 }
 
                 // Emit the async removal effect
                 state.worktree_browser.worktree_op_in_flight = true;
-                effects.push(Effect::RemoveWorktree { repo_root: state.app_config.repo_root.clone(), path: wt_path });
+                effects.push(Effect::RemoveWorktree {
+                    repo_root: state.app_config.repo_root.clone(),
+                    path: wt_path,
+                });
                 return effects;
             }
 
-            if let Some(ModalState::Confirm { pending_command, .. }) = state.modal_stack.modal.take() {
+            if let Some(ModalState::Confirm {
+                pending_command, ..
+            }) = state.modal_stack.modal.take()
+            {
                 // Dispatch directly — skip pre-processing (already confirmed)
                 if let Some(eff) = dispatch_command(state, pending_command) {
                     effects.push(eff);
@@ -1063,9 +1193,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ModalCancel => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_worktree_removal = None;  // discard any pending removal on cancel
-            state.modal_stack.pending_worktree_add = false;     // discard any pending add on cancel
-            state.modal_stack.pending_new_branch_base = None;   // discard new-branch base on cancel
+            state.modal_stack.pending_worktree_removal = None; // discard any pending removal on cancel
+            state.modal_stack.pending_worktree_add = false; // discard any pending add on cancel
+            state.modal_stack.pending_new_branch_base = None; // discard new-branch base on cancel
             state.modal_stack.pending_new_branch_worktree = false;
         }
 
@@ -1078,7 +1208,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Some(ModalState::TextInput { buffer, .. }) => {
                     buffer.push(c);
                 }
-                Some(ModalState::DevicePicker { filter, selected, .. }) => {
+                Some(ModalState::DevicePicker {
+                    filter, selected, ..
+                }) => {
                     filter.push(c);
                     *selected = 0; // reset selection when filter changes
                 }
@@ -1103,7 +1235,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 Some(ModalState::TextInput { buffer, .. }) => {
                     buffer.pop();
                 }
-                Some(ModalState::DevicePicker { filter, selected, .. }) => {
+                Some(ModalState::DevicePicker {
+                    filter, selected, ..
+                }) => {
                     filter.pop();
                     *selected = 0; // reset selection when filter changes
                 }
@@ -1153,7 +1287,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 return effects;
                             }
                             state.worktree_browser.worktree_op_in_flight = true;
-                            effects.push(Effect::AddWorktree { repo_root: state.app_config.repo_root.clone(), branch: branch_name });
+                            effects.push(Effect::AddWorktree {
+                                repo_root: state.app_config.repo_root.clone(),
+                                branch: branch_name,
+                            });
                         } else {
                             // Build the real CommandSpec by filling in the text
                             let real_spec = match *pending_template {
@@ -1199,10 +1336,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     devices.len()
                 } else {
                     let lower = filter.to_lowercase();
-                    devices.iter().filter(|d| d.name.to_lowercase().contains(&lower)).count()
+                    devices
+                        .iter()
+                        .filter(|d| d.name.to_lowercase().contains(&lower))
+                        .count()
                 };
                 if count > 0 {
-                    *selected = if *selected >= count - 1 { 0 } else { *selected + 1 };
+                    *selected = if *selected >= count - 1 {
+                        0
+                    } else {
+                        *selected + 1
+                    };
                 }
             }
         }
@@ -1219,10 +1363,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     devices.len()
                 } else {
                     let lower = filter.to_lowercase();
-                    devices.iter().filter(|d| d.name.to_lowercase().contains(&lower)).count()
+                    devices
+                        .iter()
+                        .filter(|d| d.name.to_lowercase().contains(&lower))
+                        .count()
                 };
                 if count > 0 {
-                    *selected = if *selected == 0 { count - 1 } else { *selected - 1 };
+                    *selected = if *selected == 0 {
+                        count - 1
+                    } else {
+                        *selected - 1
+                    };
                 }
             }
         }
@@ -1240,14 +1391,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     devices.iter().collect()
                 } else {
                     let lower = filter.to_lowercase();
-                    devices.iter().filter(|d| d.name.to_lowercase().contains(&lower)).collect()
+                    devices
+                        .iter()
+                        .filter(|d| d.name.to_lowercase().contains(&lower))
+                        .collect()
                 };
                 if let Some(device) = filtered.get(selected) {
                     let device_id = device.id.clone();
                     let is_ios = matches!(pending_template.as_ref(), CommandSpec::UmpRunIos { .. });
                     let is_available_emulator = android_avd_name(&device_id).is_some();
 
-                    if is_available_emulator && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. }) {
+                    if is_available_emulator
+                        && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. })
+                    {
                         let real_spec = command_with_device(*pending_template, device_id);
                         open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
                         return effects;
@@ -1264,14 +1420,24 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::ModalRunVariantNext => {
-            if let Some(ModalState::RunVariantPicker { ref mut selected, .. }) = state.modal_stack.modal {
+            if let Some(ModalState::RunVariantPicker {
+                ref mut selected, ..
+            }) = state.modal_stack.modal
+            {
                 *selected = (*selected + 1) % RunVariant::ALL.len();
             }
         }
 
         Action::ModalRunVariantPrev => {
-            if let Some(ModalState::RunVariantPicker { ref mut selected, .. }) = state.modal_stack.modal {
-                *selected = if *selected == 0 { RunVariant::ALL.len() - 1 } else { *selected - 1 };
+            if let Some(ModalState::RunVariantPicker {
+                ref mut selected, ..
+            }) = state.modal_stack.modal
+            {
+                *selected = if *selected == 0 {
+                    RunVariant::ALL.len() - 1
+                } else {
+                    *selected - 1
+                };
             }
         }
 
@@ -1313,17 +1479,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Device enumeration (async callback) ---
-
         Action::DevicesEnumerated(devices) => {
             if let Some(spec) = state.modal_stack.pending_device_command.take() {
                 match devices.len() {
                     0 => {
                         if let Some(id) = active_worktree_id(state)
-                            && let Some(slice) = state.worktrees.get_mut(&id) {
-                                slice.output.push_back("[error] no devices found".into());
-                                if slice.output.len() > MAX_COMMAND_LINES {
-                                    slice.output.pop_front();
-                                }
+                            && let Some(slice) = state.worktrees.get_mut(&id)
+                        {
+                            slice.output.push_back("[error] no devices found".into());
+                            if slice.output.len() > MAX_COMMAND_LINES {
+                                slice.output.pop_front();
+                            }
                         }
                     }
                     1 => {
@@ -1334,12 +1500,22 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         if is_available_emulator {
                             if matches!(spec, CommandSpec::UmpRunAndroid { .. }) {
                                 let real_spec = command_with_device(spec, devices[0].id.clone());
-                                open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
+                                open_run_variant_picker_or_dispatch(
+                                    state,
+                                    &mut effects,
+                                    real_spec,
+                                    true,
+                                );
                                 return effects;
                             }
                         } else {
                             let real_spec = command_with_device(spec, devices[0].id.clone());
-                            open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
+                            open_run_variant_picker_or_dispatch(
+                                state,
+                                &mut effects,
+                                real_spec,
+                                false,
+                            );
                         }
                     }
                     _ => {
@@ -1351,7 +1527,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             // (src/main.rs) so update() never crosses the infra boundary.
                             let history = &state.app_config.sim_history;
                             sorted_devices.sort_by_key(|d| {
-                                history.iter().position(|h| h == &d.id)
+                                history
+                                    .iter()
+                                    .position(|h| h == &d.id)
                                     .unwrap_or(usize::MAX)
                             });
                         }
@@ -1367,17 +1545,21 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Palette mode activation ---
-
         Action::EnterGitPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Git);
         }
 
         // --- Phase 5: Worktree switching and Claude Code ---
-
         Action::WorktreeSwitchToSelected => {
-            let selected_idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+            let selected_idx = state
+                .worktree_browser
+                .worktree_table_state
+                .selected()
+                .unwrap_or(0);
             // Capture target path NOW — navigation may change active_worktree_path later
-            let target_path = state.worktree_browser.worktrees
+            let target_path = state
+                .worktree_browser
+                .worktrees
                 .get(selected_idx)
                 .map(|wt| wt.path.clone());
 
@@ -1385,7 +1567,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(wt) = state.worktree_browser.worktrees.get(selected_idx)
                 && wt.stale
             {
-                if state.app_config.config.as_ref().is_some_and(|c| c.auto_sync) {
+                if state
+                    .app_config
+                    .config
+                    .as_ref()
+                    .is_some_and(|c| c.auto_sync)
+                {
                     // Plan 13-09 (F-204 site 10a): auto-sync fast path uses
                     // Recipe::SyncThenStartMetro. Set active_worktree_path
                     // synchronously (replaces pending_switch_path).
@@ -1425,7 +1612,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if let Some(path) = target_path {
                     state.metro_state.active_worktree_path = Some(path);
                 }
-                state.modal_stack.modal = Some(ModalState::SyncBeforeMetro { needs_yarn: true, needs_pods: false });
+                state.modal_stack.modal = Some(ModalState::SyncBeforeMetro {
+                    needs_yarn: true,
+                    needs_pods: false,
+                });
                 return effects;
             }
 
@@ -1443,13 +1633,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::OpenClaudeCode => {
             if !state.app_config.multiplexer_available {
                 state.error_state = Some(ErrorState {
-                    message: "Cannot open Claude Code: not inside a tmux, zellij, or Ghostty session".into(),
+                    message:
+                        "Cannot open Claude Code: not inside a tmux, zellij, or Ghostty session"
+                            .into(),
                     can_retry: false,
                 });
                 return effects;
             }
             let wt = if !state.worktree_browser.worktrees.is_empty() {
-                let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0)
+                let idx = state
+                    .worktree_browser
+                    .worktree_table_state
+                    .selected()
+                    .unwrap_or(0)
                     .min(state.worktree_browser.worktrees.len() - 1);
                 state.worktree_browser.worktrees[idx].clone()
             } else {
@@ -1473,13 +1669,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::OpenShellTab => {
             if !state.app_config.multiplexer_available {
                 state.error_state = Some(ErrorState {
-                    message: "Cannot open shell tab: not inside a tmux, zellij, or Ghostty session".into(),
+                    message: "Cannot open shell tab: not inside a tmux, zellij, or Ghostty session"
+                        .into(),
                     can_retry: false,
                 });
                 return effects;
             }
             let wt = if !state.worktree_browser.worktrees.is_empty() {
-                let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0)
+                let idx = state
+                    .worktree_browser
+                    .worktree_table_state
+                    .selected()
+                    .unwrap_or(0)
                     .min(state.worktree_browser.worktrees.len() - 1);
                 state.worktree_browser.worktrees[idx].clone()
             } else {
@@ -1496,7 +1697,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 4: JIRA title fetch results ---
-
         Action::JiraTitlesFetched(titles) => {
             // Update in-memory cache
             for (key, title) in &titles {
@@ -1506,29 +1706,35 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             effects.push(Effect::SaveJiraCache(state.jira.title_cache.clone()));
             // Apply titles to currently loaded worktrees
             for wt in &mut state.worktree_browser.worktrees {
-                if let Some(key) = crate::domain::jira::extract_jira_key(&wt.branch, &state.jira.project_prefix)
-                    && let Some(title) = state.jira.title_cache.get(&key) {
-                        wt.jira_title = Some(title.clone());
-                    }
+                if let Some(key) =
+                    crate::domain::jira::extract_jira_key(&wt.branch, &state.jira.project_prefix)
+                    && let Some(title) = state.jira.title_cache.get(&key)
+                {
+                    wt.jira_title = Some(title.clone());
+                }
             }
         }
 
         // --- Phase 5.1: New submenu and action stubs ---
-
         Action::EnterAndroidPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Android);
         }
         Action::EnterIosPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Ios);
             if let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) {
-                let slice = state.worktrees.entry(worktree_id.clone()).or_insert_with(|| {
-                    crate::domain::worktree_slice::WorktreeSlice {
+                let slice = state
+                    .worktrees
+                    .entry(worktree_id.clone())
+                    .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
                         id: worktree_id.clone(),
                         ..Default::default()
-                    }
+                    });
+                slice.ios_simulator_cache =
+                    crate::domain::native_cache::IosSimulatorCacheState::Checking;
+                effects.push(Effect::LookupIosSimulatorCache {
+                    worktree_id,
+                    worktree_path,
                 });
-                slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Checking;
-                effects.push(Effect::LookupIosSimulatorCache { worktree_id, worktree_path });
             }
         }
         Action::EnterYarnPalette => {
@@ -1539,7 +1745,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::OpenCleanMenu => {
             state.modal_stack.palette_mode = None;
-            state.modal_stack.modal = Some(ModalState::CleanToggle { options: CleanOptions::default() });
+            state.modal_stack.modal = Some(ModalState::CleanToggle {
+                options: CleanOptions::default(),
+            });
         }
         Action::CleanToggleNodeModules => {
             if let Some(ModalState::CleanToggle { ref mut options }) = state.modal_stack.modal {
@@ -1570,7 +1778,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // Recipe::expand: react-native clean first, node_modules last,
                 // sync_after appended (preserves the comment's hard ordering
                 // rule).
-                let mut cmds = Recipe::Clean(options).expand(&DependencyState::new(false, false, false));
+                let mut cmds =
+                    Recipe::Clean(options).expand(&DependencyState::new(false, false, false));
 
                 if cmds.is_empty() {
                     return effects;
@@ -1613,26 +1822,38 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.modal_stack.modal = Some(ModalState::TextInput {
                 prompt: "Shell command:".to_string(),
                 buffer: String::new(),
-                pending_template: Box::new(CommandSpec::ShellCommand { command: String::new() }),
+                pending_template: Box::new(CommandSpec::ShellCommand {
+                    command: String::new(),
+                }),
             });
         }
         Action::SimulatorUsed(udid) => {
             // Fire-and-forget write to sim history via effect_runner
             effects.push(Effect::RecordSimUsed(udid));
         }
-        Action::IosSimulatorCacheLookupFinished { worktree_id, result } => {
+        Action::IosSimulatorCacheLookupFinished {
+            worktree_id,
+            result,
+        } => {
             if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                 slice.ios_simulator_cache = match result {
                     Ok(Some(hit)) => crate::domain::native_cache::IosSimulatorCacheState::Hit(hit),
                     Ok(None) => crate::domain::native_cache::IosSimulatorCacheState::Miss,
-                    Err(message) => crate::domain::native_cache::IosSimulatorCacheState::Error(message),
+                    Err(message) => {
+                        crate::domain::native_cache::IosSimulatorCacheState::Error(message)
+                    }
                 };
             }
         }
         Action::CachedIosRun(_) => {}
         Action::CachedIosLaunchFinished { .. } => {}
         Action::SyncBeforeRunAccept => {
-            if let Some(ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods }) = state.modal_stack.modal.take() {
+            if let Some(ModalState::SyncBeforeRun {
+                run_command,
+                needs_yarn,
+                needs_pods,
+            }) = state.modal_stack.modal.take()
+            {
                 // Plan 13-09 (F-204 site 7): Recipe::SyncThenRun expansion.
                 // The modal already encodes the staleness decision in
                 // (needs_yarn, needs_pods); rebuild a DependencyState that
@@ -1667,7 +1888,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
         }
         Action::SyncBeforeRunDecline => {
-            if let Some(ModalState::SyncBeforeRun { run_command, .. }) = state.modal_stack.modal.take() {
+            if let Some(ModalState::SyncBeforeRun { run_command, .. }) =
+                state.modal_stack.modal.take()
+            {
                 // Plan 13-09 (F-204 site 8): skip sync. Metro may still need to
                 // start — push the spec onto command_queue front and trigger
                 // MetroStart (replaces `pending_metro_run`). The stale check
@@ -1692,7 +1915,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::SyncBeforeMetroAccept => {
-            if let Some(ModalState::SyncBeforeMetro { needs_yarn, needs_pods }) = state.modal_stack.modal.take() {
+            if let Some(ModalState::SyncBeforeMetro {
+                needs_yarn,
+                needs_pods,
+            }) = state.modal_stack.modal.take()
+            {
                 // Plan 13-09: pending_switch_path deleted. The active_worktree_path
                 // was already updated synchronously at the WorktreeSwitchToSelected
                 // call site when the SyncBeforeMetro modal was constructed.
@@ -1749,20 +1976,21 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 5.2: Universal scroll ---
-
         Action::ScrollToTop => {
             if state.focused_panel == FocusedPanel::CommandOutput
                 && let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id) {
-                    slice.output_scroll = 0;
+                && let Some(slice) = state.worktrees.get_mut(&id)
+            {
+                slice.output_scroll = 0;
             }
         }
 
         Action::ScrollToBottom => {
             if state.focused_panel == FocusedPanel::CommandOutput
                 && let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id) {
-                    slice.output_scroll = slice.output.len();
+                && let Some(slice) = state.worktrees.get_mut(&id)
+            {
+                slice.output_scroll = slice.output.len();
             }
         }
 
@@ -1772,8 +2000,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::CommandOutputScrollUp => {
             if let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id) {
-                    slice.output_scroll = slice.output_scroll.saturating_sub(1);
+                && let Some(slice) = state.worktrees.get_mut(&id)
+            {
+                slice.output_scroll = slice.output_scroll.saturating_sub(1);
             }
         }
 
@@ -1781,18 +2010,22 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let max = active_output(state).len();
             if let Some(id) = active_worktree_id(state)
                 && let Some(slice) = state.worktrees.get_mut(&id)
-                && slice.output_scroll < max {
-                    slice.output_scroll += 1;
+                && slice.output_scroll < max
+            {
+                slice.output_scroll += 1;
             }
         }
 
         // --- Quick-2: Worktree removal ---
-
         Action::WorktreeRemove => {
             if state.worktree_browser.worktrees.is_empty() {
                 return effects;
             }
-            let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0)
+            let idx = state
+                .worktree_browser
+                .worktree_table_state
+                .selected()
+                .unwrap_or(0)
                 .min(state.worktree_browser.worktrees.len() - 1);
             let wt = state.worktree_browser.worktrees[idx].clone();
 
@@ -1807,7 +2040,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
 
             // Store removal target so ModalConfirm knows what to do
-            state.modal_stack.pending_worktree_removal = Some((wt.id.clone(), wt.path.clone(), wt.branch.clone()));
+            state.modal_stack.pending_worktree_removal =
+                Some((wt.id.clone(), wt.path.clone(), wt.branch.clone()));
 
             // Build confirm prompt — mention metro if it will be stopped
             let metro_note = if state
@@ -1820,7 +2054,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             } else {
                 ""
             };
-            let prompt = format!("Remove worktree '{}' and delete directory?{}", wt.branch, metro_note);
+            let prompt = format!(
+                "Remove worktree '{}' and delete directory?{}",
+                wt.branch, metro_note
+            );
 
             // Use a sentinel CommandSpec for the confirm modal — the actual removal
             // logic is in ModalConfirm when pending_worktree_removal is Some.
@@ -1835,7 +2072,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             tracing::info!("worktree removed: {}", path_str);
             state.worktree_browser.worktree_op_in_flight = false;
             // Refresh the worktree list to reflect the removal
-            effects.push(Effect::ListWorktrees { repo_root: state.app_config.repo_root.clone() });
+            effects.push(Effect::ListWorktrees {
+                repo_root: state.app_config.repo_root.clone(),
+            });
         }
 
         Action::WorktreeRemoveFailed(err) => {
@@ -1849,7 +2088,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Quick-260403-dmz: Worktree creation ---
-
         Action::WorktreeAdd => {
             state.modal_stack.palette_mode = None;
             state.modal_stack.pending_worktree_add = true;
@@ -1863,7 +2101,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::WorktreeAdded(path_str) => {
             tracing::info!("worktree added: {}", path_str);
             state.worktree_browser.worktree_op_in_flight = false;
-            effects.push(Effect::ListWorktrees { repo_root: state.app_config.repo_root.clone() });
+            effects.push(Effect::ListWorktrees {
+                repo_root: state.app_config.repo_root.clone(),
+            });
         }
 
         Action::WorktreeAddFailed(err) => {
@@ -1875,10 +2115,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // Phase 08-02: New-branch worktree creation flow
-
         Action::WorktreeAddNewBranch => {
             state.modal_stack.palette_mode = None;
-            effects.push(Effect::ListRemoteBranches { repo_root: state.app_config.repo_root.clone() });
+            effects.push(Effect::ListRemoteBranches {
+                repo_root: state.app_config.repo_root.clone(),
+            });
         }
 
         Action::BranchesLoaded(branches) => {
@@ -1900,10 +2141,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     branches.len()
                 } else {
                     let lower = filter.to_lowercase();
-                    branches.iter().filter(|b| b.to_lowercase().contains(&lower)).count()
+                    branches
+                        .iter()
+                        .filter(|b| b.to_lowercase().contains(&lower))
+                        .count()
                 };
                 if count > 0 {
-                    *selected = if *selected >= count - 1 { 0 } else { *selected + 1 };
+                    *selected = if *selected >= count - 1 {
+                        0
+                    } else {
+                        *selected + 1
+                    };
                 }
             }
         }
@@ -1919,10 +2167,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     branches.len()
                 } else {
                     let lower = filter.to_lowercase();
-                    branches.iter().filter(|b| b.to_lowercase().contains(&lower)).count()
+                    branches
+                        .iter()
+                        .filter(|b| b.to_lowercase().contains(&lower))
+                        .count()
                 };
                 if count > 0 {
-                    *selected = if *selected == 0 { count - 1 } else { *selected - 1 };
+                    *selected = if *selected == 0 {
+                        count - 1
+                    } else {
+                        *selected - 1
+                    };
                 }
             }
         }
@@ -1963,7 +2218,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     branches.iter().collect()
                 } else {
                     let lower = filter.to_lowercase();
-                    branches.iter().filter(|b| b.to_lowercase().contains(&lower)).collect()
+                    branches
+                        .iter()
+                        .filter(|b| b.to_lowercase().contains(&lower))
+                        .collect()
                 };
                 if let Some(base_branch) = filtered.get(selected) {
                     state.modal_stack.pending_new_branch_base = Some((*base_branch).clone());
@@ -1980,7 +2238,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::WorktreeNewBranchCreated(path_str) => {
             tracing::info!("worktree with new branch created: {}", path_str);
             state.worktree_browser.worktree_op_in_flight = false;
-            effects.push(Effect::ListWorktrees { repo_root: state.app_config.repo_root.clone() });
+            effects.push(Effect::ListWorktrees {
+                repo_root: state.app_config.repo_root.clone(),
+            });
         }
 
         Action::WorktreeNewBranchFailed(err) => {
@@ -2054,10 +2314,16 @@ mod tests {
         for action in actions {
             let effects = update(&mut state, action);
             assert!(effects.is_empty());
-            let slice = state.worktrees.get(&worktree_id).expect("slice should remain");
+            let slice = state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should remain");
             assert_eq!(slice.ios_simulator_cache, IosSimulatorCacheState::Checking);
             assert_eq!(slice.pending_cached_ios_launch, Some(pending.clone()));
-            let error_state = state.error_state.as_ref().expect("error state should remain");
+            let error_state = state
+                .error_state
+                .as_ref()
+                .expect("error state should remain");
             assert_eq!(error_state.message, "existing error");
             assert!(error_state.can_retry);
         }

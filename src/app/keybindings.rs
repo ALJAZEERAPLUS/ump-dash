@@ -18,7 +18,7 @@
 
 #![allow(dead_code)]
 
-use super::state::{active_worktree_id, AppState, FocusedPanel, PaletteMode};
+use super::state::{AppState, FocusedPanel, PaletteMode, active_worktree_id};
 use crate::domain::action::Action;
 use crate::domain::command::{CommandSpec, ModalState};
 use crate::domain::worktree_slice::LastRunConfig;
@@ -91,905 +91,1176 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     // ==== Modal: Confirm (Y/N/Esc) ====
     KeyBinding {
         key: KeyCode::Char('y'),
-        label: "Y", short_desc: "confirm", long_desc: "Confirm destructive action",
+        label: "Y",
+        short_desc: "confirm",
+        long_desc: "Confirm destructive action",
         context: BindingContext::Modal(ModalKind::Confirm),
         action: |_| Some(Action::ModalConfirm),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('Y'),
-        label: "Y", short_desc: "confirm", long_desc: "Confirm destructive action",
+        label: "Y",
+        short_desc: "confirm",
+        long_desc: "Confirm destructive action",
         context: BindingContext::Modal(ModalKind::Confirm),
         action: |_| Some(Action::ModalConfirm),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('n'),
-        label: "N", short_desc: "cancel", long_desc: "Cancel",
+        label: "N",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::Confirm),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('N'),
-        label: "N", short_desc: "cancel", long_desc: "Cancel",
+        label: "N",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::Confirm),
         action: |_| Some(Action::ModalCancel),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::Confirm),
         action: |_| Some(Action::ModalCancel),
         visible: |_| false,
     },
-
     // ==== Modal: TextInput (Enter/Backspace/Esc — Char handled post-loop) ====
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::TextInput),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "submit", long_desc: "Submit text",
+        label: "Enter",
+        short_desc: "submit",
+        long_desc: "Submit text",
         context: BindingContext::Modal(ModalKind::TextInput),
         action: |_| Some(Action::ModalInputSubmit),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Backspace,
-        label: "Backspace", short_desc: "backspace", long_desc: "Delete character",
+        label: "Backspace",
+        short_desc: "backspace",
+        long_desc: "Delete character",
         context: BindingContext::Modal(ModalKind::TextInput),
         action: |_| Some(Action::ModalInputBackspace),
         visible: |_| false,
     },
-
     // ==== Modal: DevicePicker (Enter/Esc/j/k/arrows/Backspace; Char handled post-loop) ====
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "select", long_desc: "Select device",
+        label: "Enter",
+        short_desc: "select",
+        long_desc: "Select device",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalDeviceConfirm),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Down,
-        label: "Down", short_desc: "next", long_desc: "Next device",
+        label: "Down",
+        short_desc: "next",
+        long_desc: "Next device",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalDeviceNext),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Up,
-        label: "Up", short_desc: "prev", long_desc: "Previous device",
+        label: "Up",
+        short_desc: "prev",
+        long_desc: "Previous device",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalDevicePrev),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Backspace,
-        label: "Backspace", short_desc: "backspace", long_desc: "Delete filter character",
+        label: "Backspace",
+        short_desc: "backspace",
+        long_desc: "Delete filter character",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalInputBackspace),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('j'),
-        label: "j/k", short_desc: "navigate", long_desc: "Navigate device list",
+        label: "j/k",
+        short_desc: "navigate",
+        long_desc: "Navigate device list",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalDeviceNext),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('k'),
-        label: "k", short_desc: "prev", long_desc: "Previous device",
+        label: "k",
+        short_desc: "prev",
+        long_desc: "Previous device",
         context: BindingContext::Modal(ModalKind::DevicePicker),
         action: |_| Some(Action::ModalDevicePrev),
         visible: |_| false,
     },
-
     // ==== Modal: RunVariantPicker (Enter/Esc/j/k/arrows) ====
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::RunVariantPicker),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "select", long_desc: "Select run type",
+        label: "Enter",
+        short_desc: "select",
+        long_desc: "Select run type",
         context: BindingContext::Modal(ModalKind::RunVariantPicker),
         action: |_| Some(Action::ModalRunVariantConfirm),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Down,
-        label: "Down", short_desc: "next", long_desc: "Next run type",
+        label: "Down",
+        short_desc: "next",
+        long_desc: "Next run type",
         context: BindingContext::Modal(ModalKind::RunVariantPicker),
         action: |_| Some(Action::ModalRunVariantNext),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Up,
-        label: "Up", short_desc: "prev", long_desc: "Previous run type",
+        label: "Up",
+        short_desc: "prev",
+        long_desc: "Previous run type",
         context: BindingContext::Modal(ModalKind::RunVariantPicker),
         action: |_| Some(Action::ModalRunVariantPrev),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('j'),
-        label: "j/k", short_desc: "navigate", long_desc: "Navigate run types",
+        label: "j/k",
+        short_desc: "navigate",
+        long_desc: "Navigate run types",
         context: BindingContext::Modal(ModalKind::RunVariantPicker),
         action: |_| Some(Action::ModalRunVariantNext),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('k'),
-        label: "k", short_desc: "prev", long_desc: "Previous run type",
+        label: "k",
+        short_desc: "prev",
+        long_desc: "Previous run type",
         context: BindingContext::Modal(ModalKind::RunVariantPicker),
         action: |_| Some(Action::ModalRunVariantPrev),
         visible: |_| false,
     },
-
     // ==== Modal: CleanToggle ====
     KeyBinding {
         key: KeyCode::Char('n'),
-        label: "n", short_desc: "node_modules", long_desc: "Toggle node_modules",
+        label: "n",
+        short_desc: "node_modules",
+        long_desc: "Toggle node_modules",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::CleanToggleNodeModules),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('p'),
-        label: "p", short_desc: "pods", long_desc: "Toggle pods",
+        label: "p",
+        short_desc: "pods",
+        long_desc: "Toggle pods",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::CleanTogglePods),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('a'),
-        label: "a", short_desc: "android", long_desc: "Toggle android",
+        label: "a",
+        short_desc: "android",
+        long_desc: "Toggle android",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::CleanToggleAndroid),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('i'),
-        label: "i", short_desc: "sync after", long_desc: "Toggle sync after clean",
+        label: "i",
+        short_desc: "sync after",
+        long_desc: "Toggle sync after clean",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::CleanToggleSyncAfter),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('x'),
-        label: "x/Enter", short_desc: "confirm", long_desc: "Confirm clean",
+        label: "x/Enter",
+        short_desc: "confirm",
+        long_desc: "Confirm clean",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::CleanConfirm),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "confirm", long_desc: "Confirm clean",
+        label: "Enter",
+        short_desc: "confirm",
+        long_desc: "Confirm clean",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::CleanConfirm),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::CleanToggle),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
-
     // ==== Modal: SyncBeforeRun ====
     KeyBinding {
         key: KeyCode::Char('y'),
-        label: "Y", short_desc: "sync first", long_desc: "Sync dependencies before run",
+        label: "Y",
+        short_desc: "sync first",
+        long_desc: "Sync dependencies before run",
         context: BindingContext::Modal(ModalKind::SyncBeforeRun),
         action: |_| Some(Action::SyncBeforeRunAccept),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('Y'),
-        label: "Y", short_desc: "sync first", long_desc: "Sync dependencies before run",
+        label: "Y",
+        short_desc: "sync first",
+        long_desc: "Sync dependencies before run",
         context: BindingContext::Modal(ModalKind::SyncBeforeRun),
         action: |_| Some(Action::SyncBeforeRunAccept),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('n'),
-        label: "N", short_desc: "skip sync", long_desc: "Skip sync and run anyway",
+        label: "N",
+        short_desc: "skip sync",
+        long_desc: "Skip sync and run anyway",
         context: BindingContext::Modal(ModalKind::SyncBeforeRun),
         action: |_| Some(Action::SyncBeforeRunDecline),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('N'),
-        label: "N", short_desc: "skip sync", long_desc: "Skip sync and run anyway",
+        label: "N",
+        short_desc: "skip sync",
+        long_desc: "Skip sync and run anyway",
         context: BindingContext::Modal(ModalKind::SyncBeforeRun),
         action: |_| Some(Action::SyncBeforeRunDecline),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Skip sync and run anyway",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Skip sync and run anyway",
         context: BindingContext::Modal(ModalKind::SyncBeforeRun),
         action: |_| Some(Action::SyncBeforeRunDecline),
         visible: |_| true,
     },
-
     // ==== Modal: SyncBeforeMetro ====
     KeyBinding {
         key: KeyCode::Char('y'),
-        label: "Y", short_desc: "sync first", long_desc: "Sync dependencies before metro",
+        label: "Y",
+        short_desc: "sync first",
+        long_desc: "Sync dependencies before metro",
         context: BindingContext::Modal(ModalKind::SyncBeforeMetro),
         action: |_| Some(Action::SyncBeforeMetroAccept),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('Y'),
-        label: "Y", short_desc: "sync first", long_desc: "Sync dependencies before metro",
+        label: "Y",
+        short_desc: "sync first",
+        long_desc: "Sync dependencies before metro",
         context: BindingContext::Modal(ModalKind::SyncBeforeMetro),
         action: |_| Some(Action::SyncBeforeMetroAccept),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('n'),
-        label: "N", short_desc: "skip sync", long_desc: "Skip sync and start metro anyway",
+        label: "N",
+        short_desc: "skip sync",
+        long_desc: "Skip sync and start metro anyway",
         context: BindingContext::Modal(ModalKind::SyncBeforeMetro),
         action: |_| Some(Action::SyncBeforeMetroDecline),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('N'),
-        label: "N", short_desc: "skip sync", long_desc: "Skip sync and start metro anyway",
+        label: "N",
+        short_desc: "skip sync",
+        long_desc: "Skip sync and start metro anyway",
         context: BindingContext::Modal(ModalKind::SyncBeforeMetro),
         action: |_| Some(Action::SyncBeforeMetroDecline),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Skip sync and start metro anyway",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Skip sync and start metro anyway",
         context: BindingContext::Modal(ModalKind::SyncBeforeMetro),
         action: |_| Some(Action::SyncBeforeMetroDecline),
         visible: |_| true,
     },
-
     // ==== Modal: ExternalMetroConflict (Y/Enter kills PID from state) ====
     KeyBinding {
         key: KeyCode::Char('y'),
-        label: "Y", short_desc: "kill it", long_desc: "Kill the external metro process",
+        label: "Y",
+        short_desc: "kill it",
+        long_desc: "Kill the external metro process",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
         action: external_metro_kill_action,
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('Y'),
-        label: "Y", short_desc: "kill it", long_desc: "Kill the external metro process",
+        label: "Y",
+        short_desc: "kill it",
+        long_desc: "Kill the external metro process",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
         action: external_metro_kill_action,
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "kill it", long_desc: "Kill the external metro process",
+        label: "Enter",
+        short_desc: "kill it",
+        long_desc: "Kill the external metro process",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
         action: external_metro_kill_action,
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('n'),
-        label: "N", short_desc: "cancel", long_desc: "Cancel",
+        label: "N",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('N'),
-        label: "N", short_desc: "cancel", long_desc: "Cancel",
+        label: "N",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
         action: |_| Some(Action::ModalCancel),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
         action: |_| Some(Action::ModalCancel),
         visible: |_| false,
     },
-
     // ==== Modal: BranchPicker (Enter/Esc/arrows/Backspace; Char handled post-loop) ====
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "select", long_desc: "Select branch",
+        label: "Enter",
+        short_desc: "select",
+        long_desc: "Select branch",
         context: BindingContext::Modal(ModalKind::BranchPicker),
         action: |_| Some(Action::BranchPickerConfirm),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Cancel",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::BranchPicker),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Down,
-        label: "Up/Down", short_desc: "navigate", long_desc: "Navigate branch list",
+        label: "Up/Down",
+        short_desc: "navigate",
+        long_desc: "Navigate branch list",
         context: BindingContext::Modal(ModalKind::BranchPicker),
         action: |_| Some(Action::BranchPickerNext),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Up,
-        label: "Up", short_desc: "prev", long_desc: "Previous branch",
+        label: "Up",
+        short_desc: "prev",
+        long_desc: "Previous branch",
         context: BindingContext::Modal(ModalKind::BranchPicker),
         action: |_| Some(Action::BranchPickerPrev),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Backspace,
-        label: "Backspace", short_desc: "backspace", long_desc: "Delete filter character",
+        label: "Backspace",
+        short_desc: "backspace",
+        long_desc: "Delete filter character",
         context: BindingContext::Modal(ModalKind::BranchPicker),
         action: |_| Some(Action::BranchPickerBackspace),
         visible: |_| false,
     },
-
     // ==== Palette: Android ====
     KeyBinding {
         key: KeyCode::Char('r'),
-        label: "r", short_desc: "run", long_desc: "Run Android via UMP script",
+        label: "r",
+        short_desc: "run",
+        long_desc: "Run Android via UMP script",
         context: BindingContext::Palette(PaletteMode::Android),
-        action: |_| Some(Action::CommandRun(CommandSpec::UmpRunAndroid {
-            device_id: String::new(),
-            variant: None,
-        })),
+        action: |_| {
+            Some(Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }))
+        },
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('R'),
-        label: "R", short_desc: "repeat", long_desc: "Repeat last Android run",
+        label: "R",
+        short_desc: "repeat",
+        long_desc: "Repeat last Android run",
         context: BindingContext::Palette(PaletteMode::Android),
         action: repeat_last_android_run,
         visible: has_last_android_run,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Close palette",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Android),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
-
     // ==== Palette: iOS ====
     KeyBinding {
         key: KeyCode::Char('p'),
-        label: "p", short_desc: "pod-install", long_desc: "yarn pod-install",
+        label: "p",
+        short_desc: "pod-install",
+        long_desc: "yarn pod-install",
         context: BindingContext::Palette(PaletteMode::Ios),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnPodInstall)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('r'),
-        label: "r", short_desc: "run", long_desc: "Run iOS via UMP script",
+        label: "r",
+        short_desc: "run",
+        long_desc: "Run iOS via UMP script",
         context: BindingContext::Palette(PaletteMode::Ios),
-        action: |_| Some(Action::CommandRun(CommandSpec::UmpRunIos {
-            device_id: String::new(),
-            variant: None,
-        })),
+        action: |_| {
+            Some(Action::CommandRun(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: None,
+            }))
+        },
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('R'),
-        label: "R", short_desc: "repeat", long_desc: "Repeat last iOS run",
+        label: "R",
+        short_desc: "repeat",
+        long_desc: "Repeat last iOS run",
         context: BindingContext::Palette(PaletteMode::Ios),
         action: repeat_last_ios_run,
         visible: has_last_ios_run,
     },
     KeyBinding {
         key: KeyCode::Char('c'),
-        label: "c", short_desc: "cached", long_desc: "Install cached iOS simulator build",
+        label: "c",
+        short_desc: "cached",
+        long_desc: "Install cached iOS simulator build",
         context: BindingContext::Palette(PaletteMode::Ios),
         action: cached_ios_run,
         visible: has_cached_ios_hit,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Close palette",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Ios),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
-
     // ==== Palette: Yarn ====
     KeyBinding {
         key: KeyCode::Char('i'),
-        label: "i", short_desc: "install", long_desc: "yarn install",
+        label: "i",
+        short_desc: "install",
+        long_desc: "yarn install",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnInstall)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('p'),
-        label: "p", short_desc: "pod-install", long_desc: "yarn pod-install",
+        label: "p",
+        short_desc: "pod-install",
+        long_desc: "yarn pod-install",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnPodInstall)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('u'),
-        label: "u", short_desc: "unit-tests", long_desc: "yarn unit-tests",
+        label: "u",
+        short_desc: "unit-tests",
+        long_desc: "yarn unit-tests",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnUnitTests)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('t'),
-        label: "t", short_desc: "check-types", long_desc: "yarn check-types --incremental",
+        label: "t",
+        short_desc: "check-types",
+        long_desc: "yarn check-types --incremental",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnCheckTypes)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('j'),
-        label: "j", short_desc: "jest", long_desc: "yarn jest <filter>",
+        label: "j",
+        short_desc: "jest",
+        long_desc: "yarn jest <filter>",
         context: BindingContext::Palette(PaletteMode::Yarn),
-        action: |_| Some(Action::CommandRun(CommandSpec::YarnJest { filter: String::new() })),
+        action: |_| {
+            Some(Action::CommandRun(CommandSpec::YarnJest {
+                filter: String::new(),
+            }))
+        },
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('l'),
-        label: "l", short_desc: "lint", long_desc: "yarn lint --quiet --fix",
+        label: "l",
+        short_desc: "lint",
+        long_desc: "yarn lint --quiet --fix",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::CommandRun(CommandSpec::YarnLint)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('c'),
-        label: "c", short_desc: "clean…", long_desc: "Clean submenu (pods/android/node_modules)",
+        label: "c",
+        short_desc: "clean…",
+        long_desc: "Clean submenu (pods/android/node_modules)",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::OpenCleanMenu),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Close palette",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Yarn),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
-
     // ==== Palette: Git ====
     KeyBinding {
         key: KeyCode::Char('f'),
-        label: "f", short_desc: "fetch", long_desc: "git fetch --all --tags",
+        label: "f",
+        short_desc: "fetch",
+        long_desc: "git fetch --all --tags",
         context: BindingContext::Palette(PaletteMode::Git),
         action: |_| Some(Action::CommandRun(CommandSpec::GitFetch)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('p'),
-        label: "p", short_desc: "pull", long_desc: "git pull",
+        label: "p",
+        short_desc: "pull",
+        long_desc: "git pull",
         context: BindingContext::Palette(PaletteMode::Git),
         action: |_| Some(Action::CommandRun(CommandSpec::GitPull)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('P'),
-        label: "P", short_desc: "push", long_desc: "git push",
+        label: "P",
+        short_desc: "push",
+        long_desc: "git push",
         context: BindingContext::Palette(PaletteMode::Git),
         action: |_| Some(Action::CommandRun(CommandSpec::GitPush)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('X'),
-        label: "X", short_desc: "reset hard", long_desc: "git fetch + reset --hard origin/<branch>",
+        label: "X",
+        short_desc: "reset hard",
+        long_desc: "git fetch + reset --hard origin/<branch>",
         context: BindingContext::Palette(PaletteMode::Git),
         action: |_| Some(Action::CommandRun(CommandSpec::GitResetHardFetch)),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('b'),
-        label: "b", short_desc: "checkout", long_desc: "git checkout <branch>",
+        label: "b",
+        short_desc: "checkout",
+        long_desc: "git checkout <branch>",
         context: BindingContext::Palette(PaletteMode::Git),
-        action: |_| Some(Action::CommandRun(CommandSpec::GitCheckout { branch: String::new() })),
+        action: |_| {
+            Some(Action::CommandRun(CommandSpec::GitCheckout {
+                branch: String::new(),
+            }))
+        },
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('c'),
-        label: "c", short_desc: "checkout -b", long_desc: "git checkout -b <branch>",
+        label: "c",
+        short_desc: "checkout -b",
+        long_desc: "git checkout -b <branch>",
         context: BindingContext::Palette(PaletteMode::Git),
-        action: |_| Some(Action::CommandRun(CommandSpec::GitCheckoutNew { branch: String::new() })),
+        action: |_| {
+            Some(Action::CommandRun(CommandSpec::GitCheckoutNew {
+                branch: String::new(),
+            }))
+        },
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('r'),
-        label: "r", short_desc: "rebase", long_desc: "git rebase <target>",
+        label: "r",
+        short_desc: "rebase",
+        long_desc: "git rebase <target>",
         context: BindingContext::Palette(PaletteMode::Git),
-        action: |_| Some(Action::CommandRun(CommandSpec::GitRebase { target: String::new() })),
+        action: |_| {
+            Some(Action::CommandRun(CommandSpec::GitRebase {
+                target: String::new(),
+            }))
+        },
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Close palette",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Git),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
-
     // ==== Palette: Worktree ====
     KeyBinding {
         key: KeyCode::Char('w'),
-        label: "w", short_desc: "add worktree", long_desc: "Add new worktree",
+        label: "w",
+        short_desc: "add worktree",
+        long_desc: "Add new worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::WorktreeAdd),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('d'),
-        label: "d", short_desc: "remove worktree", long_desc: "Remove worktree (purge)",
+        label: "d",
+        short_desc: "remove worktree",
+        long_desc: "Remove worktree (purge)",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::WorktreeRemove),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('b'),
-        label: "b", short_desc: "new branch worktree", long_desc: "New branch + worktree",
+        label: "b",
+        short_desc: "new branch worktree",
+        long_desc: "New branch + worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::WorktreeAddNewBranch),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "cancel", long_desc: "Close palette",
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
-
     // ==== Overlay: Help ====
     KeyBinding {
         key: KeyCode::Char('q'),
-        label: "q/Esc", short_desc: "close help", long_desc: "Close help overlay",
+        label: "q/Esc",
+        short_desc: "close help",
+        long_desc: "Close help overlay",
         context: BindingContext::Overlay(OverlayKind::Help),
         action: |_| Some(Action::DismissHelp),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "close help", long_desc: "Close help overlay",
+        label: "Esc",
+        short_desc: "close help",
+        long_desc: "Close help overlay",
         context: BindingContext::Overlay(OverlayKind::Help),
         action: |_| Some(Action::DismissHelp),
         visible: |_| false,
     },
-
     // ==== Overlay: Error ====
     KeyBinding {
         key: KeyCode::Char('r'),
-        label: "r", short_desc: "retry", long_desc: "Retry last command",
+        label: "r",
+        short_desc: "retry",
+        long_desc: "Retry last command",
         context: BindingContext::Overlay(OverlayKind::Error),
         action: |_| Some(Action::RetryLastCommand),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('q'),
-        label: "q/Esc", short_desc: "dismiss", long_desc: "Dismiss error",
+        label: "q/Esc",
+        short_desc: "dismiss",
+        long_desc: "Dismiss error",
         context: BindingContext::Overlay(OverlayKind::Error),
         action: |_| Some(Action::DismissError),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "dismiss", long_desc: "Dismiss error",
+        label: "Esc",
+        short_desc: "dismiss",
+        long_desc: "Dismiss error",
         context: BindingContext::Overlay(OverlayKind::Error),
         action: |_| Some(Action::DismissError),
         visible: |_| false,
     },
-
     // ==== Fullscreen: Tab exits ====
     KeyBinding {
         key: KeyCode::Tab,
-        label: "Tab", short_desc: "exit fullscreen", long_desc: "Exit fullscreen mode",
+        label: "Tab",
+        short_desc: "exit fullscreen",
+        long_desc: "Exit fullscreen mode",
         context: BindingContext::Fullscreen,
         action: |_| Some(Action::ToggleFullscreen),
         visible: |_| true,
     },
-
     // ==== WorktreeTable panel ====
     KeyBinding {
         key: KeyCode::Char('j'),
-        label: "j/k", short_desc: "navigate", long_desc: "Navigate within panel",
+        label: "j/k",
+        short_desc: "navigate",
+        long_desc: "Navigate within panel",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSelectNext),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Down,
-        label: "Down", short_desc: "next", long_desc: "Next worktree",
+        label: "Down",
+        short_desc: "next",
+        long_desc: "Next worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSelectNext),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('k'),
-        label: "k", short_desc: "prev", long_desc: "Previous worktree",
+        label: "k",
+        short_desc: "prev",
+        long_desc: "Previous worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSelectPrev),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Up,
-        label: "Up", short_desc: "prev", long_desc: "Previous worktree",
+        label: "Up",
+        short_desc: "prev",
+        long_desc: "Previous worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSelectPrev),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('a'),
-        label: "a", short_desc: "android", long_desc: "Android submenu",
+        label: "a",
+        short_desc: "android",
+        long_desc: "Android submenu",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::EnterAndroidPalette),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('i'),
-        label: "i", short_desc: "ios", long_desc: "iOS submenu",
+        label: "i",
+        short_desc: "ios",
+        long_desc: "iOS submenu",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::EnterIosPalette),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('y'),
-        label: "y", short_desc: "yarn", long_desc: "Yarn submenu",
+        label: "y",
+        short_desc: "yarn",
+        long_desc: "Yarn submenu",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::EnterYarnPalette),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('w'),
-        label: "w", short_desc: "worktree", long_desc: "Worktree submenu",
+        label: "w",
+        short_desc: "worktree",
+        long_desc: "Worktree submenu",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::EnterWorktreePalette),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('g'),
-        label: "g", short_desc: "git", long_desc: "Git submenu",
+        label: "g",
+        short_desc: "git",
+        long_desc: "Git submenu",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::EnterGitPalette),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('R'),
-        label: "R", short_desc: "reload", long_desc: "Reload metro (when running) / Refresh list",
+        label: "R",
+        short_desc: "reload",
+        long_desc: "Reload metro (when running) / Refresh list",
         context: BindingContext::WorktreeTable,
-        action: |s| if metro_running(s) { Some(Action::MetroSendReload) } else { Some(Action::RefreshWorktrees) },
+        action: |s| {
+            if metro_running(s) {
+                Some(Action::MetroSendReload)
+            } else {
+                Some(Action::RefreshWorktrees)
+            }
+        },
         visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Char('J'),
-        label: "J", short_desc: "debugger", long_desc: "Metro debugger (when running)",
+        label: "J",
+        short_desc: "debugger",
+        long_desc: "Metro debugger (when running)",
         context: BindingContext::WorktreeTable,
-        action: |s| if metro_running(s) { Some(Action::MetroSendDebugger) } else { None },
+        action: |s| {
+            if metro_running(s) {
+                Some(Action::MetroSendDebugger)
+            } else {
+                None
+            }
+        },
         visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Esc,
-        label: "Esc", short_desc: "stop metro", long_desc: "Stop metro (when running)",
+        label: "Esc",
+        short_desc: "stop metro",
+        long_desc: "Stop metro (when running)",
         context: BindingContext::WorktreeTable,
-        action: |s| if metro_running(s) { Some(Action::MetroStop) } else { None },
+        action: |s| {
+            if metro_running(s) {
+                Some(Action::MetroStop)
+            } else {
+                None
+            }
+        },
         visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Char('C'),
-        label: "C", short_desc: "claude", long_desc: "Open Claude Code (tmux/zellij/Ghostty)",
+        label: "C",
+        short_desc: "claude",
+        long_desc: "Open Claude Code (tmux/zellij/Ghostty)",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::OpenClaudeCode),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('T'),
-        label: "T", short_desc: "shell tab", long_desc: "Open shell tab at worktree",
+        label: "T",
+        short_desc: "shell tab",
+        long_desc: "Open shell tab at worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::OpenShellTab),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('f'),
-        label: "f", short_desc: "fullscreen", long_desc: "Toggle fullscreen",
+        label: "f",
+        short_desc: "fullscreen",
+        long_desc: "Toggle fullscreen",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::ToggleFullscreen),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('!'),
-        label: "!", short_desc: "shell", long_desc: "Run shell command in worktree",
+        label: "!",
+        short_desc: "shell",
+        long_desc: "Run shell command in worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::StartShellCommand),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Enter,
-        label: "Enter", short_desc: "switch", long_desc: "Switch metro to worktree",
+        label: "Enter",
+        short_desc: "switch",
+        long_desc: "Switch metro to worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSwitchToSelected),
         visible: |_| true,
     },
-
     // ==== CommandOutput panel ====
     KeyBinding {
         key: KeyCode::Char('j'),
-        label: "j/k", short_desc: "scroll", long_desc: "Scroll output",
+        label: "j/k",
+        short_desc: "scroll",
+        long_desc: "Scroll output",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::CommandOutputScrollDown),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Down,
-        label: "Down", short_desc: "scroll down", long_desc: "Scroll output down",
+        label: "Down",
+        short_desc: "scroll down",
+        long_desc: "Scroll output down",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::CommandOutputScrollDown),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('k'),
-        label: "k", short_desc: "scroll up", long_desc: "Scroll output up",
+        label: "k",
+        short_desc: "scroll up",
+        long_desc: "Scroll output up",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::CommandOutputScrollUp),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Up,
-        label: "Up", short_desc: "scroll up", long_desc: "Scroll output up",
+        label: "Up",
+        short_desc: "scroll up",
+        long_desc: "Scroll output up",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::CommandOutputScrollUp),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('G'),
-        label: "G", short_desc: "bottom", long_desc: "Scroll to bottom",
+        label: "G",
+        short_desc: "bottom",
+        long_desc: "Scroll to bottom",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::ScrollToBottom),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('g'),
-        label: "gg", short_desc: "top", long_desc: "Scroll to top (double-tap)",
+        label: "gg",
+        short_desc: "top",
+        long_desc: "Scroll to top (double-tap)",
         context: BindingContext::CommandOutput,
-        action: |s| if s.modal_stack.pending_g { Some(Action::ScrollToTop) } else { Some(Action::SetPendingG) },
+        action: |s| {
+            if s.modal_stack.pending_g {
+                Some(Action::ScrollToTop)
+            } else {
+                Some(Action::SetPendingG)
+            }
+        },
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('X'),
-        label: "X", short_desc: "cancel", long_desc: "Cancel running command",
+        label: "X",
+        short_desc: "cancel",
+        long_desc: "Cancel running command",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::CommandCancel),
         visible: command_running,
     },
     KeyBinding {
         key: KeyCode::Char('C'),
-        label: "C", short_desc: "clear", long_desc: "Clear output",
+        label: "C",
+        short_desc: "clear",
+        long_desc: "Clear output",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::CommandOutputClear),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('f'),
-        label: "f", short_desc: "fullscreen", long_desc: "Toggle fullscreen",
+        label: "f",
+        short_desc: "fullscreen",
+        long_desc: "Toggle fullscreen",
         context: BindingContext::CommandOutput,
         action: |_| Some(Action::ToggleFullscreen),
         visible: |_| true,
     },
-
     // ==== Normal (top-level fallback when no panel-specific / modal / overlay) ====
     KeyBinding {
         key: KeyCode::Char('q'),
-        label: "q", short_desc: "quit", long_desc: "Quit the application",
+        label: "q",
+        short_desc: "quit",
+        long_desc: "Quit the application",
         context: BindingContext::Normal,
         action: |_| Some(Action::Quit),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Char('?'),
-        label: "?/F1", short_desc: "help", long_desc: "Open keybinding help",
+        label: "?/F1",
+        short_desc: "help",
+        long_desc: "Open keybinding help",
         context: BindingContext::Normal,
         action: |_| Some(Action::ShowHelp),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::F(1),
-        label: "F1", short_desc: "help", long_desc: "Open keybinding help",
+        label: "F1",
+        short_desc: "help",
+        long_desc: "Open keybinding help",
         context: BindingContext::Normal,
         action: |_| Some(Action::ShowHelp),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('/'),
-        label: "/", short_desc: "search", long_desc: "Search",
+        label: "/",
+        short_desc: "search",
+        long_desc: "Search",
         context: BindingContext::Normal,
         action: |_| Some(Action::Search),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('j'),
-        label: "j/k", short_desc: "navigate", long_desc: "Focus down",
+        label: "j/k",
+        short_desc: "navigate",
+        long_desc: "Focus down",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusDown),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Down,
-        label: "Down", short_desc: "focus down", long_desc: "Focus down",
+        label: "Down",
+        short_desc: "focus down",
+        long_desc: "Focus down",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusDown),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('k'),
-        label: "k", short_desc: "focus up", long_desc: "Focus up",
+        label: "k",
+        short_desc: "focus up",
+        long_desc: "Focus up",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusUp),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Up,
-        label: "Up", short_desc: "focus up", long_desc: "Focus up",
+        label: "Up",
+        short_desc: "focus up",
+        long_desc: "Focus up",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusUp),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('h'),
-        label: "h", short_desc: "focus left", long_desc: "Focus left",
+        label: "h",
+        short_desc: "focus left",
+        long_desc: "Focus left",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusLeft),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Left,
-        label: "Left", short_desc: "focus left", long_desc: "Focus left",
+        label: "Left",
+        short_desc: "focus left",
+        long_desc: "Focus left",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusLeft),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('l'),
-        label: "l", short_desc: "focus right", long_desc: "Focus right",
+        label: "l",
+        short_desc: "focus right",
+        long_desc: "Focus right",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusRight),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Right,
-        label: "Right", short_desc: "focus right", long_desc: "Focus right",
+        label: "Right",
+        short_desc: "focus right",
+        long_desc: "Focus right",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusRight),
         visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Tab,
-        label: "Tab", short_desc: "panel", long_desc: "Switch panel",
+        label: "Tab",
+        short_desc: "panel",
+        long_desc: "Switch panel",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusNext),
         visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::BackTab,
-        label: "Shift-Tab", short_desc: "prev panel", long_desc: "Previous panel",
+        label: "Shift-Tab",
+        short_desc: "prev panel",
+        long_desc: "Previous panel",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusPrev),
         visible: |_| false,
@@ -1012,7 +1283,11 @@ fn external_metro_kill_action(state: &AppState) -> Option<Action> {
 // ---------------------------------------------------------------------------
 
 fn metro_running(state: &AppState) -> bool {
-    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    let idx = state
+        .worktree_browser
+        .worktree_table_state
+        .selected()
+        .unwrap_or(0);
     state
         .worktree_browser
         .worktrees
@@ -1054,10 +1329,14 @@ pub fn context_matches(ctx: &BindingContext, state: &AppState) -> bool {
                 && !in_fullscreen
                 && state.focused_panel == FocusedPanel::CommandOutput
         }
-        BindingContext::Palette(p) => !in_modal && !in_overlay && state.modal_stack.palette_mode.as_ref() == Some(p),
+        BindingContext::Palette(p) => {
+            !in_modal && !in_overlay && state.modal_stack.palette_mode.as_ref() == Some(p)
+        }
         BindingContext::Modal(k) => matches_modal_kind(state.modal_stack.modal.as_ref(), *k),
         BindingContext::Overlay(OverlayKind::Help) => state.show_help,
-        BindingContext::Overlay(OverlayKind::Error) => !state.show_help && state.error_state.is_some(),
+        BindingContext::Overlay(OverlayKind::Error) => {
+            !state.show_help && state.error_state.is_some()
+        }
         BindingContext::Fullscreen => in_fullscreen && !in_modal && !in_palette && !in_overlay,
     }
 }
@@ -1067,13 +1346,31 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
         (modal, kind),
         (Some(ModalState::Confirm { .. }), ModalKind::Confirm)
             | (Some(ModalState::TextInput { .. }), ModalKind::TextInput)
-            | (Some(ModalState::DevicePicker { .. }), ModalKind::DevicePicker)
-            | (Some(ModalState::RunVariantPicker { .. }), ModalKind::RunVariantPicker)
+            | (
+                Some(ModalState::DevicePicker { .. }),
+                ModalKind::DevicePicker
+            )
+            | (
+                Some(ModalState::RunVariantPicker { .. }),
+                ModalKind::RunVariantPicker
+            )
             | (Some(ModalState::CleanToggle { .. }), ModalKind::CleanToggle)
-            | (Some(ModalState::SyncBeforeRun { .. }), ModalKind::SyncBeforeRun)
-            | (Some(ModalState::SyncBeforeMetro { .. }), ModalKind::SyncBeforeMetro)
-            | (Some(ModalState::ExternalMetroConflict { .. }), ModalKind::ExternalMetroConflict)
-            | (Some(ModalState::BranchPicker { .. }), ModalKind::BranchPicker)
+            | (
+                Some(ModalState::SyncBeforeRun { .. }),
+                ModalKind::SyncBeforeRun
+            )
+            | (
+                Some(ModalState::SyncBeforeMetro { .. }),
+                ModalKind::SyncBeforeMetro
+            )
+            | (
+                Some(ModalState::ExternalMetroConflict { .. }),
+                ModalKind::ExternalMetroConflict
+            )
+            | (
+                Some(ModalState::BranchPicker { .. }),
+                ModalKind::BranchPicker
+            )
     )
 }
 
@@ -1117,12 +1414,14 @@ fn has_cached_ios_hit(state: &AppState) -> bool {
 }
 
 fn repeat_last_android_run(state: &AppState) -> Option<Action> {
-    Some(last_android_run(state).map_or(Action::ModalCancel, |config| {
-        Action::CommandRun(CommandSpec::UmpRunAndroid {
-            device_id: config.device_id.clone(),
-            variant: Some(config.variant),
-        })
-    }))
+    Some(
+        last_android_run(state).map_or(Action::ModalCancel, |config| {
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: config.device_id.clone(),
+                variant: Some(config.variant),
+            })
+        }),
+    )
 }
 
 fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
@@ -1135,7 +1434,11 @@ fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
 }
 
 fn cached_ios_run(state: &AppState) -> Option<Action> {
-    Some(cached_ios_hit(state).cloned().map_or(Action::ModalCancel, Action::CachedIosRun))
+    Some(
+        cached_ios_hit(state)
+            .cloned()
+            .map_or(Action::ModalCancel, Action::CachedIosRun),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,7 +1478,11 @@ pub fn help_overlay_rows() -> Vec<HelpRow> {
             continue;
         }
         seen.push((section, kb.label));
-        rows.push(HelpRow { section, label: kb.label, desc: kb.long_desc });
+        rows.push(HelpRow {
+            section,
+            label: kb.label,
+            desc: kb.long_desc,
+        });
     }
     rows
 }

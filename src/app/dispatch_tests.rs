@@ -16,17 +16,15 @@
 //! Most tests in this file care about state mutations, not effects, so the
 //! return value is typically bound to `_`.
 
-use super::*;
 use super::effect::Effect;
+use super::*;
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState, RunVariant};
 use crate::domain::native_cache::{
     IosSimulatorCacheHit, IosSimulatorCacheMetadata, IosSimulatorCacheState,
 };
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
-use ratatui::crossterm::event::{
-    KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
-};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
 /// Build a `KeyEvent` for a single character press — the 99% case for these tests.
 fn key(c: char) -> KeyEvent {
@@ -77,9 +75,13 @@ fn seed_one_worktree_id(state: &mut AppState, id: &str) {
         jira_key: None,
     });
     let idx = state.worktree_browser.worktrees.len() - 1;
-    state.worktree_browser.worktree_table_state.select(Some(idx));
+    state
+        .worktree_browser
+        .worktree_table_state
+        .select(Some(idx));
     // Ensure a slice exists for this worktree.
-    state.worktrees
+    state
+        .worktrees
         .entry(WorktreeId(id.into()))
         .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
             id: WorktreeId(id.into()),
@@ -118,21 +120,32 @@ fn cached_ios_hit_fixture() -> IosSimulatorCacheHit {
 fn assert_running_in(state: &AppState, id: &str) {
     let wid = WorktreeId(id.into());
     assert!(
-        state.worktrees.get(&wid).and_then(|s| s.task.as_ref()).is_some(),
+        state
+            .worktrees
+            .get(&wid)
+            .and_then(|s| s.task.as_ref())
+            .is_some(),
         "expected worktree {id:?} to have a running task; slice = {:?}",
-        state.worktrees.get(&wid).map(|s| (s.task.is_some(), s.queue.len())),
+        state
+            .worktrees
+            .get(&wid)
+            .map(|s| (s.task.is_some(), s.queue.len())),
     );
 }
 
 /// Assert no slice has a running task.
 fn assert_no_running_task_anywhere(state: &AppState) {
     let any = state.worktrees.values().any(|s| s.task.is_some());
-    assert!(!any, "expected no slice to have a running task, but at least one does");
+    assert!(
+        !any,
+        "expected no slice to have a running task, but at least one does"
+    );
 }
 
 /// Queue length for the named worktree's slice.
 fn slice_queue_len(state: &AppState, id: &str) -> usize {
-    state.worktrees
+    state
+        .worktrees
         .get(&WorktreeId(id.into()))
         .map(|s| s.queue.len())
         .unwrap_or(0)
@@ -140,7 +153,8 @@ fn slice_queue_len(state: &AppState, id: &str) -> usize {
 
 /// Snapshot of slice output lines for the named worktree.
 fn slice_output(state: &AppState, id: &str) -> Vec<String> {
-    state.worktrees
+    state
+        .worktrees
         .get(&WorktreeId(id.into()))
         .map(|s| s.output.iter().cloned().collect())
         .unwrap_or_default()
@@ -248,7 +262,10 @@ mod palette_resolution {
             .expect("active slice should exist")
             .ios_simulator_cache = IosSimulatorCacheState::Hit(hit.clone());
 
-        assert_eq!(handle_key(&state, key('c')), Some(Action::CachedIosRun(hit)));
+        assert_eq!(
+            handle_key(&state, key('c')),
+            Some(Action::CachedIosRun(hit))
+        );
     }
 
     #[test]
@@ -276,9 +293,7 @@ mod palette_resolution {
             Some(Action::CommandRun(CommandSpec::YarnJest { filter })) => {
                 assert_eq!(filter, "");
             }
-            other => panic!(
-                "yarn 'j' must produce YarnJest with empty filter; got {other:?}"
-            ),
+            other => panic!("yarn 'j' must produce YarnJest with empty filter; got {other:?}"),
         }
         assert_eq!(
             handle_key(&state, key('l')),
@@ -327,25 +342,19 @@ mod palette_resolution {
             Some(Action::CommandRun(CommandSpec::GitCheckout { branch })) => {
                 assert_eq!(branch, "");
             }
-            other => panic!(
-                "git 'b' must produce GitCheckout with empty branch; got {other:?}"
-            ),
+            other => panic!("git 'b' must produce GitCheckout with empty branch; got {other:?}"),
         }
         match handle_key(&state, key('c')) {
             Some(Action::CommandRun(CommandSpec::GitCheckoutNew { branch })) => {
                 assert_eq!(branch, "");
             }
-            other => panic!(
-                "git 'c' must produce GitCheckoutNew with empty branch; got {other:?}"
-            ),
+            other => panic!("git 'c' must produce GitCheckoutNew with empty branch; got {other:?}"),
         }
         match handle_key(&state, key('r')) {
             Some(Action::CommandRun(CommandSpec::GitRebase { target })) => {
                 assert_eq!(target, "");
             }
-            other => panic!(
-                "git 'r' must produce GitRebase with empty target; got {other:?}"
-            ),
+            other => panic!("git 'r' must produce GitRebase with empty target; got {other:?}"),
         }
 
         assert_eq!(
@@ -399,10 +408,7 @@ mod palette_resolution {
         state.modal_stack.modal = Some(ModalState::CleanToggle {
             options: CleanOptions::default(),
         });
-        assert_eq!(
-            handle_key(&state, key('x')),
-            Some(Action::CleanConfirm)
-        );
+        assert_eq!(handle_key(&state, key('x')), Some(Action::CleanConfirm));
 
         // Step 3 (cancel): Esc from CleanToggle produces ModalCancel.
         assert_eq!(
@@ -439,7 +445,10 @@ mod modal_dismissal {
         );
 
         let _effects = update(&mut state, Action::ModalCancel);
-        assert!(state.modal_stack.modal.is_none(), "ModalCancel must clear state.modal_stack.modal");
+        assert!(
+            state.modal_stack.modal.is_none(),
+            "ModalCancel must clear state.modal_stack.modal"
+        );
     }
 
     #[test]
@@ -715,7 +724,12 @@ mod ump_run_dialog {
         );
 
         assert!(
-            matches!(effects.as_slice(), [Effect::LoadDevices { kind: DeviceKind::Android }]),
+            matches!(
+                effects.as_slice(),
+                [Effect::LoadDevices {
+                    kind: DeviceKind::Android
+                }]
+            ),
             "expected Android target load before run-type or metro; got {effects:?}"
         );
         assert!(matches!(
@@ -749,7 +763,10 @@ mod ump_run_dialog {
 
         let effects = update(&mut state, Action::ModalDeviceConfirm);
 
-        assert!(effects.is_empty(), "target selection should only open run-type picker; got {effects:?}");
+        assert!(
+            effects.is_empty(),
+            "target selection should only open run-type picker; got {effects:?}"
+        );
         assert!(matches!(
             state.modal_stack.modal,
             Some(ModalState::RunVariantPicker {
@@ -935,7 +952,11 @@ mod command_queue {
         let mut state = base_state();
         seed_one_worktree(&mut state);
         // Phase 14 / D-21: assert against the slice (primary source of truth).
-        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "precondition: slice queue empty");
+        assert_eq!(
+            slice_queue_len(&state, "wt-1"),
+            0,
+            "precondition: slice queue empty"
+        );
 
         let _effects = update(
             &mut state,
@@ -947,14 +968,24 @@ mod command_queue {
         );
 
         // D-21: slice-side queue assertions.
-        assert_eq!(slice_queue_len(&state, "wt-1"), 2, "slice queue must hold 2 items");
         assert_eq!(
-            state.worktrees.get(&WorktreeId("wt-1".into())).and_then(|s| s.queue.front()),
+            slice_queue_len(&state, "wt-1"),
+            2,
+            "slice queue must hold 2 items"
+        );
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|s| s.queue.front()),
             Some(&CommandSpec::YarnInstall),
             "slice queue front must be YarnInstall"
         );
         assert_eq!(
-            state.worktrees.get(&WorktreeId("wt-1".into())).and_then(|s| s.queue.back()),
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|s| s.queue.back()),
             Some(&CommandSpec::YarnPodInstall),
             "slice queue back must be YarnPodInstall"
         );
@@ -965,14 +996,24 @@ mod command_queue {
         let mut state = base_state();
         seed_one_worktree(&mut state);
         // Simulate a running task in the slice (D-21: task lives in slice).
-        state.worktrees.get_mut(&WorktreeId("wt-1".into())).unwrap().task =
-            Some(synthetic_task_record(1, CommandSpec::GitFetch));
-        assert_eq!(slice_queue_len(&state, "wt-1"), 0, "precondition: slice queue empty");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(1, CommandSpec::GitFetch));
+        assert_eq!(
+            slice_queue_len(&state, "wt-1"),
+            0,
+            "precondition: slice queue empty"
+        );
 
-        let _effects = update(&mut state, Action::CommandExited {
-            task_id: crate::domain::task::TaskId(1),
-            status: crate::domain::task::ExitStatus::Success,
-        });
+        let _effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(1),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
 
         // D-21: slice-side assertion — task cleared after CommandExited.
         assert_no_running_task_anywhere(&state);
@@ -992,22 +1033,40 @@ mod command_queue {
         // GitFetch has RefreshSet::none() — no tokio::spawn on the refresh path.
         // YarnInstall doesn't need metro, so drain routes through dispatch_command,
         // which emits Effect::SpawnTask.
-        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnInstall);
-        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnPodInstall);
-        let effects = update(&mut state, Action::CommandExited {
-            task_id: crate::domain::task::TaskId(2),
-            status: crate::domain::task::ExitStatus::Success,
-        });
+        state
+            .worktrees
+            .get_mut(&wid)
+            .unwrap()
+            .queue
+            .push_back(CommandSpec::YarnInstall);
+        state
+            .worktrees
+            .get_mut(&wid)
+            .unwrap()
+            .queue
+            .push_back(CommandSpec::YarnPodInstall);
+        let effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(2),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
 
         // D-21: after draining the queue head, the slice task is cleared
         // (SpawnTask effect was emitted; the runtime will write back slice.task
         // when the effect resolves — not visible in a pure update() test).
         // The remaining YarnPodInstall stays in the slice queue.
-        assert_eq!(slice_queue_len(&state, "wt-1"), 1,
-            "one item (YarnPodInstall) must remain in the slice queue after drain");
+        assert_eq!(
+            slice_queue_len(&state, "wt-1"),
+            1,
+            "one item (YarnPodInstall) must remain in the slice queue after drain"
+        );
         // Plan 14-06: dispatch_command now returns Effect::SpawnTask.
         assert!(
-            effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. })),
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SpawnTask { .. })),
             "CommandExited drain must emit Effect::SpawnTask for the popped spec; got {effects:?}"
         );
     }
@@ -1032,7 +1091,11 @@ mod claude_tab {
             state.modal_stack.modal.is_none(),
             "OpenClaudeCode should not prompt for a custom suffix"
         );
-        assert_eq!(effects.len(), 1, "expected exactly one effect, got {effects:?}");
+        assert_eq!(
+            effects.len(),
+            1,
+            "expected exactly one effect, got {effects:?}"
+        );
 
         match &effects[0] {
             Effect::OpenInMultiplexer {
@@ -1073,10 +1136,7 @@ mod worktrees_loaded {
     #[test]
     fn worktrees_loaded_populates_slice_map() {
         let mut state = AppState::default();
-        let worktrees = vec![
-            make_worktree("wt-A", "main"),
-            make_worktree("wt-B", "feat"),
-        ];
+        let worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
         let _ = update(&mut state, Action::WorktreesLoaded(worktrees));
         assert!(state.worktrees.contains_key(&WorktreeId("wt-A".into())));
         assert!(state.worktrees.contains_key(&WorktreeId("wt-B".into())));
@@ -1087,13 +1147,27 @@ mod worktrees_loaded {
         let mut state = AppState::default();
 
         #[derive(Debug)]
-        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        struct FakeMetroHandle {
+            pid: u32,
+            worktree_id: String,
+            port: u16,
+        }
         impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
-            fn pid(&self) -> u32 { self.pid }
-            fn worktree_id(&self) -> &str { &self.worktree_id }
-            fn port(&self) -> u16 { self.port }
-            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
-            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+            fn pid(&self) -> u32 {
+                self.pid
+            }
+            fn worktree_id(&self) -> &str {
+                &self.worktree_id
+            }
+            fn port(&self) -> u16 {
+                self.port
+            }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> {
+                Ok(())
+            }
         }
 
         state
@@ -1104,7 +1178,11 @@ mod worktrees_loaded {
                 ..Default::default()
             })
             .metro
-            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+            .register(Box::new(FakeMetroHandle {
+                pid: 9001,
+                worktree_id: "wt-A".into(),
+                port: 8081,
+            }));
         state
             .worktrees
             .entry(WorktreeId("wt-B".into()))
@@ -1113,13 +1191,21 @@ mod worktrees_loaded {
                 ..Default::default()
             })
             .metro
-            .register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+            .register(Box::new(FakeMetroHandle {
+                pid: 9002,
+                worktree_id: "wt-B".into(),
+                port: 8082,
+            }));
 
         let mut worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
         let _ = update(&mut state, Action::WorktreesLoaded(worktrees.clone()));
         worktrees = state.worktree_browser.worktrees;
 
-        assert!(worktrees.iter().all(|wt| wt.metro_status == WorktreeMetroStatus::Running));
+        assert!(
+            worktrees
+                .iter()
+                .all(|wt| wt.metro_status == WorktreeMetroStatus::Running)
+        );
     }
 }
 
@@ -1141,16 +1227,34 @@ mod parallelism {
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
         // Simulate concurrent tasks across two worktrees.
-        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap().task =
-            Some(synthetic_task_record(1, CommandSpec::YarnInstall));
-        state.worktrees.get_mut(&WorktreeId("wt-B".into())).unwrap().task =
-            Some(synthetic_task_record(2, CommandSpec::YarnJest { filter: String::new() }));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(1, CommandSpec::YarnInstall));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(
+            2,
+            CommandSpec::YarnJest {
+                filter: String::new(),
+            },
+        ));
 
         assert_running_in(&state, "wt-A");
         assert_running_in(&state, "wt-B");
 
-        let count_running = state.worktrees.values().filter(|s| s.task.is_some()).count();
-        assert_eq!(count_running, 2, "TASK-02 contract: parallel tasks across worktrees");
+        let count_running = state
+            .worktrees
+            .values()
+            .filter(|s| s.task.is_some())
+            .count();
+        assert_eq!(
+            count_running, 2,
+            "TASK-02 contract: parallel tasks across worktrees"
+        );
     }
 
     /// COVER-01 / D-13 contract: MetroStart is scoped to the selected worktree.
@@ -1167,22 +1271,45 @@ mod parallelism {
 
         // Register a fake MetroHandle to simulate metro running in wt-B.
         #[derive(Debug)]
-        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        struct FakeMetroHandle {
+            pid: u32,
+            worktree_id: String,
+            port: u16,
+        }
         impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
-            fn pid(&self) -> u32 { self.pid }
-            fn worktree_id(&self) -> &str { &self.worktree_id }
-            fn port(&self) -> u16 { self.port }
-            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
-            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+            fn pid(&self) -> u32 {
+                self.pid
+            }
+            fn worktree_id(&self) -> &str {
+                &self.worktree_id
+            }
+            fn port(&self) -> u16 {
+                self.port
+            }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> {
+                Ok(())
+            }
         }
         state
             .worktrees
             .get_mut(&WorktreeId("wt-B".into()))
             .expect("wt-B slice seeded")
             .metro
-            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into(), port: 8081 }));
+            .register(Box::new(FakeMetroHandle {
+                pid: 9001,
+                worktree_id: "wt-B".into(),
+                port: 8081,
+            }));
         assert!(
-            state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running(),
+            state
+                .worktrees
+                .get(&WorktreeId("wt-B".into()))
+                .unwrap()
+                .metro
+                .is_running(),
             "precondition: metro running in wt-B"
         );
 
@@ -1197,7 +1324,12 @@ mod parallelism {
             "starting Metro on another worktree must not stop/restart the existing one"
         );
         assert!(
-            state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running(),
+            state
+                .worktrees
+                .get(&WorktreeId("wt-B".into()))
+                .unwrap()
+                .metro
+                .is_running(),
             "existing Metro must stay registered"
         );
         assert!(
@@ -1212,13 +1344,27 @@ mod parallelism {
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
         #[derive(Debug)]
-        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        struct FakeMetroHandle {
+            pid: u32,
+            worktree_id: String,
+            port: u16,
+        }
         impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
-            fn pid(&self) -> u32 { self.pid }
-            fn worktree_id(&self) -> &str { &self.worktree_id }
-            fn port(&self) -> u16 { self.port }
-            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
-            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+            fn pid(&self) -> u32 {
+                self.pid
+            }
+            fn worktree_id(&self) -> &str {
+                &self.worktree_id
+            }
+            fn port(&self) -> u16 {
+                self.port
+            }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> {
+                Ok(())
+            }
         }
 
         state
@@ -1226,18 +1372,40 @@ mod parallelism {
             .get_mut(&WorktreeId("wt-A".into()))
             .unwrap()
             .metro
-            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+            .register(Box::new(FakeMetroHandle {
+                pid: 9001,
+                worktree_id: "wt-A".into(),
+                port: 8081,
+            }));
         state
             .worktrees
             .get_mut(&WorktreeId("wt-B".into()))
             .unwrap()
             .metro
-            .register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+            .register(Box::new(FakeMetroHandle {
+                pid: 9002,
+                worktree_id: "wt-B".into(),
+                port: 8082,
+            }));
 
         let _ = update(&mut state, Action::MetroExited("wt-A".into()));
 
-        assert!(!state.worktrees.get(&WorktreeId("wt-A".into())).unwrap().metro.is_running());
-        assert!(state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running());
+        assert!(
+            !state
+                .worktrees
+                .get(&WorktreeId("wt-A".into()))
+                .unwrap()
+                .metro
+                .is_running()
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-B".into()))
+                .unwrap()
+                .metro
+                .is_running()
+        );
     }
 }
 
@@ -1256,27 +1424,37 @@ mod routing {
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
         // slice_A holds task with id=5; slice_B has no task.
-        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap().task =
-            Some(synthetic_task_record(5, CommandSpec::YarnInstall));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(5, CommandSpec::YarnInstall));
 
         // Active worktree = B (UI has selected index 1 = wt-B).
         // seed_two_worktrees puts wt-A at 0 and wt-B at 1; select(1) = B.
         state.worktree_browser.worktree_table_state.select(Some(1));
 
-        let _ = update(&mut state, Action::CommandOutputLine {
-            task_id: crate::domain::task::TaskId(5),
-            line: "from-A".into(),
-        });
+        let _ = update(
+            &mut state,
+            Action::CommandOutputLine {
+                task_id: crate::domain::task::TaskId(5),
+                line: "from-A".into(),
+            },
+        );
 
         let a_out = slice_output(&state, "wt-A");
         let b_out = slice_output(&state, "wt-B");
         assert!(
             a_out.iter().any(|l| l == "from-A"),
-            "D-08: line must land in slice_A (task owner); A={:?} B={:?}", a_out, b_out
+            "D-08: line must land in slice_A (task owner); A={:?} B={:?}",
+            a_out,
+            b_out
         );
         assert!(
             !b_out.iter().any(|l| l == "from-A"),
-            "D-08: line must NOT land in slice_B (not task owner); A={:?} B={:?}", a_out, b_out
+            "D-08: line must NOT land in slice_B (not task owner); A={:?} B={:?}",
+            a_out,
+            b_out
         );
     }
 
@@ -1288,27 +1466,47 @@ mod routing {
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
         // Task on A; both slices have one queued item.
-        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap().task =
-            Some(synthetic_task_record(7, CommandSpec::GitFetch));
-        state.worktrees.get_mut(&WorktreeId("wt-A".into())).unwrap()
-            .queue.push_back(CommandSpec::YarnInstall);
-        state.worktrees.get_mut(&WorktreeId("wt-B".into())).unwrap()
-            .queue.push_back(CommandSpec::YarnPodInstall);
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(7, CommandSpec::GitFetch));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .queue
+            .push_back(CommandSpec::YarnInstall);
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .unwrap()
+            .queue
+            .push_back(CommandSpec::YarnPodInstall);
 
         let queue_b_before = slice_queue_len(&state, "wt-B");
 
-        let _ = update(&mut state, Action::CommandExited {
-            task_id: crate::domain::task::TaskId(7),
-            status: crate::domain::task::ExitStatus::Success,
-        });
+        let _ = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(7),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
 
         // A's queue was drained (YarnInstall dispatched via SpawnTask effect).
         // slice.task is None post-exit; SpawnTask effect will populate it in runtime.
-        assert_eq!(slice_queue_len(&state, "wt-A"), 0,
-            "D-11: A's queue must drain on CommandExited");
+        assert_eq!(
+            slice_queue_len(&state, "wt-A"),
+            0,
+            "D-11: A's queue must drain on CommandExited"
+        );
         // B's queue untouched.
-        assert_eq!(slice_queue_len(&state, "wt-B"), queue_b_before,
-            "D-11: B's queue must not change");
+        assert_eq!(
+            slice_queue_len(&state, "wt-B"),
+            queue_b_before,
+            "D-11: B's queue must not change"
+        );
     }
 }
 
@@ -1331,18 +1529,28 @@ mod stale_drop {
         seed_one_worktree_id(&mut state, "wt-A");
         // No task on slice_A — task_id 99 belongs to nobody.
 
-        let _ = update(&mut state, Action::CommandOutputLine {
-            task_id: crate::domain::task::TaskId(99),
-            line: "stale".into(),
-        });
+        let _ = update(
+            &mut state,
+            Action::CommandOutputLine {
+                task_id: crate::domain::task::TaskId(99),
+                line: "stale".into(),
+            },
+        );
 
         // P-3 contract: the stale line must not land in any slice's output.
-        let any_slice_has_it = state.worktrees.values()
+        let any_slice_has_it = state
+            .worktrees
+            .values()
             .any(|s| s.output.iter().any(|l| l == "stale"));
-        assert!(!any_slice_has_it,
+        assert!(
+            !any_slice_has_it,
             "P-3: stale output line must not contaminate any slice; \
              slices = {:?}",
-            state.worktrees.iter().map(|(k, v)| (k, v.output.len())).collect::<Vec<_>>()
+            state
+                .worktrees
+                .iter()
+                .map(|(k, v)| (k, v.output.len()))
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -1366,29 +1574,48 @@ mod collision {
         // Seed a running YarnInstall task on the slice.
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(100, CommandSpec::YarnInstall));
-        let output_before: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
+        let output_before: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
 
-        let effects = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::YarnInstall),
-        );
+        let effects = update(&mut state, Action::CommandRun(CommandSpec::YarnInstall));
 
         // (a) No SpawnTask effect emitted.
-        let has_spawn = effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. }));
-        assert!(!has_spawn, "BlockNew must NOT emit Effect::SpawnTask; got {effects:?}");
+        let has_spawn = effects
+            .iter()
+            .any(|e| matches!(e, Effect::SpawnTask { .. }));
+        assert!(
+            !has_spawn,
+            "BlockNew must NOT emit Effect::SpawnTask; got {effects:?}"
+        );
 
         // (b) slice.task is STILL Some with the original task_id (100).
         let task = state.worktrees.get(&wid).unwrap().task.as_ref();
         assert!(task.is_some(), "BlockNew must leave existing task in slice");
-        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(100),
-            "BlockNew must preserve the original task_id");
+        assert_eq!(
+            task.unwrap().id,
+            crate::domain::task::TaskId(100),
+            "BlockNew must preserve the original task_id"
+        );
 
         // (c) slice.output is unchanged — no $ argv line, no [cancelled ...] line.
-        let output_after: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
-        assert_eq!(output_before, output_after,
-            "BlockNew must not write any output line; before={output_before:?} after={output_after:?}");
+        let output_after: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(
+            output_before, output_after,
+            "BlockNew must not write any output line; before={output_before:?} after={output_after:?}"
+        );
     }
 
     /// CollisionPolicy::CancelPrevious path — existing YarnJest task is aborted
@@ -1411,7 +1638,9 @@ mod collision {
         // Seed a running YarnJest("first") task on the slice.
         state.worktrees.get_mut(&wid).unwrap().task = Some(synthetic_task_record(
             200,
-            CommandSpec::YarnJest { filter: "first".into() },
+            CommandSpec::YarnJest {
+                filter: "first".into(),
+            },
         ));
 
         // Stage a TextInput modal whose template is YarnJest, buffer = "second".
@@ -1420,7 +1649,9 @@ mod collision {
         state.modal_stack.modal = Some(ModalState::TextInput {
             prompt: "Jest filter:".into(),
             buffer: "second".into(),
-            pending_template: Box::new(CommandSpec::YarnJest { filter: String::new() }),
+            pending_template: Box::new(CommandSpec::YarnJest {
+                filter: String::new(),
+            }),
         });
 
         let effects = update(&mut state, Action::ModalInputSubmit);
@@ -1430,19 +1661,31 @@ mod collision {
             e,
             Effect::SpawnTask { spec: CommandSpec::YarnJest { filter }, .. } if filter == "second"
         ));
-        assert!(has_spawn_second,
-            "CancelPrevious must emit Effect::SpawnTask for the NEW YarnJest dispatch; got {effects:?}");
+        assert!(
+            has_spawn_second,
+            "CancelPrevious must emit Effect::SpawnTask for the NEW YarnJest dispatch; got {effects:?}"
+        );
 
         // (b) slice.task is None — old record was taken; new record arrives
         //     asynchronously via task_handle_tx (not visible to synchronous update()).
-        assert!(state.worktrees.get(&wid).unwrap().task.is_none(),
-            "CancelPrevious must take the existing record from slice.task");
+        assert!(
+            state.worktrees.get(&wid).unwrap().task.is_none(),
+            "CancelPrevious must take the existing record from slice.task"
+        );
 
         // (c) slice.output contains [cancelled by new dispatch].
-        let output: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
-        assert!(output.iter().any(|l| l == "[cancelled by new dispatch]"),
-            "CancelPrevious must push [cancelled by new dispatch]; output={output:?}");
+        let output: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
+        assert!(
+            output.iter().any(|l| l == "[cancelled by new dispatch]"),
+            "CancelPrevious must push [cancelled by new dispatch]; output={output:?}"
+        );
     }
 
     /// Different discriminants do NOT collide — existing YarnInstall task is
@@ -1461,32 +1704,50 @@ mod collision {
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(300, CommandSpec::YarnInstall));
 
-        let effects = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::YarnLint),
-        );
+        let effects = update(&mut state, Action::CommandRun(CommandSpec::YarnLint));
 
         // (a) Existing YarnInstall record is still in slice.task — different
         //     discriminant means no collision, no cancellation.
         let task = state.worktrees.get(&wid).unwrap().task.as_ref();
-        assert!(task.is_some(), "existing YarnInstall task must remain — different discriminant");
-        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(300),
-            "original YarnInstall task_id must be preserved");
+        assert!(
+            task.is_some(),
+            "existing YarnInstall task must remain — different discriminant"
+        );
+        assert_eq!(
+            task.unwrap().id,
+            crate::domain::task::TaskId(300),
+            "original YarnInstall task_id must be preserved"
+        );
 
         // (b) No [cancelled by new dispatch] line — gate did not fire.
-        let output: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
-        assert!(!output.iter().any(|l| l == "[cancelled by new dispatch]"),
-            "no [cancelled by new dispatch] line when discriminants differ; output={output:?}");
+        let output: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
+        assert!(
+            !output.iter().any(|l| l == "[cancelled by new dispatch]"),
+            "no [cancelled by new dispatch] line when discriminants differ; output={output:?}"
+        );
 
         // (c) SpawnTask Effect emitted for the new YarnLint (different discriminant
         //     means the dispatch flows through normally to allocate a new task).
-        let has_spawn_lint = effects.iter().any(|e| matches!(
-            e,
-            Effect::SpawnTask { spec: CommandSpec::YarnLint, .. }
-        ));
-        assert!(has_spawn_lint,
-            "different-discriminant dispatch must emit Effect::SpawnTask for the new spec; got {effects:?}");
+        let has_spawn_lint = effects.iter().any(|e| {
+            matches!(
+                e,
+                Effect::SpawnTask {
+                    spec: CommandSpec::YarnLint,
+                    ..
+                }
+            )
+        });
+        assert!(
+            has_spawn_lint,
+            "different-discriminant dispatch must emit Effect::SpawnTask for the new spec; got {effects:?}"
+        );
     }
 
     /// Q-4 honor: git → BlockNew. Existing GitPull task keeps running; second
@@ -1500,26 +1761,48 @@ mod collision {
         // Seed a running GitPull task.
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(400, CommandSpec::GitPull));
-        let output_before: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
+        let output_before: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
 
         let effects = update(&mut state, Action::CommandRun(CommandSpec::GitPull));
 
         // (a) No SpawnTask effect emitted.
-        let has_spawn = effects.iter().any(|e| matches!(e, Effect::SpawnTask { .. }));
-        assert!(!has_spawn, "git BlockNew must NOT emit Effect::SpawnTask; got {effects:?}");
+        let has_spawn = effects
+            .iter()
+            .any(|e| matches!(e, Effect::SpawnTask { .. }));
+        assert!(
+            !has_spawn,
+            "git BlockNew must NOT emit Effect::SpawnTask; got {effects:?}"
+        );
 
         // (b) Existing GitPull task still in slice.
         let task = state.worktrees.get(&wid).unwrap().task.as_ref();
         assert!(task.is_some(), "git BlockNew must preserve existing task");
-        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(400),
-            "original GitPull task_id must be preserved");
+        assert_eq!(
+            task.unwrap().id,
+            crate::domain::task::TaskId(400),
+            "original GitPull task_id must be preserved"
+        );
 
         // (c) Output unchanged.
-        let output_after: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
-        assert_eq!(output_before, output_after,
-            "git BlockNew must not write any output line");
+        let output_after: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(
+            output_before, output_after,
+            "git BlockNew must not write any output line"
+        );
     }
 }
 
@@ -1542,29 +1825,59 @@ mod cancellation_guard {
         // (which must NOT be cleared).
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(500, CommandSpec::GitPull));
-        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnInstall);
-        let output_before: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
+        state
+            .worktrees
+            .get_mut(&wid)
+            .unwrap()
+            .queue
+            .push_back(CommandSpec::YarnInstall);
+        let output_before: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
 
         let _effects = update(&mut state, Action::CommandCancel);
 
         // (a) slice.task still Some with the SAME task_id (re-inserted).
         let task = state.worktrees.get(&wid).unwrap().task.as_ref();
-        assert!(task.is_some(), "non-cancellable: record must be re-inserted");
-        assert_eq!(task.unwrap().id, crate::domain::task::TaskId(500),
-            "non-cancellable: original task_id must be preserved");
+        assert!(
+            task.is_some(),
+            "non-cancellable: record must be re-inserted"
+        );
+        assert_eq!(
+            task.unwrap().id,
+            crate::domain::task::TaskId(500),
+            "non-cancellable: original task_id must be preserved"
+        );
 
         // (b) Queue is unchanged — NOT cleared.
-        assert_eq!(slice_queue_len(&state, "wt-1"), 1,
-            "non-cancellable: queue must NOT be cleared");
+        assert_eq!(
+            slice_queue_len(&state, "wt-1"),
+            1,
+            "non-cancellable: queue must NOT be cleared"
+        );
 
         // (c) Output does NOT contain [cancelled] line.
-        let output_after: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
-        assert_eq!(output_before, output_after,
-            "non-cancellable: no [cancelled] line written; before={output_before:?} after={output_after:?}");
-        assert!(!output_after.iter().any(|l| l == "[cancelled]"),
-            "non-cancellable: explicit no-[cancelled] check");
+        let output_after: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
+        assert_eq!(
+            output_before, output_after,
+            "non-cancellable: no [cancelled] line written; before={output_before:?} after={output_after:?}"
+        );
+        assert!(
+            !output_after.iter().any(|l| l == "[cancelled]"),
+            "non-cancellable: explicit no-[cancelled] check"
+        );
     }
 
     /// Cancellable variants preserve Phase 14 behavior: take, abort, clear queue,
@@ -1578,22 +1891,40 @@ mod cancellation_guard {
         // Seed a running YarnInstall task and pre-load a queued follow-up.
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(600, CommandSpec::YarnInstall));
-        state.worktrees.get_mut(&wid).unwrap().queue.push_back(CommandSpec::YarnLint);
+        state
+            .worktrees
+            .get_mut(&wid)
+            .unwrap()
+            .queue
+            .push_back(CommandSpec::YarnLint);
 
         let _effects = update(&mut state, Action::CommandCancel);
 
         // (a) slice.task is None — record was taken.
-        assert!(state.worktrees.get(&wid).unwrap().task.is_none(),
-            "cancellable: slice.task must be cleared");
+        assert!(
+            state.worktrees.get(&wid).unwrap().task.is_none(),
+            "cancellable: slice.task must be cleared"
+        );
 
         // (b) Queue is empty — cleared.
-        assert_eq!(slice_queue_len(&state, "wt-1"), 0,
-            "cancellable: queue must be cleared");
+        assert_eq!(
+            slice_queue_len(&state, "wt-1"),
+            0,
+            "cancellable: queue must be cleared"
+        );
 
         // (c) Output contains [cancelled].
-        let output: Vec<String> = state.worktrees.get(&wid).unwrap()
-            .output.iter().cloned().collect();
-        assert!(output.iter().any(|l| l == "[cancelled]"),
-            "cancellable: output must contain [cancelled]; got {output:?}");
+        let output: Vec<String> = state
+            .worktrees
+            .get(&wid)
+            .unwrap()
+            .output
+            .iter()
+            .cloned()
+            .collect();
+        assert!(
+            output.iter().any(|l| l == "[cancelled]"),
+            "cancellable: output must contain [cancelled]; got {output:?}"
+        );
     }
 }
