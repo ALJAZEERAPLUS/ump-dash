@@ -107,6 +107,12 @@ impl Default for WorktreeBrowserState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCachedIosRun {
+    pub worktree_id: crate::domain::worktree::WorktreeId,
+    pub worktree_path: std::path::PathBuf,
+    pub cache_hit: crate::domain::native_cache::IosSimulatorCacheHit,
+}
 
 /// Modal + palette + pending coordinator state. Single bag for one-modal-at-a-time
 /// dispatch and the various pending_* fields that survive between palette → modal
@@ -126,11 +132,14 @@ pub struct ModalStackState {
     pub pending_device_command: Option<crate::domain::command::CommandSpec>,
 
     /// Pending cached iOS run — stored while async simulator enumeration is in flight.
-    pub pending_cached_ios_run: Option<crate::domain::native_cache::IosSimulatorCacheHit>,
+    pub pending_cached_ios_run: Option<PendingCachedIosRun>,
 
     /// Worktree removal — set when w>d is pressed, consumed by ModalConfirm.
-    pub pending_worktree_removal:
-        Option<(crate::domain::worktree::WorktreeId, std::path::PathBuf, String)>,
+    pub pending_worktree_removal: Option<(
+        crate::domain::worktree::WorktreeId,
+        std::path::PathBuf,
+        String,
+    )>,
 
     /// Worktree creation — set when w>w is pressed, consumed by ModalInputSubmit.
     pub pending_worktree_add: bool,
@@ -256,7 +265,11 @@ pub fn active_output(state: &AppState) -> &std::collections::VecDeque<String> {
     static EMPTY: std::sync::LazyLock<std::collections::VecDeque<String>> =
         std::sync::LazyLock::new(std::collections::VecDeque::new);
     if let Some(id) = active_worktree_id(state) {
-        state.worktrees.get(&id).map(|s| &s.output).unwrap_or(&EMPTY)
+        state
+            .worktrees
+            .get(&id)
+            .map(|s| &s.output)
+            .unwrap_or(&EMPTY)
     } else {
         &EMPTY
     }
@@ -291,14 +304,9 @@ pub fn task_for_worktree<'a>(
 /// Q4 short-circuit (RESEARCH lines 752-755): when the loaded set equals the
 /// current set, the function does ONE HashSet build + ONE comparison and
 /// returns without iterating. Cost is O(n) HashSet build vs. O(n²) naive.
-pub fn merge_slices(
-    state: &mut AppState,
-    loaded: &[crate::domain::worktree::Worktree],
-) {
-    let loaded_ids: std::collections::HashSet<_> =
-        loaded.iter().map(|w| w.id.clone()).collect();
-    let current_ids: std::collections::HashSet<_> =
-        state.worktrees.keys().cloned().collect();
+pub fn merge_slices(state: &mut AppState, loaded: &[crate::domain::worktree::Worktree]) {
+    let loaded_ids: std::collections::HashSet<_> = loaded.iter().map(|w| w.id.clone()).collect();
+    let current_ids: std::collections::HashSet<_> = state.worktrees.keys().cloned().collect();
     if loaded_ids == current_ids {
         // Q4: identity refresh — no-op.
         return;
@@ -320,12 +328,12 @@ pub fn merge_slices(
 
     // Insert default slices for new worktrees.
     for wt in loaded {
-        state.worktrees
-            .entry(wt.id.clone())
-            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+        state.worktrees.entry(wt.id.clone()).or_insert_with(|| {
+            crate::domain::worktree_slice::WorktreeSlice {
                 id: wt.id.clone(),
                 ..Default::default()
-            });
+            }
+        });
     }
 }
 
@@ -394,7 +402,11 @@ mod merge_slices_tests {
         );
         merge_slices(&mut state, &[wt("wt-survivor")]);
         assert!(!state.worktrees.contains_key(&WorktreeId("wt-gone".into())));
-        assert!(state.worktrees.contains_key(&WorktreeId("wt-survivor".into())));
+        assert!(
+            state
+                .worktrees
+                .contains_key(&WorktreeId("wt-survivor".into()))
+        );
     }
 
     #[test]
@@ -406,9 +418,21 @@ mod merge_slices_tests {
         q.push_back(crate::domain::command::CommandSpec::YarnInstall);
         state.worktrees.insert(
             WorktreeId("wt-1".into()),
-            WorktreeSlice { id: WorktreeId("wt-1".into()), queue: q, ..Default::default() },
+            WorktreeSlice {
+                id: WorktreeId("wt-1".into()),
+                queue: q,
+                ..Default::default()
+            },
         );
         merge_slices(&mut state, &[wt("wt-1")]);
-        assert_eq!(state.worktrees.get(&WorktreeId("wt-1".into())).unwrap().queue.len(), 1);
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .unwrap()
+                .queue
+                .len(),
+            1
+        );
     }
 }

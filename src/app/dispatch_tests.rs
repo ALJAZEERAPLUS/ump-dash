@@ -112,6 +112,17 @@ fn cached_ios_hit_fixture() -> IosSimulatorCacheHit {
     }
 }
 
+fn pending_cached_ios_run_fixture(
+    worktree_id: &str,
+    cache_hit: IosSimulatorCacheHit,
+) -> super::state::PendingCachedIosRun {
+    super::state::PendingCachedIosRun {
+        worktree_id: WorktreeId(worktree_id.into()),
+        worktree_path: std::path::PathBuf::from(format!("/tmp/{worktree_id}")),
+        cache_hit,
+    }
+}
+
 // =========================================================================
 // Phase 14 / D-21 slice-side assertion helpers
 // =========================================================================
@@ -749,7 +760,17 @@ mod ump_run_dialog {
 
         assert!(state.modal_stack.modal.is_none());
         assert!(state.modal_stack.palette_mode.is_none());
-        assert_eq!(state.modal_stack.pending_cached_ios_run, Some(hit));
+        let pending_run = state
+            .modal_stack
+            .pending_cached_ios_run
+            .as_ref()
+            .expect("cached run should be pending");
+        assert_eq!(pending_run.worktree_id, WorktreeId("wt-1".into()));
+        assert_eq!(
+            pending_run.worktree_path,
+            std::path::PathBuf::from("/tmp/wt-1")
+        );
+        assert_eq!(pending_run.cache_hit, hit);
         assert!(matches!(
             state.modal_stack.pending_device_command,
             Some(CommandSpec::UmpRunIos {
@@ -769,11 +790,103 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn cached_ios_run_binds_device_enumeration_to_origin_worktree() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+        let hit = cached_ios_hit_fixture();
+
+        let effects = update(&mut state, Action::CachedIosRun(hit.clone()));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::LoadDevices {
+                    kind: DeviceKind::Ios
+                }]
+            ),
+            "cached run should begin by loading iOS simulators; got {effects:?}"
+        );
+
+        state.worktree_browser.worktree_table_state.select(Some(1));
+
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated(vec![crate::domain::command::DeviceInfo {
+                id: "SIM-origin".into(),
+                name: "iPhone 15".into(),
+            }]),
+        );
+
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-A".into()))
+                .and_then(|slice| slice.pending_cached_ios_launch.as_ref())
+                .map(|pending| (&pending.device_id, &pending.cache_hit)),
+            Some((&"SIM-origin".to_string(), &hit))
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-B".into()))
+                .and_then(|slice| slice.pending_cached_ios_launch.as_ref())
+                .is_none(),
+            "selection changes must not move cached launch state to wt-B"
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SpawnMetro { worktree, .. } if worktree.ends_with("wt-A")
+            )),
+            "cached launch should start Metro for origin wt-A; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_cancel_clears_device_command_sentinel() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+
+        let effects = update(&mut state, Action::CachedIosRun(hit));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::LoadDevices {
+                    kind: DeviceKind::Ios
+                }]
+            ),
+            "cached run should begin by loading iOS simulators; got {effects:?}"
+        );
+
+        let cancel_effects = update(&mut state, Action::ModalCancel);
+        assert!(cancel_effects.is_empty());
+        assert!(state.modal_stack.pending_cached_ios_run.is_none());
+        assert!(state.modal_stack.pending_device_command.is_none());
+
+        let late_effects = update(
+            &mut state,
+            Action::DevicesEnumerated(vec![crate::domain::command::DeviceInfo {
+                id: "SIM-late".into(),
+                name: "iPhone 15".into(),
+            }]),
+        );
+
+        assert!(
+            late_effects.is_empty(),
+            "late device enumeration after cancel must not start a normal run; got {late_effects:?}"
+        );
+        assert!(state.modal_stack.modal.is_none());
+        assert!(state.modal_stack.pending_device_command.is_none());
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0);
+    }
+
+    #[test]
     fn cached_ios_device_selection_starts_metro_when_needed() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
         let hit = cached_ios_hit_fixture();
-        state.modal_stack.pending_cached_ios_run = Some(hit.clone());
+        state.modal_stack.pending_cached_ios_run =
+            Some(pending_cached_ios_run_fixture("wt-1", hit.clone()));
         state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunIos {
             device_id: String::new(),
             variant: Some(RunVariant::Local),
@@ -829,7 +942,8 @@ mod ump_run_dialog {
             .expect("slice should exist")
             .metro
             .reserve_start(19001);
-        state.modal_stack.pending_cached_ios_run = Some(hit.clone());
+        state.modal_stack.pending_cached_ios_run =
+            Some(pending_cached_ios_run_fixture("wt-1", hit.clone()));
         state.modal_stack.modal = Some(ModalState::DevicePicker {
             devices: vec![crate::domain::command::DeviceInfo {
                 id: "SIM-2".into(),
@@ -911,7 +1025,10 @@ mod ump_run_dialog {
     fn cached_ios_run_with_zero_devices_appends_error() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
-        state.modal_stack.pending_cached_ios_run = Some(cached_ios_hit_fixture());
+        state.modal_stack.pending_cached_ios_run = Some(pending_cached_ios_run_fixture(
+            "wt-1",
+            cached_ios_hit_fixture(),
+        ));
         state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunIos {
             device_id: String::new(),
             variant: Some(RunVariant::Local),

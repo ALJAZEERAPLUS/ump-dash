@@ -13,8 +13,8 @@
 
 use super::effect::Effect;
 use super::state::{
-    AppState, ErrorState, FocusedPanel, MAX_COMMAND_LINES, PaletteMode, active_output,
-    active_worktree_id,
+    AppState, ErrorState, FocusedPanel, MAX_COMMAND_LINES, PaletteMode, PendingCachedIosRun,
+    active_output, active_worktree_id,
 };
 use crate::domain::action::Action;
 use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
@@ -347,42 +347,54 @@ fn cached_ios_launch_request(
 fn begin_cached_ios_launch(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
+    worktree_id: WorktreeId,
+    worktree_path: PathBuf,
     device_id: String,
     cache_hit: crate::domain::native_cache::IosSimulatorCacheHit,
 ) {
     effects.push(Effect::ScheduleAction(Action::SimulatorUsed(
         device_id.clone(),
     )));
-    let Some(wt_id) = active_worktree_id(state) else {
-        return;
+
+    let running_port = {
+        let slice = state
+            .worktrees
+            .entry(worktree_id.clone())
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: worktree_id.clone(),
+                ..Default::default()
+            });
+        slice.metro.running_port()
     };
 
-    let mut should_start_metro = false;
-    {
-        let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
-            crate::domain::worktree_slice::WorktreeSlice {
-                id: wt_id.clone(),
-                ..Default::default()
-            }
+    if let Some(port) = running_port {
+        effects.push(Effect::InstallAndLaunchCachedIosSimulator {
+            worktree_id,
+            request: cached_ios_launch_request(&cache_hit, device_id, port),
         });
-        if let Some(port) = slice.metro.running_port() {
-            effects.push(Effect::InstallAndLaunchCachedIosSimulator {
-                worktree_id: wt_id,
-                request: cached_ios_launch_request(&cache_hit, device_id, port),
-            });
-        } else {
-            slice.pending_cached_ios_launch =
-                Some(crate::domain::native_cache::PendingCachedIosLaunch {
-                    device_id,
-                    cache_hit,
-                });
-            should_start_metro = true;
-        }
+        return;
     }
 
-    if should_start_metro {
-        effects.extend(update(state, Action::MetroStart));
+    let port = next_available_reserved_metro_port(state);
+    {
+        let slice = state
+            .worktrees
+            .entry(worktree_id.clone())
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: worktree_id,
+                ..Default::default()
+            });
+        slice.metro.reserve_start(port);
+        slice.pending_cached_ios_launch =
+            Some(crate::domain::native_cache::PendingCachedIosLaunch {
+                device_id,
+                cache_hit,
+            });
     }
+    effects.push(Effect::SpawnMetro {
+        worktree: worktree_path,
+        port,
+    });
 }
 
 /// TEA update function — the ONLY place AppState is mutated.
@@ -1277,7 +1289,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ModalCancel => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_cached_ios_run = None;
+            if state.modal_stack.pending_cached_ios_run.take().is_some() {
+                state.modal_stack.pending_device_command = None;
+            }
             state.modal_stack.pending_worktree_removal = None; // discard any pending removal on cancel
             state.modal_stack.pending_worktree_add = false; // discard any pending add on cancel
             state.modal_stack.pending_new_branch_base = None; // discard new-branch base on cancel
@@ -1488,7 +1502,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                     if let Some(cache_hit) = state.modal_stack.pending_cached_ios_run.take() {
                         state.modal_stack.pending_device_command = None;
-                        begin_cached_ios_launch(state, &mut effects, device_id, cache_hit);
+                        begin_cached_ios_launch(
+                            state,
+                            &mut effects,
+                            cache_hit.worktree_id,
+                            cache_hit.worktree_path,
+                            device_id,
+                            cache_hit.cache_hit,
+                        );
                         return effects;
                     }
 
@@ -1571,27 +1592,32 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Phase 3: Device enumeration (async callback) ---
         Action::DevicesEnumerated(devices) => {
-            if let Some(cache_hit) = state.modal_stack.pending_cached_ios_run.take() {
+            if let Some(pending_run) = state.modal_stack.pending_cached_ios_run.take() {
                 state.modal_stack.pending_device_command = None;
                 match devices.len() {
                     0 => {
-                        if let Some(id) = active_worktree_id(state)
-                            && let Some(slice) = state.worktrees.get_mut(&id)
-                        {
-                            slice
-                                .output
-                                .push_back("[error] no iOS simulators found for cached run".into());
-                            while slice.output.len() > MAX_COMMAND_LINES {
-                                slice.output.pop_front();
-                            }
+                        let slice = state
+                            .worktrees
+                            .entry(pending_run.worktree_id.clone())
+                            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                                id: pending_run.worktree_id,
+                                ..Default::default()
+                            });
+                        slice
+                            .output
+                            .push_back("[error] no iOS simulators found for cached run".into());
+                        while slice.output.len() > MAX_COMMAND_LINES {
+                            slice.output.pop_front();
                         }
                     }
                     1 => {
                         begin_cached_ios_launch(
                             state,
                             &mut effects,
+                            pending_run.worktree_id,
+                            pending_run.worktree_path,
                             devices[0].id.clone(),
-                            cache_hit,
+                            pending_run.cache_hit,
                         );
                     }
                     _ => {
@@ -1603,7 +1629,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 .position(|h| h == &d.id)
                                 .unwrap_or(usize::MAX)
                         });
-                        state.modal_stack.pending_cached_ios_run = Some(cache_hit);
+                        state.modal_stack.pending_cached_ios_run = Some(pending_run);
                         state.modal_stack.modal = Some(ModalState::DevicePicker {
                             devices: sorted_devices,
                             selected: 0,
@@ -1986,7 +2012,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_cached_ios_run = Some(cache_hit);
+            state.modal_stack.pending_cached_ios_run = None;
+            state.modal_stack.pending_device_command = None;
+            let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) else {
+                return effects;
+            };
+            state.modal_stack.pending_cached_ios_run = Some(PendingCachedIosRun {
+                worktree_id,
+                worktree_path,
+                cache_hit,
+            });
             state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunIos {
                 device_id: String::new(),
                 variant: Some(RunVariant::Local),
