@@ -20,6 +20,9 @@ use super::*;
 use super::effect::Effect;
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState, RunVariant};
+use crate::domain::native_cache::{
+    IosSimulatorCacheHit, IosSimulatorCacheMetadata, IosSimulatorCacheState,
+};
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers,
@@ -90,6 +93,21 @@ fn seed_two_worktrees(state: &mut AppState, id_a: &str, id_b: &str) {
     seed_one_worktree_id(state, id_b);
     // Keep selection on A (index 0).
     state.worktree_browser.worktree_table_state.select(Some(0));
+}
+
+fn cached_ios_hit_fixture() -> IosSimulatorCacheHit {
+    IosSimulatorCacheHit {
+        metadata: IosSimulatorCacheMetadata {
+            platform: "ios-simulator".into(),
+            fingerprint: "fingerprint-a".into(),
+            bundle_id: "com.aljazeera.test".into(),
+            variant: "Debug".into(),
+            created_at: "2026-06-01T00:00:00Z".into(),
+            source_worktree: "wt-1".into(),
+            artifact_kind: "app-bundle".into(),
+        },
+        artifact_path: std::path::PathBuf::from("/tmp/cached.app"),
+    }
 }
 
 // =========================================================================
@@ -213,6 +231,24 @@ mod palette_resolution {
             Some(Action::ModalCancel),
             "ios palette unrecognized-key fallback regression-guard"
         );
+    }
+
+    #[test]
+    fn ios_palette_cached_key_visible_only_with_cache_hit() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.palette_mode = Some(PaletteMode::Ios);
+
+        assert_eq!(handle_key(&state, key('c')), Some(Action::ModalCancel));
+
+        let hit = cached_ios_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("active slice should exist")
+            .ios_simulator_cache = IosSimulatorCacheState::Hit(hit.clone());
+
+        assert_eq!(handle_key(&state, key('c')), Some(Action::CachedIosRun(hit)));
     }
 
     #[test]
@@ -578,6 +614,92 @@ mod modal_dismissal {
 mod ump_run_dialog {
     use super::*;
     use crate::domain::ports::device_port::DeviceKind;
+
+    #[test]
+    fn entering_ios_palette_starts_cache_lookup_for_selected_worktree() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let effects = update(&mut state, Action::EnterIosPalette);
+
+        assert_eq!(state.modal_stack.palette_mode, Some(PaletteMode::Ios));
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("selected slice should exist")
+                .ios_simulator_cache,
+            IosSimulatorCacheState::Checking
+        );
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::LookupIosSimulatorCache { worktree_id, worktree_path }]
+                    if *worktree_id == WorktreeId("wt-1".into())
+                        && worktree_path == std::path::Path::new("/tmp/wt-1")
+            ),
+            "expected one iOS cache lookup effect for wt-1; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn ios_cache_lookup_finished_maps_result_to_slice_state() {
+        let worktree_id = WorktreeId("wt-1".into());
+        let hit = cached_ios_hit_fixture();
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(Some(hit.clone())),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should exist")
+                .ios_simulator_cache,
+            IosSimulatorCacheState::Hit(hit)
+        );
+
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(None),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should exist")
+                .ios_simulator_cache,
+            IosSimulatorCacheState::Miss
+        );
+
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Err("lookup failed".into()),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should exist")
+                .ios_simulator_cache,
+            IosSimulatorCacheState::Error("lookup failed".into())
+        );
+    }
 
     #[test]
     fn ump_android_run_loads_targets_before_variant_or_metro() {

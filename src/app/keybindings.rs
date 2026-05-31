@@ -501,6 +501,13 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: has_last_ios_run,
     },
     KeyBinding {
+        key: KeyCode::Char('c'),
+        label: "c", short_desc: "cached", long_desc: "Install cached iOS simulator build",
+        context: BindingContext::Palette(PaletteMode::Ios),
+        action: cached_ios_run,
+        visible: has_cached_ios_hit,
+    },
+    KeyBinding {
         key: KeyCode::Esc,
         label: "Esc", short_desc: "cancel", long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Ios),
@@ -1092,12 +1099,21 @@ fn last_ios_run(state: &AppState) -> Option<&LastRunConfig> {
     active_last_run_config(state, |slice| slice.last_ios_run.as_ref())
 }
 
+fn cached_ios_hit(state: &AppState) -> Option<&crate::domain::native_cache::IosSimulatorCacheHit> {
+    let id = active_worktree_id(state)?;
+    state.worktrees.get(&id)?.ios_simulator_cache.hit()
+}
+
 fn has_last_android_run(state: &AppState) -> bool {
     last_android_run(state).is_some()
 }
 
 fn has_last_ios_run(state: &AppState) -> bool {
     last_ios_run(state).is_some()
+}
+
+fn has_cached_ios_hit(state: &AppState) -> bool {
+    cached_ios_hit(state).is_some()
 }
 
 fn repeat_last_android_run(state: &AppState) -> Option<Action> {
@@ -1116,6 +1132,10 @@ fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
             variant: Some(config.variant),
         })
     }))
+}
+
+fn cached_ios_run(state: &AppState) -> Option<Action> {
+    Some(cached_ios_hit(state).cloned().map_or(Action::ModalCancel, Action::CachedIosRun))
 }
 
 // ---------------------------------------------------------------------------

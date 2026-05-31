@@ -55,6 +55,15 @@ fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
         .map(|wt| wt.path.clone())
 }
 
+fn active_worktree_snapshot(state: &AppState) -> Option<(crate::domain::worktree::WorktreeId, PathBuf)> {
+    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    let wt = state
+        .worktree_browser
+        .worktrees
+        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))?;
+    Some((wt.id.clone(), wt.path.clone()))
+}
+
 fn active_metro_worktree_path(state: &AppState) -> PathBuf {
     state
         .metro_state
@@ -1511,6 +1520,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
         Action::EnterIosPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Ios);
+            if let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) {
+                let slice = state.worktrees.entry(worktree_id.clone()).or_insert_with(|| {
+                    crate::domain::worktree_slice::WorktreeSlice {
+                        id: worktree_id.clone(),
+                        ..Default::default()
+                    }
+                });
+                slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Checking;
+                effects.push(Effect::LookupIosSimulatorCache { worktree_id, worktree_path });
+            }
         }
         Action::EnterYarnPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Yarn);
@@ -1601,7 +1620,15 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Fire-and-forget write to sim history via effect_runner
             effects.push(Effect::RecordSimUsed(udid));
         }
-        Action::IosSimulatorCacheLookupFinished { .. } => {}
+        Action::IosSimulatorCacheLookupFinished { worktree_id, result } => {
+            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                slice.ios_simulator_cache = match result {
+                    Ok(Some(hit)) => crate::domain::native_cache::IosSimulatorCacheState::Hit(hit),
+                    Ok(None) => crate::domain::native_cache::IosSimulatorCacheState::Miss,
+                    Err(message) => crate::domain::native_cache::IosSimulatorCacheState::Error(message),
+                };
+            }
+        }
         Action::CachedIosRun(_) => {}
         Action::CachedIosLaunchFinished { .. } => {}
         Action::SyncBeforeRunAccept => {
@@ -2017,10 +2044,6 @@ mod tests {
         );
 
         let actions = [
-            Action::IosSimulatorCacheLookupFinished {
-                worktree_id: worktree_id.clone(),
-                result: Ok(Some(cache_hit())),
-            },
             Action::CachedIosRun(cache_hit()),
             Action::CachedIosLaunchFinished {
                 worktree_id: worktree_id.clone(),
