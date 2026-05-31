@@ -15,7 +15,6 @@ use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
 use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
-use crate::domain::native_cache::IosSimulatorCacheState;
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::worktree::WorktreeId;
 use crate::domain::worktree_slice::LastRunConfig;
@@ -1602,29 +1601,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Fire-and-forget write to sim history via effect_runner
             effects.push(Effect::RecordSimUsed(udid));
         }
-        Action::IosSimulatorCacheLookupFinished { worktree_id, result } => {
-            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                slice.ios_simulator_cache = match result {
-                    Ok(Some(hit)) => IosSimulatorCacheState::Hit(hit),
-                    Ok(None) => IosSimulatorCacheState::Miss,
-                    Err(message) => IosSimulatorCacheState::Error(message),
-                };
-            }
-        }
-        Action::CachedIosRun(_hit) => {
-            // Task 6 wires the launch flow; Task 3 only registers the action.
-        }
-        Action::CachedIosLaunchFinished { worktree_id, result } => {
-            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                slice.pending_cached_ios_launch = None;
-            }
-            if let crate::domain::native_cache::CachedIosLaunchResult::Failure(message) = result {
-                state.error_state = Some(ErrorState {
-                    message,
-                    can_retry: false,
-                });
-            }
-        }
+        Action::IosSimulatorCacheLookupFinished { .. } => {}
+        Action::CachedIosRun(_) => {}
+        Action::CachedIosLaunchFinished { .. } => {}
         Action::SyncBeforeRunAccept => {
             if let Some(ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods }) = state.modal_stack.modal.take() {
                 // Plan 13-09 (F-204 site 7): Recipe::SyncThenRun expansion.
@@ -1987,4 +1966,75 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
     }
 
     effects
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::native_cache::{
+        CachedIosLaunchResult, IosSimulatorCacheHit, IosSimulatorCacheMetadata,
+        IosSimulatorCacheState, PendingCachedIosLaunch,
+    };
+
+    fn cache_hit() -> IosSimulatorCacheHit {
+        IosSimulatorCacheHit {
+            metadata: IosSimulatorCacheMetadata {
+                platform: "ios-simulator".into(),
+                fingerprint: "fingerprint-a".into(),
+                bundle_id: "com.aljazeera.test".into(),
+                variant: "Debug".into(),
+                created_at: "2026-06-01T00:00:00Z".into(),
+                source_worktree: "wt-a".into(),
+                artifact_kind: "app-bundle".into(),
+            },
+            artifact_path: PathBuf::from("/tmp/cached.app"),
+        }
+    }
+
+    #[test]
+    fn native_cache_actions_are_inert_before_flow_wiring() {
+        let worktree_id = WorktreeId("wt-a".into());
+        let existing_hit = cache_hit();
+        let pending = PendingCachedIosLaunch {
+            device_id: "SIM-1".into(),
+            cache_hit: existing_hit.clone(),
+        };
+        let mut state = AppState::default();
+        state.error_state = Some(ErrorState {
+            message: "existing error".into(),
+            can_retry: true,
+        });
+        state.worktrees.insert(
+            worktree_id.clone(),
+            crate::domain::worktree_slice::WorktreeSlice {
+                id: worktree_id.clone(),
+                ios_simulator_cache: IosSimulatorCacheState::Checking,
+                pending_cached_ios_launch: Some(pending.clone()),
+                ..Default::default()
+            },
+        );
+
+        let actions = [
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(Some(cache_hit())),
+            },
+            Action::CachedIosRun(cache_hit()),
+            Action::CachedIosLaunchFinished {
+                worktree_id: worktree_id.clone(),
+                result: CachedIosLaunchResult::Failure("launch failed".into()),
+            },
+        ];
+
+        for action in actions {
+            let effects = update(&mut state, action);
+            assert!(effects.is_empty());
+            let slice = state.worktrees.get(&worktree_id).expect("slice should remain");
+            assert_eq!(slice.ios_simulator_cache, IosSimulatorCacheState::Checking);
+            assert_eq!(slice.pending_cached_ios_launch, Some(pending.clone()));
+            let error_state = state.error_state.as_ref().expect("error state should remain");
+            assert_eq!(error_state.message, "existing error");
+            assert!(error_state.can_retry);
+        }
+    }
 }
