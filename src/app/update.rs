@@ -1999,11 +1999,13 @@ mod tests {
             device_id: "SIM-1".into(),
             cache_hit: existing_hit.clone(),
         };
-        let mut state = AppState::default();
-        state.error_state = Some(ErrorState {
-            message: "existing error".into(),
-            can_retry: true,
-        });
+        let mut state = AppState {
+            error_state: Some(ErrorState {
+                message: "existing error".into(),
+                can_retry: true,
+            }),
+            ..Default::default()
+        };
         state.worktrees.insert(
             worktree_id.clone(),
             crate::domain::worktree_slice::WorktreeSlice {
