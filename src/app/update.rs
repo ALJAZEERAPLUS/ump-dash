@@ -2039,7 +2039,32 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 kind: crate::domain::ports::device_port::DeviceKind::Ios,
             });
         }
-        Action::CachedIosLaunchFinished { .. } => {}
+        Action::CachedIosLaunchFinished {
+            worktree_id,
+            result,
+        } => {
+            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                match result {
+                    crate::domain::native_cache::CachedIosLaunchResult::Success(lines) => {
+                        slice
+                            .output
+                            .push_back("[cached-ios] installed and launched cached app".into());
+                        for line in lines {
+                            slice.output.push_back(format!("[cached-ios] {line}"));
+                        }
+                    }
+                    crate::domain::native_cache::CachedIosLaunchResult::Failure(message) => {
+                        slice
+                            .output
+                            .push_back(format!("[cached-ios error] {message}"));
+                    }
+                }
+                while slice.output.len() > MAX_COMMAND_LINES {
+                    slice.output.pop_front();
+                }
+                slice.output_scroll = 0;
+            }
+        }
         Action::SyncBeforeRunAccept => {
             if let Some(ModalState::SyncBeforeRun {
                 run_command,
@@ -2472,7 +2497,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_ios_launch_finished_is_inert_before_effect_runner_wiring() {
+    fn cached_ios_launch_finished_appends_output_without_mutating_cache_state() {
         let worktree_id = WorktreeId("wt-a".into());
         let existing_hit = cache_hit();
         let pending = PendingCachedIosLaunch {
@@ -2492,6 +2517,7 @@ mod tests {
                 id: worktree_id.clone(),
                 ios_simulator_cache: IosSimulatorCacheState::Checking,
                 pending_cached_ios_launch: Some(pending.clone()),
+                output_scroll: 7,
                 ..Default::default()
             },
         );
@@ -2511,6 +2537,13 @@ mod tests {
             .expect("slice should remain");
         assert_eq!(slice.ios_simulator_cache, IosSimulatorCacheState::Checking);
         assert_eq!(slice.pending_cached_ios_launch, Some(pending.clone()));
+        assert!(
+            slice
+                .output
+                .iter()
+                .any(|line| line == "[cached-ios error] launch failed")
+        );
+        assert_eq!(slice.output_scroll, 0);
         let error_state = state
             .error_state
             .as_ref()

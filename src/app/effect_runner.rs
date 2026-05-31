@@ -227,7 +227,10 @@ impl EffectRunner {
                 });
             }
 
-            Effect::LookupIosSimulatorCache { worktree_id, worktree_path } => {
+            Effect::LookupIosSimulatorCache {
+                worktree_id,
+                worktree_path,
+            } => {
                 let native_cache = self.adapters.native_cache.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
@@ -235,21 +238,33 @@ impl EffectRunner {
                         .lookup_ios_simulator(worktree_path)
                         .await
                         .map_err(|e| e.to_string());
-                    let _ = tx.send(Action::IosSimulatorCacheLookupFinished { worktree_id, result });
+                    let _ = tx.send(Action::IosSimulatorCacheLookupFinished {
+                        worktree_id,
+                        result,
+                    });
                 });
             }
 
-            Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request } => {
-                tracing::warn!(
-                    bundle_id = %request.bundle_id,
-                    simulator_udid = %request.simulator_udid,
-                    "cached iOS simulator launch effect is not implemented yet"
-                );
-                let _ = self.action_tx.send(Action::CachedIosLaunchFinished {
-                    worktree_id,
-                    result: crate::domain::native_cache::CachedIosLaunchResult::Failure(
-                        "cached iOS simulator launch is not implemented yet".into(),
-                    ),
+            Effect::InstallAndLaunchCachedIosSimulator {
+                worktree_id,
+                request,
+            } => {
+                let native_cache = self.adapters.native_cache.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result = match native_cache.install_and_launch_ios_simulator(request).await
+                    {
+                        Ok(lines) => {
+                            crate::domain::native_cache::CachedIosLaunchResult::Success(lines)
+                        }
+                        Err(e) => crate::domain::native_cache::CachedIosLaunchResult::Failure(
+                            e.to_string(),
+                        ),
+                    };
+                    let _ = tx.send(Action::CachedIosLaunchFinished {
+                        worktree_id,
+                        result,
+                    });
                 });
             }
 
@@ -290,9 +305,8 @@ impl EffectRunner {
                 tokio::spawn(async move {
                     match wt.add(&repo_root, &branch).await {
                         Ok(path) => {
-                            let _ = tx.send(Action::WorktreeAdded(
-                                path.to_string_lossy().to_string(),
-                            ));
+                            let _ =
+                                tx.send(Action::WorktreeAdded(path.to_string_lossy().to_string()));
                         }
                         Err(e) => {
                             let _ = tx.send(Action::WorktreeAddFailed(e.to_string()));
@@ -301,7 +315,11 @@ impl EffectRunner {
                 });
             }
 
-            Effect::AddWorktreeNewBranch { repo_root, new, base } => {
+            Effect::AddWorktreeNewBranch {
+                repo_root,
+                new,
+                base,
+            } => {
                 let wt = self.adapters.worktrees.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
@@ -374,7 +392,11 @@ impl EffectRunner {
                 });
             }
 
-            Effect::OpenInMultiplexer { worktree, name, command } => {
+            Effect::OpenInMultiplexer {
+                worktree,
+                name,
+                command,
+            } => {
                 let Some(mux) = self.adapters.multiplexer.clone() else {
                     return;
                 };
@@ -400,7 +422,14 @@ impl EffectRunner {
             //     per-canonicalized-repo-root Semaphore(1) BEFORE invoking
             //     runner.spawn() — serializing concurrent installs across
             //     sibling worktrees. Non-yarn specs skip the semaphore.
-            Effect::SpawnTask { task_id, worktree_id, spec, cwd, branch, repo_root } => {
+            Effect::SpawnTask {
+                task_id,
+                worktree_id,
+                spec,
+                cwd,
+                branch,
+                repo_root,
+            } => {
                 use crate::domain::ports::command_runner_port::CommandEvent;
                 use crate::domain::task::{ExitStatus, TaskRecord};
 
@@ -580,18 +609,15 @@ impl EffectRunner {
                 // no JoinHandle map here.
                 let task_handle_tx = self.task_handle_tx.clone();
                 tokio::spawn(async move {
-                    let real_child_pid = match tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        pid_rx,
-                    )
-                    .await
-                    {
-                        Ok(Ok(pid)) => pid,
-                        // Timeout OR sender dropped (spawn failure). Use 0 —
-                        // abort()'s `pid <= 1` guard makes the resulting kill
-                        // a no-op (Plan 15-02 / T-15-03-05).
-                        _ => 0,
-                    };
+                    let real_child_pid =
+                        match tokio::time::timeout(std::time::Duration::from_secs(5), pid_rx).await
+                        {
+                            Ok(Ok(pid)) => pid,
+                            // Timeout OR sender dropped (spawn failure). Use 0 —
+                            // abort()'s `pid <= 1` guard makes the resulting kill
+                            // a no-op (Plan 15-02 / T-15-03-05).
+                            _ => 0,
+                        };
                     let record = TaskRecord {
                         id: task_id,
                         spec: spec_for_record,

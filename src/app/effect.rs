@@ -23,10 +23,20 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum Effect {
     // Metro lifecycle
-    DetectExternalMetro { port: u16 },
-    SpawnMetro { worktree: PathBuf, port: u16 },
-    MetroHttpPost { url: String, body: String },
-    KillProcess { pid: u32 },
+    DetectExternalMetro {
+        port: u16,
+    },
+    SpawnMetro {
+        worktree: PathBuf,
+        port: u16,
+    },
+    MetroHttpPost {
+        url: String,
+        body: String,
+    },
+    KillProcess {
+        pid: u32,
+    },
 
     // Commands
     /// Phase 14 / D-10, D-20, Q1: single chokepoint for spawning per-worktree tasks.
@@ -47,7 +57,9 @@ pub enum Effect {
         branch: String,
         repo_root: std::path::PathBuf,
     },
-    LoadDevices { kind: DeviceKind },
+    LoadDevices {
+        kind: DeviceKind,
+    },
     LookupIosSimulatorCache {
         worktree_id: crate::domain::worktree::WorktreeId,
         worktree_path: PathBuf,
@@ -58,11 +70,25 @@ pub enum Effect {
     },
 
     // Worktrees — Plan 13-08: variants now carry repo_root from update().
-    ListWorktrees { repo_root: PathBuf },
-    RemoveWorktree { repo_root: PathBuf, path: PathBuf },
-    AddWorktree { repo_root: PathBuf, branch: String },
-    AddWorktreeNewBranch { repo_root: PathBuf, new: String, base: String },
-    ListRemoteBranches { repo_root: PathBuf },
+    ListWorktrees {
+        repo_root: PathBuf,
+    },
+    RemoveWorktree {
+        repo_root: PathBuf,
+        path: PathBuf,
+    },
+    AddWorktree {
+        repo_root: PathBuf,
+        branch: String,
+    },
+    AddWorktreeNewBranch {
+        repo_root: PathBuf,
+        new: String,
+        base: String,
+    },
+    ListRemoteBranches {
+        repo_root: PathBuf,
+    },
 
     // Persistence (spawn_blocking sites — F-111 PersistencePort deferred)
     SaveJiraCache(HashMap<String, String>),
@@ -76,7 +102,9 @@ pub enum Effect {
     },
 
     // JIRA
-    FetchJiraTitles { keys: Vec<String> },
+    FetchJiraTitles {
+        keys: Vec<String>,
+    },
 
     // Recursive self-dispatch
     ScheduleAction(crate::domain::action::Action),
@@ -97,9 +125,17 @@ mod tests {
             repo_root: std::path::PathBuf::from("/tmp/repo-root-test"),
         };
         match eff {
-            Effect::SpawnTask { task_id, worktree_id, repo_root, .. } => {
+            Effect::SpawnTask {
+                task_id,
+                worktree_id,
+                repo_root,
+                ..
+            } => {
                 assert_eq!(task_id, crate::domain::task::TaskId(42));
-                assert_eq!(worktree_id, crate::domain::worktree::WorktreeId("wt-test".into()));
+                assert_eq!(
+                    worktree_id,
+                    crate::domain::worktree::WorktreeId("wt-test".into())
+                );
                 assert_eq!(repo_root, std::path::PathBuf::from("/tmp/repo-root-test"));
             }
             _ => panic!("expected SpawnTask"),
@@ -123,7 +159,10 @@ mod tests {
         };
         match eff {
             Effect::SpawnTask { repo_root, .. } => {
-                assert_eq!(repo_root, key, "repo_root must round-trip — it is the semaphore HashMap key");
+                assert_eq!(
+                    repo_root, key,
+                    "repo_root must round-trip — it is the semaphore HashMap key"
+                );
             }
             _ => panic!("expected SpawnTask"),
         }
@@ -146,8 +185,12 @@ mod tests {
                 metro_port: 8081,
             },
         };
-        let _ = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
-        let _ = Effect::ListRemoteBranches { repo_root: PathBuf::from(".") };
+        let _ = Effect::ListWorktrees {
+            repo_root: PathBuf::from("."),
+        };
+        let _ = Effect::ListRemoteBranches {
+            repo_root: PathBuf::from("."),
+        };
         let _ = Effect::KillProcess { pid: 999 };
         let _ = Effect::LoadDevices {
             kind: DeviceKind::Android,
@@ -186,7 +229,9 @@ mod tests {
                 Effect::InstallAndLaunchCachedIosSimulator { .. } => 17,
             }
         }
-        let e = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
+        let e = Effect::ListWorktrees {
+            repo_root: PathBuf::from("."),
+        };
         assert_eq!(variant_index(&e), 6);
     }
 }

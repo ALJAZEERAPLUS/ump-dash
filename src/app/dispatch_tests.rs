@@ -21,7 +21,7 @@ use super::*;
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState, RunVariant};
 use crate::domain::native_cache::{
-    IosSimulatorCacheHit, IosSimulatorCacheMetadata, IosSimulatorCacheState,
+    CachedIosLaunchResult, IosSimulatorCacheHit, IosSimulatorCacheMetadata, IosSimulatorCacheState,
 };
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
@@ -169,6 +169,70 @@ fn slice_output(state: &AppState, id: &str) -> Vec<String> {
         .get(&WorktreeId(id.into()))
         .map(|s| s.output.iter().cloned().collect())
         .unwrap_or_default()
+}
+
+#[test]
+fn cached_ios_launch_result_appends_to_selected_slice_output() {
+    let mut state = base_state();
+    seed_one_worktree(&mut state);
+
+    let effects = update(
+        &mut state,
+        Action::CachedIosLaunchFinished {
+            worktree_id: WorktreeId("wt-1".into()),
+            result: CachedIosLaunchResult::Success(vec![
+                "Metro port 8093".into(),
+                "Booted iPhone 15 Pro".into(),
+            ]),
+        },
+    );
+
+    assert!(effects.is_empty());
+    let output = slice_output(&state, "wt-1");
+    assert!(
+        output
+            .iter()
+            .any(|line| line.contains("installed and launched")),
+        "expected success summary in output; got {output:?}"
+    );
+    assert!(
+        output.iter().any(|line| line.contains("Metro port 8093")),
+        "expected metro port line in output; got {output:?}"
+    );
+}
+
+#[test]
+fn cached_ios_launch_failure_appends_error_and_resets_scroll() {
+    let mut state = base_state();
+    seed_one_worktree(&mut state);
+    state
+        .worktrees
+        .get_mut(&WorktreeId("wt-1".into()))
+        .expect("slice should exist")
+        .output_scroll = 12;
+
+    let effects = update(
+        &mut state,
+        Action::CachedIosLaunchFinished {
+            worktree_id: WorktreeId("wt-1".into()),
+            result: CachedIosLaunchResult::Failure("install failed".into()),
+        },
+    );
+
+    assert!(effects.is_empty());
+    let slice = state
+        .worktrees
+        .get(&WorktreeId("wt-1".into()))
+        .expect("slice should exist");
+    assert!(
+        slice
+            .output
+            .iter()
+            .any(|line| line == "[cached-ios error] install failed"),
+        "expected cached iOS error in output; got {:?}",
+        slice.output
+    );
+    assert_eq!(slice.output_scroll, 0);
 }
 
 /// A test-only `TaskHandle` that does nothing — abort() is a no-op.
