@@ -171,10 +171,7 @@ mod palette_resolution {
                 variant: None,
             }))
         );
-        assert_eq!(
-            handle_key(&state, key('m')),
-            Some(Action::StartSetAndroidMode)
-        );
+        assert_eq!(handle_key(&state, key('m')), Some(Action::ModalCancel));
         assert_eq!(
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
@@ -433,8 +430,9 @@ mod modal_dismissal {
         state.modal_stack.modal = Some(ModalState::DevicePicker {
             devices: Vec::new(),
             selected: 0,
-            pending_template: Box::new(CommandSpec::RnRunIos {
+            pending_template: Box::new(CommandSpec::UmpRunIos {
                 device_id: String::new(),
+                variant: None,
             }),
             filter: String::new(),
         });

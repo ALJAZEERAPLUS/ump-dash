@@ -468,13 +468,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: has_last_android_run,
     },
     KeyBinding {
-        key: KeyCode::Char('m'),
-        label: "m", short_desc: "set mode", long_desc: "Set Android build mode",
-        context: BindingContext::Palette(PaletteMode::Android),
-        action: |_| Some(Action::StartSetAndroidMode),
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Esc,
         label: "Esc", short_desc: "cancel", long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Android),

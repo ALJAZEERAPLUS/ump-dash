@@ -39,16 +39,16 @@ cov: cov-baseline cov-html
 # are vacuously satisfied until the target file is created by its landing plan.
 arch-lint:
 	@echo "=== G-01/G-02/G-03: hexagonal import boundaries ==="
-	@# G-01 ACTIVE as of Plan 13-08. The whitelist allows the three F-111
+	@# G-01 ACTIVE as of Plan 13-08. The whitelist allows the two F-111
 	@# (PersistencePort) deferral lines in effect_runner.rs that still call
-	@# crate::infra::{jira_cache,android_prefs,sim_history}::save_* directly.
+	@# crate::infra::{jira_cache,sim_history}::save_* directly.
 	@# When F-111 lands those will route through Adapters.persistence and the
 	@# whitelist disappears.
 	@# Plan 14-06 addition: effect_runner.rs wraps JoinHandle<()> in TokioTaskHandle
 	@# (the concrete D-03 adapter) at the spawn site. This is the canonical pattern
 	@# (mirrors Plan 13-03's MetroHandle concrete adapter). Plan 14-09 will route
 	@# this through an Adapters.task_handle factory if a factory port is added.
-	@if rg -n 'crate::infra::' src/app/ 2>/dev/null | rg -v '^[^:]+:[0-9]+:\s*//' | rg -v 'effect_runner\.rs.*(jira_cache|android_prefs|sim_history|task_handle)' | grep -q .; then echo "G-01 FAIL: app/ imports infra (non-persistence)"; rg -n 'crate::infra::' src/app/ 2>/dev/null | rg -v '^[^:]+:[0-9]+:\s*//' | rg -v 'effect_runner\.rs.*(jira_cache|android_prefs|sim_history|task_handle)'; exit 1; fi
+	@if rg -n 'crate::infra::' src/app/ 2>/dev/null | rg -v '^[^:]+:[0-9]+:\s*//' | rg -v 'effect_runner\.rs.*(jira_cache|sim_history|task_handle)' | grep -q .; then echo "G-01 FAIL: app/ imports infra (non-persistence)"; rg -n 'crate::infra::' src/app/ 2>/dev/null | rg -v '^[^:]+:[0-9]+:\s*//' | rg -v 'effect_runner\.rs.*(jira_cache|sim_history|task_handle)'; exit 1; fi
 	@! rg 'crate::infra::' src/ui/ 2>/dev/null || (echo "G-02 FAIL: ui/ imports infra" && exit 1)
 	@! rg 'use crate::(domain::)?action' src/infra/ 2>/dev/null || echo "G-03 PENDING: infra still imports Action (active after 13-08)"
 	@echo "=== G-04/G-05: update() purity (active after 13-07) ==="

@@ -34,10 +34,7 @@ impl CommandSpec {
     /// `needs_metro()` stays as a thin wrapper for backward compatibility.
     pub fn prerequisites(&self) -> Vec<Prerequisite> {
         match self {
-            CommandSpec::RnRunAndroid { .. }
-            | CommandSpec::RnRunIos { .. }
-            | CommandSpec::RnRunIosDevice
-            | CommandSpec::UmpRunAndroid { .. }
+            CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild => vec![Prerequisite::MetroRunning],
             // Sync prerequisites come from Recipe::SyncThenRun — not per-variant.
@@ -228,8 +225,9 @@ mod tests {
 
     #[test]
     fn test_sync_then_run_stale_ios_adds_yarn_and_pods() {
-        let run_cmd = CommandSpec::RnRunIos {
+        let run_cmd = CommandSpec::UmpRunIos {
             device_id: "udid-1".into(),
+            variant: Some(crate::domain::command::RunVariant::Local),
         };
         assert_eq!(
             Recipe::SyncThenRun(run_cmd.clone()).expand(&stale_deps_ios()),
@@ -240,9 +238,9 @@ mod tests {
     #[test]
     fn test_sync_then_run_stale_android_only_yarn() {
         // Pods are skipped on Android (is_ios_target = false) — F-204 rule.
-        let run_cmd = CommandSpec::RnRunAndroid {
+        let run_cmd = CommandSpec::UmpRunAndroid {
             device_id: "emulator-5554".into(),
-            mode: None,
+            variant: Some(crate::domain::command::RunVariant::Local),
         };
         assert_eq!(
             Recipe::SyncThenRun(run_cmd.clone()).expand(&stale_deps_android()),
@@ -293,18 +291,19 @@ mod tests {
     }
 
     #[test]
-    fn test_prerequisites_rn_run_android_needs_metro() {
-        let spec = CommandSpec::RnRunAndroid {
+    fn test_prerequisites_ump_run_android_needs_metro() {
+        let spec = CommandSpec::UmpRunAndroid {
             device_id: "emulator-5554".into(),
-            mode: None,
+            variant: Some(crate::domain::command::RunVariant::Local),
         };
         assert_eq!(spec.prerequisites(), vec![Prerequisite::MetroRunning]);
     }
 
     #[test]
-    fn test_prerequisites_rn_run_ios_needs_metro() {
-        let spec = CommandSpec::RnRunIos {
+    fn test_prerequisites_ump_run_ios_needs_metro() {
+        let spec = CommandSpec::UmpRunIos {
             device_id: "udid-1".into(),
+            variant: Some(crate::domain::command::RunVariant::Local),
         };
         assert_eq!(spec.prerequisites(), vec![Prerequisite::MetroRunning]);
     }

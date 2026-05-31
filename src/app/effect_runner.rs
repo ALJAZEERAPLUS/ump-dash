@@ -29,14 +29,13 @@
 //!   ListRemoteBranches { repo_root }               → adapters.worktrees.list_remote_branches(repo_root)
 //!   FetchJiraTitles { keys }                       → adapters.jira.as_ref()?.fetch_title(...)
 //!   SaveJiraCache(map)                             → spawn_blocking infra::jira_cache::save_jira_cache  (F-111 deferred)
-//!   SaveAndroidMode(mode)                          → spawn_blocking infra::android_prefs::save_android_mode  (F-111 deferred)
 //!   RecordSimUsed(udid)                            → spawn_blocking infra::sim_history::record_sim_used  (F-111 deferred)
 //!   OpenInMultiplexer { worktree, name, command }  → adapters.multiplexer.as_ref()?.new_window(...)
 //!
-//! G-01 carve-out (whitelisted in `Makefile` arch-lint): the three
-//! persistence variants (SaveJiraCache, SaveAndroidMode, RecordSimUsed) still
+//! G-01 carve-out (whitelisted in `Makefile` arch-lint): the two
+//! persistence variants (SaveJiraCache, RecordSimUsed) still
 //! call `infra::<module>::save_*` directly. F-111 (PersistencePort) is
-//! deferred — when it lands those three lines route through
+//! deferred — when it lands those two lines route through
 //! `adapters.persistence` and the whitelist disappears.
 
 #![allow(dead_code)]
@@ -334,15 +333,6 @@ impl EffectRunner {
                 tokio::task::spawn_blocking(move || {
                     if let Err(e) = crate::infra::jira_cache::save_jira_cache(&cache) {
                         tracing::warn!("save_jira_cache failed: {e}");
-                    }
-                });
-            }
-
-            Effect::SaveAndroidMode(mode) => {
-                // F-111 deferred — see SaveJiraCache.
-                tokio::task::spawn_blocking(move || {
-                    if let Err(e) = crate::infra::android_prefs::save_android_mode(&mode) {
-                        tracing::warn!("save_android_mode failed: {e}");
                     }
                 });
             }

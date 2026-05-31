@@ -209,26 +209,18 @@ fn is_ump_run(spec: &CommandSpec) -> bool {
 fn is_run_command(spec: &CommandSpec) -> bool {
     matches!(
         spec,
-        CommandSpec::RnRunAndroid { .. }
-            | CommandSpec::RnRunIos { .. }
-            | CommandSpec::RnRunIosDevice
-            | CommandSpec::UmpRunAndroid { .. }
+        CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild
     )
 }
 
 fn is_ios_run_command(spec: &CommandSpec) -> bool {
-    matches!(
-        spec,
-        CommandSpec::RnRunIos { .. } | CommandSpec::RnRunIosDevice | CommandSpec::UmpRunIos { .. }
-    )
+    matches!(spec, CommandSpec::UmpRunIos { .. })
 }
 
 fn command_with_device(spec: CommandSpec, device_id: String) -> CommandSpec {
     match spec {
-        CommandSpec::RnRunAndroid { mode, .. } => CommandSpec::RnRunAndroid { device_id, mode },
-        CommandSpec::RnRunIos { .. } => CommandSpec::RnRunIos { device_id },
         CommandSpec::UmpRunAndroid { variant, .. } => CommandSpec::UmpRunAndroid { device_id, variant },
         CommandSpec::UmpRunIos { variant, .. } => CommandSpec::UmpRunIos { device_id, variant },
         other => other,
@@ -425,16 +417,15 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // next MetroActivityUpdate(Ready). If metro exited unexpectedly,
             // clear the queue so a stale deferred command doesn't fire on the
             // next successful start.
-            if !state.metro_state.pending_restart {
-                if let Some(slice_id) = state.worktree_browser.worktrees
+            if !state.metro_state.pending_restart
+                && let Some(slice_id) = state.worktree_browser.worktrees
                     .iter()
                     .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
                     .map(|wt| wt.id.clone())
-                    && let Some(slice) = state.worktrees.get_mut(&slice_id)
-                {
-                    slice.queue.clear();
-                    slice.post_drain = None;
-                }
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
+                slice.queue.clear();
+                slice.post_drain = None;
             }
             if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
@@ -720,7 +711,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                 }
 
-            // Plan 13-09 (F-204 site 2): Metro prerequisite — RN run commands
+            // Plan 13-09 (F-204 site 2): Metro prerequisite — native run commands
             // need metro running first. The deferred spec is pushed to the
             // FRONT of the command_queue; on `MetroActivityUpdate(Ready)` the
             // queue is drained head-first via CommandRun (preserves the full
@@ -770,7 +761,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             if spec.needs_device_selection() {
                 state.modal_stack.pending_device_command = Some(spec.clone());
-                let kind = if matches!(spec, CommandSpec::RnRunAndroid { .. } | CommandSpec::UmpRunAndroid { .. }) {
+                let kind = if matches!(spec, CommandSpec::UmpRunAndroid { .. }) {
                     crate::domain::ports::device_port::DeviceKind::Android
                 } else {
                     crate::domain::ports::device_port::DeviceKind::Ios
@@ -1016,11 +1007,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Phase 3: Modal actions ---
 
-        Action::ShowCommandPalette => {
-            // Palette activation is handled via EnterGitPalette / EnterRnPalette.
-            // This variant is kept for backward compatibility.
-        }
-
         Action::ModalConfirm => {
             // Check for pending worktree removal BEFORE falling through to normal confirm
             if let Some((wt_id, wt_path, _branch)) = state.modal_stack.pending_worktree_removal.take() {
@@ -1068,7 +1054,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ModalCancel => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_android_mode = false;
             state.modal_stack.pending_worktree_removal = None;  // discard any pending removal on cancel
             state.modal_stack.pending_worktree_add = false;     // discard any pending add on cancel
             state.modal_stack.pending_new_branch_base = None;   // discard new-branch base on cancel
@@ -1135,14 +1120,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         pending_template,
                         ..
                     } => {
-                        if state.modal_stack.pending_android_mode {
-                            state.modal_stack.pending_android_mode = false;
-                            let mode = if buffer.trim().is_empty() { None } else { Some(buffer.trim().to_string()) };
-                            state.app_config.android_mode = mode.clone();
-                            if let Some(m) = mode {
-                                effects.push(Effect::SaveAndroidMode(m));
-                            }
-                        } else if state.modal_stack.pending_new_branch_worktree {
+                        if state.modal_stack.pending_new_branch_worktree {
                             state.modal_stack.pending_new_branch_worktree = false;
                             let new_branch_name = buffer.trim().to_string();
                             let base_branch = state.modal_stack.pending_new_branch_base.take();
@@ -1258,10 +1236,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if let Some(device) = filtered.get(selected) {
                     let device_id = device.id.clone();
                     let device_name = device.name.clone();
-                    let is_ios = matches!(
-                        pending_template.as_ref(),
-                        CommandSpec::RnRunIos { .. } | CommandSpec::UmpRunIos { .. }
-                    );
+                    let is_ios = matches!(pending_template.as_ref(), CommandSpec::UmpRunIos { .. });
                     let is_available_emulator = device_name.ends_with("(available)");
 
                     if is_available_emulator && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. }) {
@@ -1270,28 +1245,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         return effects;
                     }
 
-                    // Available emulator: boot it, then run via shell command
-                    if is_available_emulator {
-                        if let CommandSpec::RnRunAndroid { mode, .. } = *pending_template {
-                            if let Some(ref m) = mode {
-                                effects.push(Effect::SaveAndroidMode(m.clone()));
-                            }
-                            let mode_flag = mode.map(|m| format!(" --mode {m}")).unwrap_or_default();
-                            let cmd = format!(
-                                "emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device && npx react-native run-android{mode_flag}"
-                            );
-                            if let Some(eff) = dispatch_command(state, CommandSpec::ShellCommand { command: cmd }) {
-                                effects.push(eff);
-                            }
-                        }
-                        return effects;
-                    }
-
                     let real_spec = command_with_device(*pending_template, device_id.clone());
-                    // Persist Android mode if present
-                    if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
-                        effects.push(Effect::SaveAndroidMode(m.clone()));
-                    }
                     // Record iOS simulator usage for sort-by-recent
                     if is_ios {
                         effects.push(Effect::ScheduleAction(Action::SimulatorUsed(device_id)));
@@ -1374,25 +1328,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
                                 return effects;
                             }
-
-                            if let CommandSpec::RnRunAndroid { mode, .. } = spec {
-                                if let Some(ref m) = mode {
-                                    effects.push(Effect::SaveAndroidMode(m.clone()));
-                                }
-                                let mode_flag = mode.map(|m| format!(" --mode {m}")).unwrap_or_default();
-                                let cmd = format!(
-                                    "emulator -avd {} > /dev/null 2>&1 & adb wait-for-device && npx react-native run-android{}",
-                                    devices[0].id, mode_flag
-                                );
-                                if let Some(eff) = dispatch_command(state, CommandSpec::ShellCommand { command: cmd }) {
-                                    effects.push(eff);
-                                }
-                            }
                         } else {
                             let real_spec = command_with_device(spec, devices[0].id.clone());
-                            if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
-                                effects.push(Effect::SaveAndroidMode(m.clone()));
-                            }
                             open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
                         }
                     }
@@ -1400,7 +1337,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         // Multiple devices — show picker
                         // Sort iOS simulators by last-used from sim_history
                         let mut sorted_devices = devices;
-                        if matches!(spec, CommandSpec::RnRunIos { .. } | CommandSpec::UmpRunIos { .. }) {
+                        if matches!(spec, CommandSpec::UmpRunIos { .. }) {
                             // Plan 13-08: sim_history is loaded into AppState at startup
                             // (src/main.rs) so update() never crosses the infra boundary.
                             let history = &state.app_config.sim_history;
@@ -1425,14 +1362,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::EnterGitPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Git);
         }
-
-        Action::EnterRnPalette => {
-            // EnterRnPalette kept for backward compat — Phase 05.1 will remap 'c' key
-            // to new submenu scheme. For now we just cancel palette mode.
-            state.modal_stack.palette_mode = None;
-        }
-
-
 
         // --- Phase 5: Worktree switching and Claude Code ---
 
@@ -1666,15 +1595,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 prompt: "Shell command:".to_string(),
                 buffer: String::new(),
                 pending_template: Box::new(CommandSpec::ShellCommand { command: String::new() }),
-            });
-        }
-        Action::StartSetAndroidMode => {
-            state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_android_mode = true;
-            state.modal_stack.modal = Some(ModalState::TextInput {
-                prompt: "Android build mode:".to_string(),
-                buffer: state.app_config.android_mode.clone().unwrap_or_default(),
-                pending_template: Box::new(CommandSpec::YarnLint), // sentinel — not actually used
             });
         }
         Action::SimulatorUsed(udid) => {

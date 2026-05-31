@@ -57,7 +57,6 @@ pub enum Effect {
 
     // Persistence (spawn_blocking sites — F-111 PersistencePort deferred)
     SaveJiraCache(HashMap<String, String>),
-    SaveAndroidMode(String),
     RecordSimUsed(String),
 
     // External processes
@@ -126,7 +125,6 @@ mod tests {
         let _ = Effect::DetectExternalMetro { port: 8081 };
         let _ = Effect::ListWorktrees { repo_root: PathBuf::from(".") };
         let _ = Effect::ListRemoteBranches { repo_root: PathBuf::from(".") };
-        let _ = Effect::SaveAndroidMode("release".into());
         let _ = Effect::KillProcess { pid: 999 };
         let _ = Effect::LoadDevices {
             kind: DeviceKind::Android,
@@ -157,11 +155,10 @@ mod tests {
                 Effect::AddWorktreeNewBranch { .. } => 9,
                 Effect::ListRemoteBranches { .. } => 10,
                 Effect::SaveJiraCache(_) => 11,
-                Effect::SaveAndroidMode(_) => 12,
-                Effect::RecordSimUsed(_) => 13,
-                Effect::OpenInMultiplexer { .. } => 14,
-                Effect::FetchJiraTitles { .. } => 15,
-                Effect::ScheduleAction(_) => 16,
+                Effect::RecordSimUsed(_) => 12,
+                Effect::OpenInMultiplexer { .. } => 13,
+                Effect::FetchJiraTitles { .. } => 14,
+                Effect::ScheduleAction(_) => 15,
             }
         }
         let e = Effect::ListWorktrees { repo_root: PathBuf::from(".") };

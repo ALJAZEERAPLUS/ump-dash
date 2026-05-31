@@ -125,9 +125,6 @@ pub struct ModalStackState {
     /// Pending device command — stored while async device enumeration is in flight.
     pub pending_device_command: Option<crate::domain::command::CommandSpec>,
 
-    /// Pending android mode change — set by StartSetAndroidMode, consumed by ModalInputSubmit.
-    pub pending_android_mode: bool,
-
     /// Worktree removal — set when w>d is pressed, consumed by ModalConfirm.
     pub pending_worktree_removal:
         Option<(crate::domain::worktree::WorktreeId, std::path::PathBuf, String)>,
@@ -180,9 +177,6 @@ pub struct AppConfigState {
     /// Claude Code launch flags loaded from config (e.g. "--dangerously-skip-permissions").
     pub claude_flags: String,
 
-    /// Persisted Android run mode (e.g. "debugOptimized"). None while not yet loaded.
-    pub android_mode: Option<String>,
-
     /// Loaded simulator UDID history (most-recent first). Used by update() to
     /// sort iOS picker entries without crossing the infra boundary.
     pub sim_history: Vec<String>,
@@ -199,7 +193,6 @@ impl Default for AppConfigState {
             config: None,
             repo_root: std::env::current_dir().unwrap_or_default(),
             claude_flags: "--dangerously-skip-permissions".to_string(),
-            android_mode: Some("debugOptimized".to_string()),
             sim_history: Vec::new(),
             multiplexer_available: false,
         }

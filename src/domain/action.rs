@@ -66,7 +66,6 @@ pub enum Action {
     CommandCancel,              // abort running command
 
     // Phase 3: Modal flow
-    ShowCommandPalette,     // 'g' for git palette, 'c' for RN command palette (from worktree list)
     ModalConfirm,           // user pressed Y in confirm dialog
     ModalCancel,            // user pressed N or Esc in any modal
     ModalInputChar(char),   // character typed in text input modal
@@ -84,7 +83,6 @@ pub enum Action {
 
     // Phase 3: Command palette activation
     EnterGitPalette,  // 'g' when WorktreeList focused — activates git palette mode
-    EnterRnPalette,   // 'c' when WorktreeList focused — activates RN palette mode
 
     // Phase 4: JIRA title background fetch results
     JiraTitlesFetched(Vec<(String, String)>),  // (ticket_key, title)
@@ -118,9 +116,6 @@ pub enum Action {
 
     // Phase 5.1: Shell command
     StartShellCommand,      // '!' key — opens text input modal for shell command
-
-    // Android mode
-    StartSetAndroidMode,    // a>m — opens text input modal for android build mode
 
     // Phase 5.1: Simulator history
     SimulatorUsed(String),  // record UDID after successful iOS run start
