@@ -126,7 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 260531-awm | Remove Metro port lock, use next available port, and keep Metro scoped per worktree | 2026-05-31 | pending | [260531-awm-let-s-remove-the-lock-from-metro-now-whe](./quick/260531-awm-let-s-remove-the-lock-from-metro-now-whe/) |
+| 260531-awm | Remove Metro port lock, use next available port, and keep Metro scoped per worktree | 2026-05-31 | c7caf62 | [260531-awm-let-s-remove-the-lock-from-metro-now-whe](./quick/260531-awm-let-s-remove-the-lock-from-metro-now-whe/) |
 | 260529-hhm | Move project identity and release flow to ALJAZEERAPLUS/ump-dash, then publish v1.3.0 | 2026-05-29 | dd47972 | [260529-hhm-the-origin-has-changed-now-it-is-github-](./quick/260529-hhm-the-origin-has-changed-now-it-is-github-/) |
 | 260529-fs9 | Add Ghostty support for terminal surfaces | 2026-05-29 | 2839c35 | [260529-fs9-let-s-add-support-for-ghostty-the-same-w](./quick/260529-fs9-let-s-add-support-for-ghostty-the-same-w/) |
 | 260529-gv7 | remove the prompt that opens when opening a claude tab; no custom suffix needed | 2026-05-29 | a2b79bf | [260529-gv7-remove-the-prompt-that-opens-when-openin](./quick/260529-gv7-remove-the-prompt-that-opens-when-openin/) |
