@@ -49,14 +49,18 @@ use crate::domain::metro::MetroHandle;
 use tokio::sync::mpsc::UnboundedSender;
 
 fn forward_metro_activity(
+    worktree_id: &str,
     activity: MetroActivity,
     activity_tx: &UnboundedSender<Action>,
     exited_tx: &UnboundedSender<Action>,
 ) {
     if matches!(&activity, MetroActivity::Exited) {
-        let _ = exited_tx.send(Action::MetroExited);
+        let _ = exited_tx.send(Action::MetroExited(worktree_id.to_string()));
     }
-    let _ = activity_tx.send(Action::MetroActivityUpdate(activity));
+    let _ = activity_tx.send(Action::MetroActivityUpdate {
+        worktree_id: worktree_id.to_string(),
+        activity,
+    });
 }
 
 /// Effect interpreter. Owns the `Adapters` bundle (Plan 13-08) + the action
@@ -149,14 +153,25 @@ impl EffectRunner {
                 let activity_tx = action_tx.clone();
                 let exited_tx = action_tx.clone();
                 tokio::spawn(async move {
+                    let worktree_id = worktree
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
                     // The on_activity callback bridges the callback-style
                     // MetroPort trait to the existing Action channel that
                     // update() consumes. Metro stderr errors are normal activity;
                     // only the adapter's explicit Exited activity clears the
                     // registered handle.
-                    let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> = Box::new(move |act| {
-                        forward_metro_activity(act, &activity_tx, &exited_tx);
-                    });
+                    let on_activity_worktree_id = worktree_id.clone();
+                    let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> =
+                        Box::new(move |act| {
+                            forward_metro_activity(
+                                &on_activity_worktree_id,
+                                act,
+                                &activity_tx,
+                                &exited_tx,
+                            );
+                        });
                     match metro.start(worktree, on_activity).await {
                         Ok(handle) => {
                             // Deliver via the dedicated handle channel — the
@@ -166,7 +181,10 @@ impl EffectRunner {
                             let _ = handle_tx.send(handle);
                         }
                         Err(e) => {
-                            let _ = action_tx.send(Action::MetroSpawnFailed(e.to_string()));
+                            let _ = action_tx.send(Action::MetroSpawnFailed {
+                                worktree_id,
+                                message: e.to_string(),
+                            });
                         }
                     }
                 });
@@ -581,7 +599,7 @@ mod tests {
         let (activity_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
         let exited_tx = activity_tx.clone();
 
-        forward_metro_activity(activity, &activity_tx, &exited_tx);
+        forward_metro_activity("wt-a", activity, &activity_tx, &exited_tx);
 
         let mut actions = Vec::new();
         while let Ok(action) = action_rx.try_recv() {
@@ -595,15 +613,16 @@ mod tests {
         let actions = collect_forwarded_actions(MetroActivity::Error("bundle failed".to_string()));
 
         assert!(
-            actions.contains(&Action::MetroActivityUpdate(MetroActivity::Error(
-                "bundle failed".to_string()
-            ))),
+            actions.contains(&Action::MetroActivityUpdate {
+                worktree_id: "wt-a".to_string(),
+                activity: MetroActivity::Error("bundle failed".to_string()),
+            }),
             "expected Metro error output to be forwarded as activity; got {actions:?}"
         );
         assert!(
             !actions
                 .iter()
-                .any(|action| matches!(action, Action::MetroExited)),
+                .any(|action| matches!(action, Action::MetroExited(_))),
             "Metro error output must not be treated as process exit; got {actions:?}"
         );
     }
@@ -615,7 +634,7 @@ mod tests {
         assert!(
             actions
                 .iter()
-                .any(|action| matches!(action, Action::MetroExited)),
+                .any(|action| matches!(action, Action::MetroExited(id) if id == "wt-a")),
             "Metro exit activity must notify the state machine; got {actions:?}"
         );
     }

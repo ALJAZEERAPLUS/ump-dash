@@ -9,8 +9,8 @@
 //! Preserved invariants:
 //! - process_group(0) + kill_on_drop(true) on the spawn (from TokioProcessClient)
 //! - PGID broadcast via `libc::kill(-pid, SIGKILL)` when killing
-//! - 50 × 100ms port-free wait loop before declaring the port free
-//! - single-instance invariant enforced by the caller (MetroManager.register)
+//! - 50 × 100ms selected-port-free wait loop before declaring the port free
+//! - per-worktree duplicate prevention enforced by the caller (MetroManager.register)
 //!
 //! Design note: `on_activity` is a `Box<dyn Fn(MetroActivity) + Send + Sync>`
 //! callback per Plan 13-03 Pitfall 8 — keeps the trait tokio-free while the
@@ -48,6 +48,7 @@ impl Default for TokioMetroAdapter {
 struct TokioMetroHandle {
     pid: u32,
     worktree_id: String,
+    port: u16,
     stdin_tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     stream_task: tokio::task::JoinHandle<()>,
     stdin_task: tokio::task::JoinHandle<()>,
@@ -61,6 +62,9 @@ impl MetroHandle for TokioMetroHandle {
     }
     fn worktree_id(&self) -> &str {
         &self.worktree_id
+    }
+    fn port(&self) -> u16 {
+        self.port
     }
     fn send_stdin(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.stdin_tx
@@ -96,7 +100,9 @@ impl MetroPort for TokioMetroAdapter {
         use crate::infra::process::TokioProcessClient;
 
         let client = TokioProcessClient;
-        let mut child = client.spawn_metro(worktree.clone()).await?;
+        let spawned = client.spawn_metro(worktree.clone()).await?;
+        let mut child = spawned.child;
+        let port = spawned.port;
 
         let pid = child.id().unwrap_or(0);
 
@@ -114,6 +120,7 @@ impl MetroPort for TokioMetroAdapter {
             stdout,
             stderr,
             kill_rx,
+            port,
             on_activity,
         ));
 
@@ -125,6 +132,7 @@ impl MetroPort for TokioMetroAdapter {
         let handle: Box<dyn MetroHandle> = Box::new(TokioMetroHandle {
             pid,
             worktree_id,
+            port,
             stdin_tx,
             stream_task,
             stdin_task,
@@ -152,6 +160,7 @@ async fn metro_process_task(
     stdout: tokio::process::ChildStdout,
     stderr: tokio::process::ChildStderr,
     mut kill_rx: tokio::sync::oneshot::Receiver<()>,
+    port: u16,
     on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
 ) {
     let on_activity: Arc<dyn Fn(MetroActivity) + Send + Sync> = Arc::from(on_activity);
@@ -165,13 +174,13 @@ async fn metro_process_task(
             if kill_result.is_ok() {
                 // Kill the entire process group. process_group(0) in spawn_metro makes
                 // the child the group leader (PID == PGID). Sending SIGKILL to -PGID
-                // kills yarn AND the Node metro server that holds port 8081.
+                // kills yarn AND the Node metro server that holds the selected port.
                 if let Some(id) = pid {
                     unsafe { libc::kill(-(id as i32), libc::SIGKILL); }
                 }
                 let _ = child.wait().await;
                 for _ in 0..50 {
-                    if crate::infra::port::port_is_free(8081) {
+                    if crate::infra::port::port_is_free(port) {
                         break;
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -371,6 +380,7 @@ mod tests {
             stdout,
             stderr,
             kill_rx,
+            8081,
             Box::new(move |activity| {
                 let _ = activity_tx.send(activity);
             }),

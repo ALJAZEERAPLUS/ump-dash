@@ -40,6 +40,9 @@ pub trait MetroHandle: Send + Sync + std::fmt::Debug {
     /// the metro pane.
     fn worktree_id(&self) -> &str;
 
+    /// TCP port selected for this metro instance.
+    fn port(&self) -> u16;
+
     /// Send a raw byte sequence to metro's stdin (e.g. `r\n` for reload).
     ///
     /// No-op is acceptable if the underlying channel has closed — callers
@@ -48,7 +51,7 @@ pub trait MetroHandle: Send + Sync + std::fmt::Debug {
 
     /// Consuming kill. The adapter is responsible for process-group SIGKILL
     /// (metro spawns `yarn` which spawns `node` — both must die), aborting
-    /// its internal tokio tasks, and waiting for port 8081 to free.
+    /// its internal tokio tasks, and waiting for the selected port to free.
     ///
     /// Takes `Box<Self>` so the trait stays object-safe — callers invoke
     /// `handle.kill()` on a `Box<dyn MetroHandle>` from
@@ -56,7 +59,7 @@ pub trait MetroHandle: Send + Sync + std::fmt::Debug {
     fn kill(self: Box<Self>) -> anyhow::Result<()>;
 }
 
-/// Port trait for starting + controlling the single metro instance. Plan 13-07's
+/// Port trait for starting + controlling Metro instances. Plan 13-07's
 /// `TokioMetroAdapter` in `src/infra/metro.rs` is the only concrete impl.
 #[async_trait::async_trait]
 pub trait MetroPort: Send + Sync {

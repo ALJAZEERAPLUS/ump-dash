@@ -48,14 +48,12 @@ pub async fn run(
 
     let runner = EffectRunner::new(adapters, action_tx.clone(), handle_tx.clone(), task_handle_tx.clone());
 
-    // Startup effects: load worktrees + check for external metro.
+    // Startup effects: load worktrees. Metro launches choose an available port
+    // at spawn time, so startup no longer locks on external 8081 ownership.
     runner
-        .run_effects(vec![
-            super::effect::Effect::ListWorktrees {
-                repo_root: state.app_config.repo_root.clone(),
-            },
-            super::effect::Effect::DetectExternalMetro { port: 8081 },
-        ])
+        .run_effects(vec![super::effect::Effect::ListWorktrees {
+            repo_root: state.app_config.repo_root.clone(),
+        }])
         .await;
 
     loop {
@@ -138,12 +136,12 @@ pub async fn run(
         }
     }
 
-    // Cleanup: kill metro process group before exiting.
+    // Cleanup: kill metro process groups before exiting.
     // We kill by PGID directly instead of going through the async metro_process_task,
     // because aborting stream_task would race with the kill.
-    if let Some(handle) = state.metro.take_handle() {
+    for handle in state.metro.take_all_handles() {
         let pid = handle.pid();
-        // Kill the entire process group (yarn + node) so port 8081 is freed.
+        // Kill the entire process group (yarn + node) so its port is freed.
         // process_group(0) in spawn sets PGID = child PID, so -PID targets the group.
         let _ = std::process::Command::new("kill")
             .args(["-9", &format!("-{pid}")])

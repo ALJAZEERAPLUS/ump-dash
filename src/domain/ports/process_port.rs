@@ -14,6 +14,12 @@
 use std::path::PathBuf;
 use tokio::process::Child;
 
+/// Spawned Metro child plus the port selected for this launch.
+pub struct SpawnedMetroProcess {
+    pub child: Child,
+    pub port: u16,
+}
+
 /// Trait boundary for metro process spawning.
 ///
 /// The domain and app layers depend only on this trait. `TokioProcessClient`
@@ -28,5 +34,5 @@ pub trait ProcessPort: Send + Sync {
     /// (see research pitfall 5).
     ///
     /// Pipes stdout/stderr/stdin for capture by drain_metro_output.
-    async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<Child>;
+    async fn spawn_metro(&self, worktree_path: PathBuf) -> anyhow::Result<SpawnedMetroProcess>;
 }

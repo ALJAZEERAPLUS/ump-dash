@@ -62,6 +62,20 @@ fn activity_column_index(columns: &[WorktreeTableColumn]) -> Option<usize> {
         .or_else(|| (!columns.is_empty()).then_some(0))
 }
 
+fn metro_activity_label(activity: Option<&crate::domain::metro::MetroActivity>, port: u16) -> String {
+    match activity {
+        Some(activity) => format!("\u{2502} {activity} :{port}"),
+        None => format!("\u{2502} Metro :{port}"),
+    }
+}
+
+fn metro_worktree_id_from_path(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
 /// Renders the worktree table (bottom section) with structured columns.
 pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     let border_style = if state.focused_panel == FocusedPanel::WorktreeTable {
@@ -200,16 +214,17 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         rows.push(Row::new(row_cells).style(row_style));
 
-        // If this worktree is running metro and we have activity info, add a detail row.
+        // If this worktree is running metro, add a detail row with activity and port.
+        let metro_worktree_id = metro_worktree_id_from_path(&wt.path);
         if wt.metro_status == WorktreeMetroStatus::Running
-            && let Some(ref activity) = state.metro.activity {
+            && let Some(port) = state.metro.running_port_for(&metro_worktree_id) {
                 let mut detail_cells = columns
                     .iter()
                     .map(|_| Cell::from(""))
                     .collect::<Vec<_>>();
                 if let Some(idx) = activity_column_index(columns) {
                     detail_cells[idx] = Cell::from(Span::styled(
-                        format!("\u{2502} {activity}"),
+                        metro_activity_label(state.metro.activity_for(&metro_worktree_id), port),
                         Style::default().fg(Color::Cyan),
                     ));
                 }
@@ -352,5 +367,24 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
             }),
             &mut scrollbar_state,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::metro::MetroActivity;
+
+    #[test]
+    fn metro_activity_label_shows_selected_port() {
+        assert_eq!(
+            metro_activity_label(Some(&MetroActivity::Ready), 8082),
+            "\u{2502} Ready :8082"
+        );
+    }
+
+    #[test]
+    fn metro_activity_label_falls_back_to_port_when_activity_missing() {
+        assert_eq!(metro_activity_label(None, 8083), "\u{2502} Metro :8083");
     }
 }

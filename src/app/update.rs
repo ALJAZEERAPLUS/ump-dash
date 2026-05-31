@@ -17,7 +17,7 @@ use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::worktree_slice::LastRunConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Plan 13-09 (F-204 consumer): the 11 inline prereq sites are rewritten to
 // build a `Recipe` and call `Recipe::expand(&deps)` — the dispatcher never
@@ -35,6 +35,39 @@ use std::path::PathBuf;
 //   GitResetHardFetch dispatch                                      → Recipe::GitFetchThenReset
 //   needs_metro pre-dispatch (3 sites: CommandRun / CommandExited drain / SyncBeforeRunDecline)
 //                                                                   → command_queue.push_front + MetroStart
+
+fn metro_worktree_id_from_path(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
+    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    state
+        .worktree_browser
+        .worktrees
+        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
+        .map(|wt| wt.path.clone())
+}
+
+fn active_metro_worktree_path(state: &AppState) -> PathBuf {
+    state
+        .metro_state
+        .active_worktree_path
+        .clone()
+        .or_else(|| selected_worktree_path(state))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn active_metro_worktree_id(state: &AppState) -> String {
+    metro_worktree_id_from_path(&active_metro_worktree_path(state))
+}
+
+fn active_worktree_has_metro(state: &AppState) -> bool {
+    state.metro.is_running_for(&active_metro_worktree_id(state))
+}
 
 /// Directly dispatches a command without going through the pre-processing pipeline.
 /// Used by ModalConfirm to run confirmed destructive commands, and internally after
@@ -278,35 +311,24 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroStart => {
             state.modal_stack.palette_mode = None;
-            if state.metro.is_running() {
-                state.metro_state.pending_restart = true;
-                effects.extend(update(state, Action::MetroStop));
+            if active_worktree_has_metro(state) {
                 return effects;
             }
-            // Skip external detection when restarting our own metro (worktree switch or restart).
-            // The port may still be releasing from our just-killed process — not an external conflict.
-            if state.metro_state.skip_external_metro_check {
-                state.metro_state.skip_external_metro_check = false;
-                effects.push(Effect::ScheduleAction(Action::MetroStartConfirmed));
-                return effects;
-            }
-            // Check for external metro conflict before spawning (F-201: DetectExternalMetro)
-            effects.push(Effect::DetectExternalMetro { port: 8081 });
+            state.metro_state.skip_external_metro_check = false;
+            effects.extend(update(state, Action::MetroStartConfirmed));
         }
 
         Action::MetroStartConfirmed => {
-            state.metro.set_starting();
-            let worktree_path = state
-                .metro_state
-                .active_worktree_path
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("."));
+            let worktree_path = active_metro_worktree_path(state);
+            let worktree_id = metro_worktree_id_from_path(&worktree_path);
+            state.metro.set_starting_for(worktree_id);
             effects.push(Effect::SpawnMetro { worktree: worktree_path });
         }
 
         Action::MetroStop => {
             state.modal_stack.palette_mode = None;
-            if let Some(handle) = state.metro.take_handle() {
+            let worktree_id = active_metro_worktree_id(state);
+            if let Some(handle) = state.metro.take_handle_for(&worktree_id) {
                 state.metro.set_stopping();
                 // Plan 13-03: kill() is the consuming trait method.
                 // Post-13-07, the handle is a TokioMetroHandle from TokioMetroAdapter.
@@ -318,9 +340,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroSendDebugger => {
             state.modal_stack.palette_mode = None;
-            if state.metro.is_running() {
+            let worktree_id = active_metro_worktree_id(state);
+            if let Some(port) = state.metro.running_port_for(&worktree_id) {
                 effects.push(Effect::MetroHttpPost {
-                    url: "http://localhost:8081/open-debugger".to_string(),
+                    url: format!("http://localhost:{port}/open-debugger"),
                     body: "{}".to_string(),
                 });
             }
@@ -328,33 +351,37 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroSendReload => {
             state.modal_stack.palette_mode = None;
-            if state.metro.is_running() {
+            let worktree_id = active_metro_worktree_id(state);
+            if let Some(port) = state.metro.running_port_for(&worktree_id) {
                 effects.push(Effect::MetroHttpPost {
-                    url: "http://localhost:8081/reload".to_string(),
+                    url: format!("http://localhost:{port}/reload"),
                     body: String::new(),
                 });
             }
         }
 
-        Action::MetroExited => {
+        Action::MetroExited(worktree_id) => {
             // Plan 13-09: pending_metro_run is gone — the deferred run command
             // (if any) sits in command_queue.front() and is drained on the
             // next MetroActivityUpdate(Ready). If metro exited unexpectedly,
             // clear the queue so a stale deferred command doesn't fire on the
             // next successful start.
             if !state.metro_state.pending_restart {
-                for slice in state.worktrees.values_mut() {
+                if let Some(slice_id) = state.worktree_browser.worktrees
+                    .iter()
+                    .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+                    .map(|wt| wt.id.clone())
+                    && let Some(slice) = state.worktrees.get_mut(&slice_id)
+                {
                     slice.queue.clear();
                     slice.post_drain = None;
                 }
             }
-            state.metro.clear();
+            state.metro.clear_worktree(&worktree_id);
             if state.metro_state.pending_restart {
                 state.metro_state.pending_restart = false;
                 // active_worktree_path is already updated synchronously at the
                 // worktree-switch call site (Plan 13-09 — no pending_switch_path).
-                // Signal MetroStart to skip external detection — the port may still be
-                // releasing from our just-killed process, not an external conflict.
                 state.metro_state.skip_external_metro_check = true;
                 effects.extend(update(state, Action::MetroStart));
             }
@@ -362,22 +389,27 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             effects.extend(update(state, Action::RefreshWorktrees));
         }
 
-        Action::MetroSpawnFailed(msg) => {
+        Action::MetroSpawnFailed { worktree_id, message } => {
             // Plan 13-09: clear queue + post-drain action; pending flags gone.
-            for slice in state.worktrees.values_mut() {
+            if let Some(slice_id) = state.worktree_browser.worktrees
+                .iter()
+                .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+                .map(|wt| wt.id.clone())
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
                 slice.queue.clear();
                 slice.post_drain = None;
             }
-            state.metro.clear();
+            state.metro.clear_worktree(&worktree_id);
             state.metro_state.pending_restart = false;
             state.error_state = Some(ErrorState {
-                message: format!("Metro failed to start: {msg}"),
+                message: format!("Metro failed to start: {message}"),
                 can_retry: true,
             });
         }
 
-        Action::MetroActivityUpdate(activity) => {
-            state.metro.activity = Some(activity.clone());
+        Action::MetroActivityUpdate { worktree_id, activity } => {
+            state.metro.record_activity(worktree_id.clone(), activity.clone());
             // Plan 13-09: pending_metro_run absorbed into command_queue. When
             // metro becomes Ready and nothing is currently running, drain the
             // queue front via CommandRun (preserves the full pipeline:
@@ -385,11 +417,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // pattern at the dispatch sites guarantees the awaited spec sits
             // at the head of the queue.
             if matches!(activity, crate::domain::metro::MetroActivity::Ready) {
-                // Phase 14 D-13 PRIMARY: walk slices for any whose head needs metro.
-                // Single-instance metro means only one slice can win this transition;
-                // others wait for the next CommandExited.
+                // Phase 14 D-13 PRIMARY: drain the queue for the worktree whose
+                // Metro instance just became ready.
                 let candidate_id = state.worktrees.iter()
-                    .find(|(_, s)| {
+                    .find(|(id, s)| {
+                        state.worktree_browser.worktrees
+                            .iter()
+                            .find(|wt| &wt.id == *id)
+                            .map(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+                            .unwrap_or(false)
+                            &&
                         s.task.is_none()
                             && s.queue.front().map(|c| c.needs_metro()).unwrap_or(false)
                     })
@@ -460,15 +497,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
             }
 
-            // Derive metro_status from current MetroManager state
-            if let crate::domain::metro::MetroStatus::Running { ref worktree_id, .. } = state.metro.status {
-                for wt in &mut worktrees {
-                    let wt_name = wt.path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
-                    if wt_name == worktree_id {
-                        wt.metro_status = crate::domain::worktree::WorktreeMetroStatus::Running;
-                    }
+            // Derive metro_status from every current MetroManager handle.
+            for wt in &mut worktrees {
+                let worktree_id = metro_worktree_id_from_path(&wt.path);
+                if state.metro.is_running_for(&worktree_id) {
+                    wt.metro_status = crate::domain::worktree::WorktreeMetroStatus::Running;
                 }
             }
 
@@ -617,7 +650,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // FRONT of the command_queue; on `MetroActivityUpdate(Ready)` the
             // queue is drained head-first via CommandRun (preserves the full
             // pipeline). Replaces the deleted `pending_metro_run` field.
-            if spec.needs_metro() && !state.metro.is_running() {
+            if spec.needs_metro() && !active_worktree_has_metro(state) {
                 // D-12 + D-13: push to head of slice queue (push_front) for the originating worktree.
                 if let Some(wt_id) = active_worktree_id(state) {
                     let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
@@ -786,21 +819,34 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 /// Head spec needs to be dispatched.
                 Dispatch(crate::domain::command::CommandSpec),
                 /// Head spec needs metro — push back and start metro.
-                NeedsMetro(crate::domain::command::CommandSpec),
+                NeedsMetro(Option<PathBuf>),
                 /// Queue is empty — consume post_drain.
                 PostDrain(Box<Action>),
                 /// Queue is empty, no post_drain.
                 Empty,
             }
 
+            let target_metro_path = target_id.as_ref().and_then(|id| {
+                state
+                    .worktree_browser
+                    .worktrees
+                    .iter()
+                    .find(|wt| &wt.id == id)
+                    .map(|wt| wt.path.clone())
+            });
+            let target_has_metro = target_metro_path
+                .as_ref()
+                .map(|path| state.metro.is_running_for(&metro_worktree_id_from_path(path)))
+                .unwrap_or_else(|| active_worktree_has_metro(state));
+
             let slice_drain = if let Some(ref id) = target_id
                 && let Some(slice) = state.worktrees.get_mut(id)
             {
                 if let Some(next_spec) = slice.queue.pop_front() {
-                    if next_spec.needs_metro() && !state.metro.is_running() {
+                    if next_spec.needs_metro() && !target_has_metro {
                         // D-13: metro stays metro-special. Push back to head of slice.
                         slice.queue.push_front(next_spec.clone());
-                        SliceDrainResult::NeedsMetro(next_spec)
+                        SliceDrainResult::NeedsMetro(target_metro_path)
                     } else {
                         SliceDrainResult::Dispatch(next_spec)
                     }
@@ -820,7 +866,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         effects.push(eff);
                     }
                 }
-                SliceDrainResult::NeedsMetro(_) => {
+                SliceDrainResult::NeedsMetro(path) => {
+                    if let Some(path) = path {
+                        state.metro_state.active_worktree_path = Some(path);
+                    }
                     effects.extend(update(state, Action::MetroStart));
                 }
                 SliceDrainResult::PostDrain(post) => {
@@ -902,10 +951,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.modal_stack.modal = None;
 
                 // Stop metro if it's running on the worktree being removed
-                if state.metro.is_running()
-                    && state.metro_state.active_worktree_path.as_ref() == Some(&wt_path) {
-                        effects.extend(update(state, Action::MetroStop));
-                    }
+                let worktree_id = metro_worktree_id_from_path(&wt_path);
+                if state.metro.is_running_for(&worktree_id) {
+                    state.metro_state.active_worktree_path = Some(wt_path.clone());
+                    effects.extend(update(state, Action::MetroStop));
+                }
 
                 // Immediately remove from worktree list for instant visual feedback
                 state.worktree_browser.worktrees.retain(|wt| wt.id != wt_id);
@@ -1324,10 +1374,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     if let Some(path) = target_path {
                         state.metro_state.active_worktree_path = Some(path);
                     }
-                    if state.metro.is_running() {
-                        state.metro_state.pending_restart = false;
-                        effects.extend(update(state, Action::MetroStop));
-                    }
                     let deps = DependencyState::new(true, false, false);
                     let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
                     if sequence.is_empty() {
@@ -1371,12 +1417,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(path) = target_path {
                 state.metro_state.active_worktree_path = Some(path);
             }
-            if state.metro.is_running() {
-                // Kill current → MetroExited → MetroStart in (already-updated) worktree
-                state.metro_state.pending_restart = true;
-                effects.extend(update(state, Action::MetroStop));
-            } else {
-                // Not running — just start directly in selected worktree
+            if !active_worktree_has_metro(state) {
                 effects.extend(update(state, Action::MetroStart));
             }
         }
@@ -1602,7 +1643,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // MetroStart (replaces `pending_metro_run`). The stale check
                 // won't re-trigger because the user just declined it.
                 let spec = *run_command;
-                if spec.needs_metro() && !state.metro.is_running() {
+                if spec.needs_metro() && !active_worktree_has_metro(state) {
                     // D-12 + D-13: push to head of slice queue for the originating worktree.
                     if let Some(wt_id) = active_worktree_id(state) {
                         let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
@@ -1627,7 +1668,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // call site when the SyncBeforeMetro modal was constructed.
 
                 // Stop metro if running (no auto-restart — sync must finish first)
-                if state.metro.is_running() {
+                if active_worktree_has_metro(state) {
                     state.metro_state.pending_restart = false;
                     effects.extend(update(state, Action::MetroStop));
                 }
@@ -1673,12 +1714,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(ModalState::SyncBeforeMetro { .. }) = state.modal_stack.modal.take() {
                 // Plan 13-09: active_worktree_path is already set at the
                 // WorktreeSwitchToSelected call site (no pending_switch_path).
-                if state.metro.is_running() {
-                    state.metro_state.pending_restart = true;
-                    effects.extend(update(state, Action::MetroStop));
-                } else {
-                    effects.extend(update(state, Action::MetroStart));
-                }
+                effects.extend(update(state, Action::MetroStart));
             }
         }
 
@@ -1744,8 +1780,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.modal_stack.pending_worktree_removal = Some((wt.id.clone(), wt.path.clone(), wt.branch.clone()));
 
             // Build confirm prompt — mention metro if it will be stopped
-            let metro_note = if state.metro.is_running()
-                && state.metro_state.active_worktree_path.as_ref() == Some(&wt.path)
+            let metro_note = if state.metro.is_running_for(&metro_worktree_id_from_path(&wt.path))
             {
                 " (metro will be stopped)"
             } else {

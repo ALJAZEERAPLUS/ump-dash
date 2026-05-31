@@ -20,6 +20,7 @@ use ump_dash::domain::ports::metro_port::MetroHandle;
 struct FakeMetroHandle {
     pid: u32,
     worktree_id: String,
+    port: u16,
 }
 
 impl MetroHandle for FakeMetroHandle {
@@ -28,6 +29,9 @@ impl MetroHandle for FakeMetroHandle {
     }
     fn worktree_id(&self) -> &str {
         &self.worktree_id
+    }
+    fn port(&self) -> u16 {
+        self.port
     }
     fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
         Ok(())
@@ -45,5 +49,6 @@ pub fn fake_metro_handle(pid: u32, worktree: &str) -> Box<dyn MetroHandle> {
     Box::new(FakeMetroHandle {
         pid,
         worktree_id: worktree.to_string(),
+        port: 8081,
     })
 }

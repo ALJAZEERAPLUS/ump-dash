@@ -916,6 +916,30 @@ mod worktrees_loaded {
         assert!(state.worktrees.contains_key(&WorktreeId("wt-A".into())));
         assert!(state.worktrees.contains_key(&WorktreeId("wt-B".into())));
     }
+
+    #[test]
+    fn worktrees_loaded_marks_every_running_metro_worktree() {
+        let mut state = AppState::default();
+
+        #[derive(Debug)]
+        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
+            fn pid(&self) -> u32 { self.pid }
+            fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn port(&self) -> u16 { self.port }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+        }
+
+        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+        state.metro.register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+
+        let mut worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
+        let _ = update(&mut state, Action::WorktreesLoaded(worktrees.clone()));
+        worktrees = state.worktree_browser.worktrees;
+
+        assert!(worktrees.iter().all(|wt| wt.metro_status == WorktreeMetroStatus::Running));
+    }
 }
 
 // =========================================================================
@@ -948,8 +972,7 @@ mod parallelism {
         assert_eq!(count_running, 2, "TASK-02 contract: parallel tasks across worktrees");
     }
 
-    /// COVER-01 / D-13 contract: MetroStart while already running triggers
-    /// the restart path, not a double-spawn.
+    /// COVER-01 / D-13 contract: MetroStart is scoped to the selected worktree.
     ///
     /// This is a unit-level restatement of the integration test in
     /// `tests/metro_single_instance.rs` (COVER-01). If accessing
@@ -957,36 +980,38 @@ mod parallelism {
     /// a public test-helper type, this test is marked `#[ignore]` and
     /// coverage deferred to COVER-01.
     #[test]
-    fn metro_start_on_a_while_metro_running_on_b_keeps_single_instance() {
+    fn metro_start_on_a_while_metro_running_on_b_spawns_second_instance() {
         let mut state = base_state();
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
         // Register a fake MetroHandle to simulate metro running in wt-B.
         #[derive(Debug)]
-        struct FakeMetroHandle { pid: u32, worktree_id: String }
+        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
         impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
             fn pid(&self) -> u32 { self.pid }
             fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn port(&self) -> u16 { self.port }
             fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
             fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
         }
-        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into() }));
-        assert!(state.metro.is_running(), "precondition: metro running in wt-B");
+        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into(), port: 8081 }));
+        assert!(state.metro.is_running_for("wt-B"), "precondition: metro running in wt-B");
 
         // Set active worktree to A (index 0) and dispatch MetroStart.
         state.worktree_browser.worktree_table_state.select(Some(0));
         // Skip external detection so the test stays synchronous.
         state.metro_state.skip_external_metro_check = true;
-        let _effects = update(&mut state, Action::MetroStart);
+        let effects = update(&mut state, Action::MetroStart);
 
-        // COVER-01 contract: still only one MetroHandle registered (restart path,
-        // not double-spawn). The handler calls MetroStop first (pending_restart=true)
-        // so metro may be Stopping or about to be restarted — either way is_running()
-        // reflects the single-instance invariant.
-        // Regardless of whether pending_restart or restart-in-progress, no second
-        // SpawnMetro effect should have fired unconditionally.
-        assert!(state.metro_state.pending_restart,
-            "COVER-01: MetroStart-while-running must set pending_restart=true");
+        assert!(
+            !state.metro_state.pending_restart,
+            "starting Metro on another worktree must not stop/restart the existing one"
+        );
+        assert!(state.metro.is_running_for("wt-B"), "existing Metro must stay registered");
+        assert!(
+            effects.iter().any(|effect| matches!(effect, Effect::SpawnMetro { worktree } if worktree.ends_with("wt-A"))),
+            "selected wt-A should get its own SpawnMetro effect; got {effects:?}"
+        );
     }
 }
 
