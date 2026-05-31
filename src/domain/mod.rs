@@ -6,6 +6,7 @@ pub mod command;
 pub mod dash_config;
 pub mod jira;
 pub mod metro;
+pub mod native_cache;
 pub mod pipeline;
 pub mod ports;
 pub mod refresh;
