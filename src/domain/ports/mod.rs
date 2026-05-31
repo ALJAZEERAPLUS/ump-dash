@@ -12,6 +12,7 @@ pub mod device_port;
 pub mod jira_port;
 pub mod metro_port;
 pub mod multiplexer_port;
+pub mod native_cache_port;
 pub mod port_probe_port;
 pub mod process_port;
 pub mod task_handle;
