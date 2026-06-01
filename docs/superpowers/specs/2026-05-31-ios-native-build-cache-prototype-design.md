@@ -34,7 +34,7 @@ When the user opens the iOS palette on a selected worktree:
 
 If no cache hit exists, the `c` shortcut is hidden. The normal `i>r` UMP run flow remains unchanged.
 
-The worktree table shows a final `cache` column by default. It displays the first eight fingerprint characters for cache hits, `...` while lookup is in progress, `err` for lookup errors, and `-` for misses or unknown state.
+The worktree table shows a final `cache` column by default. It displays the first eight native fingerprint characters for both cache hits and cache misses, `...` while lookup is in progress, `err` for lookup errors, and `-` only for unknown state.
 
 ## Cache Shape
 

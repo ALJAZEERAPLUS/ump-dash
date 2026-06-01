@@ -24,13 +24,30 @@ pub struct IosSimulatorCacheHit {
     pub artifact_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IosSimulatorCacheLookup {
+    Hit(IosSimulatorCacheHit),
+    Miss { fingerprint: String },
+}
+
+impl IosSimulatorCacheLookup {
+    pub fn into_cache_state(self) -> IosSimulatorCacheState {
+        match self {
+            Self::Hit(hit) => IosSimulatorCacheState::Hit(hit),
+            Self::Miss { fingerprint } => IosSimulatorCacheState::Miss { fingerprint },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IosSimulatorCacheState {
     #[default]
     Unknown,
     Checking,
     Hit(IosSimulatorCacheHit),
-    Miss,
+    Miss {
+        fingerprint: String,
+    },
     Error(String),
 }
 

@@ -786,7 +786,9 @@ mod ump_run_dialog {
             &mut state,
             Action::IosSimulatorCacheLookupFinished {
                 worktree_id: worktree_id.clone(),
-                result: Ok(Some(hit.clone())),
+                result: Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(
+                    hit.clone(),
+                )),
             },
         );
         assert!(effects.is_empty());
@@ -803,7 +805,9 @@ mod ump_run_dialog {
             &mut state,
             Action::IosSimulatorCacheLookupFinished {
                 worktree_id: worktree_id.clone(),
-                result: Ok(None),
+                result: Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss {
+                    fingerprint: "0123456789abcdef".into(),
+                }),
             },
         );
         assert!(effects.is_empty());
@@ -813,7 +817,9 @@ mod ump_run_dialog {
                 .get(&worktree_id)
                 .expect("slice should exist")
                 .ios_simulator_cache,
-            IosSimulatorCacheState::Miss
+            IosSimulatorCacheState::Miss {
+                fingerprint: "0123456789abcdef".into(),
+            }
         );
 
         let effects = update(

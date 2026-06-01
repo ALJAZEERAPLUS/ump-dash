@@ -2072,8 +2072,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         } => {
             if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                 slice.ios_simulator_cache = match result {
-                    Ok(Some(hit)) => crate::domain::native_cache::IosSimulatorCacheState::Hit(hit),
-                    Ok(None) => crate::domain::native_cache::IosSimulatorCacheState::Miss,
+                    Ok(lookup) => lookup.into_cache_state(),
                     Err(message) => {
                         crate::domain::native_cache::IosSimulatorCacheState::Error(message)
                     }

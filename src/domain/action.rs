@@ -128,7 +128,7 @@ pub enum Action {
     SimulatorUsed(String), // record UDID after successful iOS run start
     IosSimulatorCacheLookupFinished {
         worktree_id: crate::domain::worktree::WorktreeId,
-        result: Result<Option<crate::domain::native_cache::IosSimulatorCacheHit>, String>,
+        result: Result<crate::domain::native_cache::IosSimulatorCacheLookup, String>,
     },
     CachedIosRun(crate::domain::native_cache::IosSimulatorCacheHit),
     CachedIosLaunchFinished {

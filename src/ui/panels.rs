@@ -83,16 +83,21 @@ fn metro_activity_label(
 }
 
 fn cache_column_label(slice: Option<&crate::domain::worktree_slice::WorktreeSlice>) -> String {
+    fn short_fingerprint(fingerprint: &str) -> String {
+        let short = fingerprint.chars().take(8).collect::<String>();
+        if short.is_empty() { "-".into() } else { short }
+    }
+
     match slice.map(|slice| &slice.ios_simulator_cache) {
         Some(crate::domain::native_cache::IosSimulatorCacheState::Hit(hit)) => {
-            let short = hit.metadata.fingerprint.chars().take(8).collect::<String>();
-            if short.is_empty() { "-".into() } else { short }
+            short_fingerprint(&hit.metadata.fingerprint)
         }
         Some(crate::domain::native_cache::IosSimulatorCacheState::Checking) => "...".into(),
         Some(crate::domain::native_cache::IosSimulatorCacheState::Error(_)) => "err".into(),
-        Some(crate::domain::native_cache::IosSimulatorCacheState::Miss)
-        | Some(crate::domain::native_cache::IosSimulatorCacheState::Unknown)
-        | None => "-".into(),
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Miss { fingerprint }) => {
+            short_fingerprint(fingerprint)
+        }
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Unknown) | None => "-".into(),
     }
 }
 
@@ -484,7 +489,7 @@ mod tests {
     }
 
     #[test]
-    fn cache_column_label_shows_compact_statuses() {
+    fn cache_column_label_shows_miss_fingerprint_and_compact_statuses() {
         let checking = WorktreeSlice {
             ios_simulator_cache: IosSimulatorCacheState::Checking,
             ..Default::default()
@@ -494,13 +499,15 @@ mod tests {
             ..Default::default()
         };
         let miss = WorktreeSlice {
-            ios_simulator_cache: IosSimulatorCacheState::Miss,
+            ios_simulator_cache: IosSimulatorCacheState::Miss {
+                fingerprint: "0123456789abcdef".into(),
+            },
             ..Default::default()
         };
 
         assert_eq!(cache_column_label(Some(&checking)), "...");
         assert_eq!(cache_column_label(Some(&error)), "err");
-        assert_eq!(cache_column_label(Some(&miss)), "-");
+        assert_eq!(cache_column_label(Some(&miss)), "01234567");
         assert_eq!(cache_column_label(None), "-");
     }
 }

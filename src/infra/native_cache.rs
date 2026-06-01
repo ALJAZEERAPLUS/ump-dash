@@ -1,6 +1,6 @@
 use crate::domain::native_cache::{
     CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
-    IosSimulatorCacheMetadata, ios_native_fingerprint,
+    IosSimulatorCacheLookup, IosSimulatorCacheMetadata, ios_native_fingerprint,
 };
 use crate::domain::ports::native_cache_port::NativeCachePort;
 use std::path::{Path, PathBuf};
@@ -33,12 +33,12 @@ fn ios_entry_dir(root: &Path, fingerprint: &str) -> PathBuf {
 pub fn lookup_ios_simulator_in_root(
     root: &Path,
     worktree_path: PathBuf,
-) -> anyhow::Result<Option<IosSimulatorCacheHit>> {
+) -> anyhow::Result<IosSimulatorCacheLookup> {
     let fingerprint = ios_native_fingerprint(&worktree_path)?;
     let entry = ios_entry_dir(root, &fingerprint);
     let metadata_path = entry.join("metadata.json");
     if !metadata_path.exists() {
-        return Ok(None);
+        return Ok(IosSimulatorCacheLookup::Miss { fingerprint });
     }
 
     let metadata: IosSimulatorCacheMetadata =
@@ -62,7 +62,7 @@ pub fn lookup_ios_simulator_in_root(
         anyhow::bail!("cached .app missing: {}", artifact_path.display());
     }
 
-    Ok(Some(IosSimulatorCacheHit {
+    Ok(IosSimulatorCacheLookup::Hit(IosSimulatorCacheHit {
         metadata,
         artifact_path,
     }))
@@ -122,7 +122,7 @@ impl NativeCachePort for LocalNativeCache {
     async fn lookup_ios_simulator(
         &self,
         worktree_path: PathBuf,
-    ) -> anyhow::Result<Option<IosSimulatorCacheHit>> {
+    ) -> anyhow::Result<IosSimulatorCacheLookup> {
         lookup_ios_simulator_in_root(&native_cache_root(), worktree_path)
     }
 
@@ -250,11 +250,28 @@ mod tests {
             worktree.path(),
         )?;
 
-        let hit = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?
-            .expect("valid cache hit");
+        let hit = match lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())? {
+            IosSimulatorCacheLookup::Hit(hit) => hit,
+            IosSimulatorCacheLookup::Miss { fingerprint } => {
+                panic!("expected cache hit, got miss for {fingerprint}")
+            }
+        };
 
         assert_eq!(hit.metadata.bundle_id, "com.aljazeera.dashboard");
         assert_eq!(hit.artifact_path, entry.join("artifact.app"));
+        Ok(())
+    }
+
+    #[test]
+    fn lookup_returns_miss_with_fingerprint_when_artifact_absent() -> anyhow::Result<()> {
+        let root = TempTree::new("miss-root")?;
+        let worktree = TempTree::new("miss-worktree")?;
+        seed_fingerprint_files(worktree.path())?;
+        let fingerprint = ios_native_fingerprint(worktree.path())?;
+
+        let lookup = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?;
+
+        assert_eq!(lookup, IosSimulatorCacheLookup::Miss { fingerprint });
         Ok(())
     }
 
