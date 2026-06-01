@@ -4,6 +4,7 @@ use crate::domain::native_cache::{
 };
 use crate::domain::ports::native_cache_port::NativeCachePort;
 use std::path::{Path, PathBuf};
+use std::process::{Output, Stdio};
 use tokio::process::Command;
 
 #[derive(Debug, Default)]
@@ -93,6 +94,29 @@ pub fn simctl_launch_command(request: &CachedIosLaunchRequest) -> SimctlLaunchCo
     }
 }
 
+fn process_output_lines(stage: &str, output: &Output) -> Vec<String> {
+    let mut lines = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim();
+        if !line.is_empty() {
+            lines.push(format!("{stage} stdout: {line}"));
+        }
+    }
+    for line in String::from_utf8_lossy(&output.stderr).lines() {
+        let line = line.trim();
+        if !line.is_empty() {
+            lines.push(format!("{stage} stderr: {line}"));
+        }
+    }
+    lines
+}
+
+fn process_failure_message(stage: &str, output: &Output) -> String {
+    let mut parts = vec![format!("{stage} failed with status {}", output.status)];
+    parts.extend(process_output_lines(stage, output));
+    parts.join("; ")
+}
+
 #[async_trait::async_trait]
 impl NativeCachePort for LocalNativeCache {
     async fn lookup_ios_simulator(
@@ -111,10 +135,11 @@ impl NativeCachePort for LocalNativeCache {
                 &request.simulator_udid,
                 request.app_path.as_path(),
             ))
-            .status()
+            .stdin(Stdio::null())
+            .output()
             .await?;
-        if !install_status.success() {
-            anyhow::bail!("install failed with status {install_status}");
+        if !install_status.status.success() {
+            anyhow::bail!(process_failure_message("install", &install_status));
         }
 
         let launch = simctl_launch_command(&request);
@@ -123,18 +148,21 @@ impl NativeCachePort for LocalNativeCache {
         for (key, value) in &launch.env {
             command.env(key, value);
         }
-        let launch_status = command.status().await?;
-        if !launch_status.success() {
-            anyhow::bail!("launch failed with status {launch_status}");
+        let launch_status = command.stdin(Stdio::null()).output().await?;
+        if !launch_status.status.success() {
+            anyhow::bail!(process_failure_message("launch", &launch_status));
         }
 
-        Ok(vec![
+        let mut lines = vec![
             format!("installed {}", request.app_path.display()),
             format!(
                 "launched {} on {} with Metro port {}",
                 request.bundle_id, request.simulator_udid, request.metro_port
             ),
-        ])
+        ];
+        lines.extend(process_output_lines("install", &install_status));
+        lines.extend(process_output_lines("launch", &launch_status));
+        Ok(lines)
     }
 }
 
@@ -146,6 +174,8 @@ mod tests {
         IosSimulatorCacheMetadata, ios_native_fingerprint,
     };
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -282,5 +312,49 @@ mod tests {
             "unexpected error: {err}"
         );
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_output_lines_include_non_empty_stdout_and_stderr() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: b"installed ok\n\nnext line\n".to_vec(),
+            stderr: b"warning line\n".to_vec(),
+        };
+
+        assert_eq!(
+            process_output_lines("install", &output),
+            vec![
+                "install stdout: installed ok".to_string(),
+                "install stdout: next line".to_string(),
+                "install stderr: warning line".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn process_failure_message_includes_stage_status_stdout_and_stderr() {
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1),
+            stdout: b"launch stdout detail\n".to_vec(),
+            stderr: b"launch stderr detail\n".to_vec(),
+        };
+
+        let message = process_failure_message("launch", &output);
+
+        assert!(
+            message.contains("launch failed with status"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("launch stdout: launch stdout detail"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("launch stderr: launch stderr detail"),
+            "unexpected message: {message}"
+        );
     }
 }

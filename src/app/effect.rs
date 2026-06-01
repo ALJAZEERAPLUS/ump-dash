@@ -59,6 +59,7 @@ pub enum Effect {
     },
     LoadDevices {
         kind: DeviceKind,
+        request_id: Option<u64>,
     },
     LookupIosSimulatorCache {
         worktree_id: crate::domain::worktree::WorktreeId,
@@ -194,6 +195,7 @@ mod tests {
         let _ = Effect::KillProcess { pid: 999 };
         let _ = Effect::LoadDevices {
             kind: DeviceKind::Android,
+            request_id: None,
         };
         let _ = Effect::MetroHttpPost {
             url: "http://localhost:8081/reload".into(),

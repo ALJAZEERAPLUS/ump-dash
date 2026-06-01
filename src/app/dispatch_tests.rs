@@ -120,6 +120,7 @@ fn pending_cached_ios_run_fixture(
         worktree_id: WorktreeId(worktree_id.into()),
         worktree_path: std::path::PathBuf::from(format!("/tmp/{worktree_id}")),
         cache_hit,
+        device_request_id: 1,
     }
 }
 
@@ -850,7 +851,8 @@ mod ump_run_dialog {
             matches!(
                 effects.as_slice(),
                 [Effect::LoadDevices {
-                    kind: DeviceKind::Android
+                    kind: DeviceKind::Android,
+                    request_id: None,
                 }]
             ),
             "expected Android target load before run-type or metro; got {effects:?}"
@@ -883,6 +885,7 @@ mod ump_run_dialog {
             std::path::PathBuf::from("/tmp/wt-1")
         );
         assert_eq!(pending_run.cache_hit, hit);
+        assert_eq!(pending_run.device_request_id, 1);
         assert!(matches!(
             state.modal_stack.pending_device_command,
             Some(CommandSpec::UmpRunIos {
@@ -894,8 +897,10 @@ mod ump_run_dialog {
             matches!(
                 effects.as_slice(),
                 [Effect::LoadDevices {
-                    kind: DeviceKind::Ios
+                    kind: DeviceKind::Ios,
+                    request_id: Some(request_id),
                 }]
+                    if *request_id == pending_run.device_request_id
             ),
             "expected cached iOS run to load iOS devices; got {effects:?}"
         );
@@ -912,7 +917,8 @@ mod ump_run_dialog {
             matches!(
                 effects.as_slice(),
                 [Effect::LoadDevices {
-                    kind: DeviceKind::Ios
+                    kind: DeviceKind::Ios,
+                    request_id: Some(_),
                 }]
             ),
             "cached run should begin by loading iOS simulators; got {effects:?}"
@@ -922,10 +928,14 @@ mod ump_run_dialog {
 
         let effects = update(
             &mut state,
-            Action::DevicesEnumerated(vec![crate::domain::command::DeviceInfo {
-                id: "SIM-origin".into(),
-                name: "iPhone 15".into(),
-            }]),
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Ios,
+                request_id: Some(1),
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "SIM-origin".into(),
+                    name: "iPhone 15".into(),
+                }],
+            },
         );
 
         assert_eq!(
@@ -964,7 +974,8 @@ mod ump_run_dialog {
             matches!(
                 effects.as_slice(),
                 [Effect::LoadDevices {
-                    kind: DeviceKind::Ios
+                    kind: DeviceKind::Ios,
+                    request_id: Some(_),
                 }]
             ),
             "cached run should begin by loading iOS simulators; got {effects:?}"
@@ -977,10 +988,14 @@ mod ump_run_dialog {
 
         let late_effects = update(
             &mut state,
-            Action::DevicesEnumerated(vec![crate::domain::command::DeviceInfo {
-                id: "SIM-late".into(),
-                name: "iPhone 15".into(),
-            }]),
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Ios,
+                request_id: Some(1),
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "SIM-late".into(),
+                    name: "iPhone 15".into(),
+                }],
+            },
         );
 
         assert!(
@@ -1041,6 +1056,110 @@ mod ump_run_dialog {
                 .any(|effect| matches!(effect, Effect::SpawnMetro { .. })),
             "cached launch should start Metro when no port is running; got {effects:?}"
         );
+    }
+
+    #[test]
+    fn cached_ios_run_ignores_mismatched_device_enumeration() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+
+        let effects = update(&mut state, Action::CachedIosRun(hit.clone()));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::LoadDevices {
+                kind: DeviceKind::Ios,
+                request_id: Some(1),
+            }]
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Android,
+                request_id: None,
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "android-stale".into(),
+                    name: "Pixel".into(),
+                }],
+            },
+        );
+
+        assert!(
+            effects.is_empty(),
+            "stale devices must be ignored; got {effects:?}"
+        );
+        assert_eq!(
+            state
+                .modal_stack
+                .pending_cached_ios_run
+                .as_ref()
+                .map(|run| (
+                    run.worktree_id.clone(),
+                    run.device_request_id,
+                    run.cache_hit.clone(),
+                )),
+            Some((WorktreeId("wt-1".into()), 1, hit))
+        );
+        assert!(matches!(
+            state.modal_stack.pending_device_command,
+            Some(CommandSpec::UmpRunIos {
+                ref device_id,
+                variant: Some(RunVariant::Local),
+            }) if device_id.is_empty()
+        ));
+        assert!(state.modal_stack.modal.is_none());
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0);
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|slice| slice.pending_cached_ios_launch.as_ref())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn cached_ios_run_ignores_older_device_request() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+
+        let effects = update(&mut state, Action::CachedIosRun(hit.clone()));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::LoadDevices {
+                kind: DeviceKind::Ios,
+                request_id: Some(1),
+            }]
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Ios,
+                request_id: Some(0),
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "SIM-old".into(),
+                    name: "iPhone 14".into(),
+                }],
+            },
+        );
+
+        assert!(
+            effects.is_empty(),
+            "older cached request must be ignored; got {effects:?}"
+        );
+        assert_eq!(
+            state
+                .modal_stack
+                .pending_cached_ios_run
+                .as_ref()
+                .map(|run| run.device_request_id),
+            Some(1)
+        );
+        assert!(state.modal_stack.modal.is_none());
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0);
     }
 
     #[test]
@@ -1192,7 +1311,14 @@ mod ump_run_dialog {
             variant: Some(RunVariant::Local),
         });
 
-        let effects = update(&mut state, Action::DevicesEnumerated(vec![]));
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Ios,
+                request_id: Some(1),
+                devices: vec![],
+            },
+        );
 
         assert!(effects.is_empty());
         assert!(state.modal_stack.pending_cached_ios_run.is_none());

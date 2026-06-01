@@ -112,6 +112,7 @@ pub struct PendingCachedIosRun {
     pub worktree_id: crate::domain::worktree::WorktreeId,
     pub worktree_path: std::path::PathBuf,
     pub cache_hit: crate::domain::native_cache::IosSimulatorCacheHit,
+    pub device_request_id: u64,
 }
 
 /// Modal + palette + pending coordinator state. Single bag for one-modal-at-a-time
@@ -133,6 +134,9 @@ pub struct ModalStackState {
 
     /// Pending cached iOS run — stored while async simulator enumeration is in flight.
     pub pending_cached_ios_run: Option<PendingCachedIosRun>,
+
+    /// Monotonic request id used to ignore stale cached iOS device enumeration callbacks.
+    pub next_device_request_id: u64,
 
     /// Worktree removal — set when w>d is pressed, consumed by ModalConfirm.
     pub pending_worktree_removal: Option<(

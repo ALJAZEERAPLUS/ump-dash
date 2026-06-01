@@ -4,12 +4,12 @@
 #[allow(dead_code)]
 pub enum Action {
     // Navigation
-    FocusNext,             // Tab
-    FocusPrev,             // Shift-Tab
-    FocusUp,               // k or Up arrow
-    FocusDown,             // j or Down arrow
-    FocusLeft,             // h or Left arrow
-    FocusRight,            // l or Right arrow
+    FocusNext,  // Tab
+    FocusPrev,  // Shift-Tab
+    FocusUp,    // k or Up arrow
+    FocusDown,  // j or Down arrow
+    FocusLeft,  // h or Left arrow
+    FocusRight, // l or Right arrow
 
     // Search
     Search, // / (Phase 1: stub — no-op. Phase 4+ will activate search mode.)
@@ -19,8 +19,8 @@ pub enum Action {
     DismissHelp, // q or Esc (when help overlay visible)
 
     // Error handling
-    DismissError,       // Esc or q (when error overlay visible)
-    RetryLastCommand,   // r (when error overlay visible)
+    DismissError,     // Esc or q (when error overlay visible)
+    RetryLastCommand, // r (when error overlay visible)
 
     // App lifecycle
     Quit, // q (when no overlay active)
@@ -28,22 +28,25 @@ pub enum Action {
     // Metro control (user-triggered)
     MetroStart,
     MetroStop,
-    MetroSendDebugger,   // J when worktree table focused (metro running) or j in metro palette — HTTP POST /open-debugger
-    MetroSendReload,     // R when worktree table focused (metro running) or R in metro palette — HTTP POST /reload
+    MetroSendDebugger, // J when worktree table focused (metro running) or j in metro palette — HTTP POST /open-debugger
+    MetroSendReload, // R when worktree table focused (metro running) or R in metro palette — HTTP POST /reload
 
     // Metro background events (not user-triggered — sent by background tasks)
     MetroExited(String), // metro process has stopped (carries worktree id)
-    MetroSpawnFailed { worktree_id: String, message: String }, // spawn error message — surfaces to error_state
+    MetroSpawnFailed {
+        worktree_id: String,
+        message: String,
+    }, // spawn error message — surfaces to error_state
     MetroActivityUpdate {
         worktree_id: String,
         activity: crate::domain::metro::MetroActivity,
     }, // parsed stdout activity
 
     // Phase 3: Worktree navigation
-    WorktreeSelectNext,   // j/Down in WorktreeList panel
-    WorktreeSelectPrev,   // k/Up in WorktreeList panel
+    WorktreeSelectNext, // j/Down in WorktreeList panel
+    WorktreeSelectPrev, // k/Up in WorktreeList panel
     WorktreesLoaded(Vec<crate::domain::worktree::Worktree>), // background refresh done
-    RefreshWorktrees,     // manual refresh keybinding
+    RefreshWorktrees,   // manual refresh keybinding
 
     // Phase 3: Command lifecycle
     CommandRun(crate::domain::command::CommandSpec), // dispatched when command is confirmed/ready
@@ -62,8 +65,8 @@ pub enum Action {
         task_id: crate::domain::task::TaskId,
         status: crate::domain::task::ExitStatus,
     },
-    CommandOutputClear,         // clear the output panel
-    CommandCancel,              // abort running command
+    CommandOutputClear, // clear the output panel
+    CommandCancel,      // abort running command
 
     // Phase 3: Modal flow
     ModalConfirm,           // user pressed Y in confirm dialog
@@ -79,13 +82,17 @@ pub enum Action {
     ModalRunVariantConfirm, // Enter on selected UMP run type
 
     // Phase 3: Device enumeration (internal — sent by background task, not user)
-    DevicesEnumerated(Vec<crate::domain::command::DeviceInfo>),
+    DevicesEnumerated {
+        kind: crate::domain::ports::device_port::DeviceKind,
+        request_id: Option<u64>,
+        devices: Vec<crate::domain::command::DeviceInfo>,
+    },
 
     // Phase 3: Command palette activation
-    EnterGitPalette,  // 'g' when WorktreeList focused — activates git palette mode
+    EnterGitPalette, // 'g' when WorktreeList focused — activates git palette mode
 
     // Phase 4: JIRA title background fetch results
-    JiraTitlesFetched(Vec<(String, String)>),  // (ticket_key, title)
+    JiraTitlesFetched(Vec<(String, String)>), // (ticket_key, title)
 
     // Phase 5: Worktree switching and Claude Code
     WorktreeSwitchToSelected, // Enter on worktree — switch metro to selected worktree
@@ -97,28 +104,28 @@ pub enum Action {
     CommandQueueClear,                                     // discard all pending items in the queue
 
     // Phase 5.1: Submenu activation
-    EnterAndroidPalette,    // 'a' when WorktreeTable focused
-    EnterIosPalette,        // 'i' when WorktreeTable focused
-    EnterYarnPalette,       // 'y' when WorktreeTable focused
-    EnterWorktreePalette,   // 'w' when WorktreeTable focused
+    EnterAndroidPalette,  // 'a' when WorktreeTable focused
+    EnterIosPalette,      // 'i' when WorktreeTable focused
+    EnterYarnPalette,     // 'y' when WorktreeTable focused
+    EnterWorktreePalette, // 'w' when WorktreeTable focused
     // EnterGitPalette already exists
 
     // Phase 5.1: Clean toggle actions
-    OpenCleanMenu,          // y>c — open CleanToggle modal from yarn palette
+    OpenCleanMenu, // y>c — open CleanToggle modal from yarn palette
     CleanToggleNodeModules,
     CleanTogglePods,
     CleanToggleAndroid,
     CleanToggleSyncAfter,
-    CleanConfirm,           // dispatches queued clean commands from CleanOptions
+    CleanConfirm, // dispatches queued clean commands from CleanOptions
 
     // Phase 5.1: Fullscreen
-    ToggleFullscreen,       // 'f' key — toggle fullscreen for current focused pane
+    ToggleFullscreen, // 'f' key — toggle fullscreen for current focused pane
 
     // Phase 5.1: Shell command
-    StartShellCommand,      // '!' key — opens text input modal for shell command
+    StartShellCommand, // '!' key — opens text input modal for shell command
 
     // Phase 5.1: Simulator history
-    SimulatorUsed(String),  // record UDID after successful iOS run start
+    SimulatorUsed(String), // record UDID after successful iOS run start
     IosSimulatorCacheLookupFinished {
         worktree_id: crate::domain::worktree::WorktreeId,
         result: Result<Option<crate::domain::native_cache::IosSimulatorCacheHit>, String>,
@@ -130,45 +137,45 @@ pub enum Action {
     },
 
     // Phase 5.1: Sync-before-run
-    SyncBeforeRunAccept,    // user said "Yes" to sync prompt
-    SyncBeforeRunDecline,   // user said "No" to sync prompt — run without sync
+    SyncBeforeRunAccept,  // user said "Yes" to sync prompt
+    SyncBeforeRunDecline, // user said "No" to sync prompt — run without sync
 
     // Quick-260410-mu7: Sync-before-metro
-    SyncBeforeMetroAccept,    // user said "Yes" to sync before metro
-    SyncBeforeMetroDecline,   // user said "No" — start metro without sync
+    SyncBeforeMetroAccept,  // user said "Yes" to sync before metro
+    SyncBeforeMetroDecline, // user said "No" — start metro without sync
 
     // Phase 5.2: Universal scroll
-    ScrollToTop,            // gg (two g presses) — scroll to top of focused scrollable pane
-    ScrollToBottom,         // G — scroll to bottom, re-enable auto-follow
-    SetPendingG,            // first g press in scrollable pane — pending gg sequence
-    CommandOutputScrollUp,  // k in CommandOutput pane — scroll up
-    CommandOutputScrollDown,// j in CommandOutput pane — scroll down
+    ScrollToTop,    // gg (two g presses) — scroll to top of focused scrollable pane
+    ScrollToBottom, // G — scroll to bottom, re-enable auto-follow
+    SetPendingG,    // first g press in scrollable pane — pending gg sequence
+    CommandOutputScrollUp, // k in CommandOutput pane — scroll up
+    CommandOutputScrollDown, // j in CommandOutput pane — scroll down
 
     // Phase 5.2: External metro conflict detection
     ExternalMetroDetected(crate::domain::ports::port_probe_port::ExternalProcessInfo), // port 8081 occupied by external process
-    KillExternalMetro(u32),        // user chose "Kill it" with PID to kill
-    MetroStartConfirmed,           // detection passed — proceed with actual metro spawn
+    KillExternalMetro(u32), // user chose "Kill it" with PID to kill
+    MetroStartConfirmed,    // detection passed — proceed with actual metro spawn
 
     // Quick-2: Worktree removal
-    WorktreeRemove,                   // user-triggered via g>D — shows confirm modal
-    WorktreeRemoved(String),          // background: removal succeeded (carries path string)
-    WorktreeRemoveFailed(String),     // background: removal failed (carries error message)
+    WorktreeRemove,               // user-triggered via g>D — shows confirm modal
+    WorktreeRemoved(String),      // background: removal succeeded (carries path string)
+    WorktreeRemoveFailed(String), // background: removal failed (carries error message)
 
     // Quick: Worktree creation
-    WorktreeAdd,                      // user-triggered via w>W — shows TextInput modal for branch name
-    WorktreeAdded(String),            // background: creation succeeded (carries path string)
-    WorktreeAddFailed(String),        // background: creation failed (carries error message)
+    WorktreeAdd, // user-triggered via w>W — shows TextInput modal for branch name
+    WorktreeAdded(String), // background: creation succeeded (carries path string)
+    WorktreeAddFailed(String), // background: creation failed (carries error message)
 
     // Phase 08: Worktree palette
-    WorktreeAddNewBranch,             // w>B — create worktree with new branch from base
+    WorktreeAddNewBranch, // w>B — create worktree with new branch from base
 
     // Phase 08-02: New-branch worktree creation flow
-    BranchesLoaded(Vec<String>),           // background: remote branches fetched
-    BranchPickerConfirm,                   // user selected a base branch from picker
-    WorktreeNewBranchCreated(String),      // background: creation succeeded (carries path string)
-    WorktreeNewBranchFailed(String),       // background: creation failed (carries error message)
-    BranchPickerNext,                      // Down in branch picker
-    BranchPickerPrev,                      // Up in branch picker
-    BranchPickerFilter(char),              // type-to-filter character
-    BranchPickerBackspace,                 // backspace in filter
+    BranchesLoaded(Vec<String>), // background: remote branches fetched
+    BranchPickerConfirm,         // user selected a base branch from picker
+    WorktreeNewBranchCreated(String), // background: creation succeeded (carries path string)
+    WorktreeNewBranchFailed(String), // background: creation failed (carries error message)
+    BranchPickerNext,            // Down in branch picker
+    BranchPickerPrev,            // Up in branch picker
+    BranchPickerFilter(char),    // type-to-filter character
+    BranchPickerBackspace,       // backspace in filter
 }

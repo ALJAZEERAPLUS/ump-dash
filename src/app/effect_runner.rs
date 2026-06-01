@@ -21,7 +21,7 @@
 //!   SpawnMetro { worktree, port }                  → adapters.metro.start(worktree, port, on_activity)
 //!   MetroHttpPost { url, body }                    → adapters.metro.http_post(url, body)
 //!   KillProcess { pid }                            → adapters.port_probe.kill_process(pid)
-//!   LoadDevices { kind }                           → adapters.devices.list(kind)
+//!   LoadDevices { kind, request_id }               → adapters.devices.list(kind)
 //!   LookupIosSimulatorCache { worktree_id, worktree_path } → adapters.native_cache.lookup_ios_simulator(...)
 //!   InstallAndLaunchCachedIosSimulator { worktree_id, request } → Task 6 implements launch behavior
 //!   ListWorktrees { repo_root }                    → adapters.worktrees.list(repo_root)
@@ -211,17 +211,25 @@ impl EffectRunner {
                 });
             }
 
-            Effect::LoadDevices { kind } => {
+            Effect::LoadDevices { kind, request_id } => {
                 let devices = self.adapters.devices.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
                     match devices.list(kind).await {
                         Ok(devs) => {
-                            let _ = tx.send(Action::DevicesEnumerated(devs));
+                            let _ = tx.send(Action::DevicesEnumerated {
+                                kind,
+                                request_id,
+                                devices: devs,
+                            });
                         }
                         Err(e) => {
                             tracing::warn!("device enumeration failed: {e}");
-                            let _ = tx.send(Action::DevicesEnumerated(vec![]));
+                            let _ = tx.send(Action::DevicesEnumerated {
+                                kind,
+                                request_id,
+                                devices: vec![],
+                            });
                         }
                     }
                 });

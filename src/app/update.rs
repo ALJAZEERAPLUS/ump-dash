@@ -19,6 +19,7 @@ use super::state::{
 use crate::domain::action::Action;
 use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
+use crate::domain::ports::device_port::DeviceKind;
 use crate::domain::worktree::WorktreeId;
 use crate::domain::worktree_slice::LastRunConfig;
 use std::path::{Path, PathBuf};
@@ -866,7 +867,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     } else {
                         crate::domain::ports::device_port::DeviceKind::Ios
                     };
-                    effects.push(Effect::LoadDevices { kind });
+                    effects.push(Effect::LoadDevices {
+                        kind,
+                        request_id: None,
+                    });
                     return effects;
                 }
 
@@ -1003,7 +1007,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 } else {
                     crate::domain::ports::device_port::DeviceKind::Ios
                 };
-                effects.push(Effect::LoadDevices { kind });
+                effects.push(Effect::LoadDevices {
+                    kind,
+                    request_id: None,
+                });
                 return effects;
             }
 
@@ -1618,7 +1625,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Device enumeration (async callback) ---
-        Action::DevicesEnumerated(devices) => {
+        Action::DevicesEnumerated {
+            kind,
+            request_id,
+            devices,
+        } => {
+            if let Some(pending_run) = state.modal_stack.pending_cached_ios_run.as_ref()
+                && (kind != DeviceKind::Ios || request_id != Some(pending_run.device_request_id))
+            {
+                return effects;
+            }
+
             if let Some(pending_run) = state.modal_stack.pending_cached_ios_run.take() {
                 state.modal_stack.pending_device_command = None;
                 match devices.len() {
@@ -2044,17 +2061,21 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) else {
                 return effects;
             };
+            state.modal_stack.next_device_request_id += 1;
+            let device_request_id = state.modal_stack.next_device_request_id;
             state.modal_stack.pending_cached_ios_run = Some(PendingCachedIosRun {
                 worktree_id,
                 worktree_path,
                 cache_hit,
+                device_request_id,
             });
             state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunIos {
                 device_id: String::new(),
                 variant: Some(RunVariant::Local),
             });
             effects.push(Effect::LoadDevices {
-                kind: crate::domain::ports::device_port::DeviceKind::Ios,
+                kind: DeviceKind::Ios,
+                request_id: Some(device_request_id),
             });
         }
         Action::CachedIosLaunchFinished {
