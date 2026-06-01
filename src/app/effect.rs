@@ -13,7 +13,7 @@
 #![allow(dead_code)]
 
 use crate::domain::command::CommandSpec;
-use crate::domain::native_cache::CachedIosLaunchRequest;
+use crate::domain::native_cache::{CachedIosLaunchRequest, IosSimulatorCacheStoreRequest};
 use crate::domain::ports::device_port::DeviceKind;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -64,6 +64,10 @@ pub enum Effect {
     LookupIosSimulatorCache {
         worktree_id: crate::domain::worktree::WorktreeId,
         worktree_path: PathBuf,
+    },
+    StoreIosSimulatorCache {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        request: IosSimulatorCacheStoreRequest,
     },
     InstallAndLaunchCachedIosSimulator {
         worktree_id: crate::domain::worktree::WorktreeId,
@@ -177,6 +181,13 @@ mod tests {
             worktree_id: worktree_id.clone(),
             worktree_path: PathBuf::from("."),
         };
+        let _ = Effect::StoreIosSimulatorCache {
+            worktree_id: worktree_id.clone(),
+            request: crate::domain::native_cache::IosSimulatorCacheStoreRequest {
+                worktree_path: PathBuf::from("."),
+                variant: "local".into(),
+            },
+        };
         let _ = Effect::InstallAndLaunchCachedIosSimulator {
             worktree_id,
             request: crate::domain::native_cache::CachedIosLaunchRequest {
@@ -229,6 +240,7 @@ mod tests {
                 Effect::ScheduleAction(_) => 15,
                 Effect::LookupIosSimulatorCache { .. } => 16,
                 Effect::InstallAndLaunchCachedIosSimulator { .. } => 17,
+                Effect::StoreIosSimulatorCache { .. } => 18,
             }
         }
         let e = Effect::ListWorktrees {

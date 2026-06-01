@@ -393,6 +393,33 @@ mod palette_resolution {
     }
 
     #[test]
+    fn ios_palette_cached_key_uses_matching_hit_from_another_worktree() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-hit");
+        seed_one_worktree_id(&mut state, "wt-miss");
+        state.modal_stack.palette_mode = Some(PaletteMode::Ios);
+
+        let hit = cached_ios_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-hit".into()))
+            .expect("source slice should exist")
+            .ios_simulator_cache = IosSimulatorCacheState::Hit(hit.clone());
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-miss".into()))
+            .expect("selected slice should exist")
+            .ios_simulator_cache = IosSimulatorCacheState::Miss {
+            fingerprint: hit.metadata.fingerprint.clone(),
+        };
+
+        assert_eq!(
+            handle_key(&state, key('c')),
+            Some(Action::CachedIosRun(hit))
+        );
+    }
+
+    #[test]
     fn yarn_palette_resolves_every_key() {
         let mut state = base_state();
         state.modal_stack.palette_mode = Some(PaletteMode::Yarn);
@@ -837,6 +864,49 @@ mod ump_run_dialog {
                 .expect("slice should exist")
                 .ios_simulator_cache,
             IosSimulatorCacheState::Error("lookup failed".into())
+        );
+    }
+
+    #[test]
+    fn ios_cache_hit_marks_matching_miss_slices_as_hits() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-hit");
+        seed_one_worktree_id(&mut state, "wt-miss");
+        let hit = cached_ios_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-miss".into()))
+            .expect("matching slice should exist")
+            .ios_simulator_cache = IosSimulatorCacheState::Miss {
+            fingerprint: hit.metadata.fingerprint.clone(),
+        };
+
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: WorktreeId("wt-hit".into()),
+                result: Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(
+                    hit.clone(),
+                )),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-hit".into()))
+                .expect("hit slice should exist")
+                .ios_simulator_cache,
+            IosSimulatorCacheState::Hit(hit.clone())
+        );
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-miss".into()))
+                .expect("matching miss slice should exist")
+                .ios_simulator_cache,
+            IosSimulatorCacheState::Hit(hit)
         );
     }
 
@@ -1614,6 +1684,70 @@ mod command_queue {
         // D-21: slice-side assertion — task cleared after CommandExited.
         assert_no_running_task_anywhere(&state);
         assert_eq!(slice_queue_len(&state, "wt-1"), 0, "queue stays empty");
+    }
+
+    #[test]
+    fn successful_ios_run_enqueues_native_cache_store() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+        state.worktrees.get_mut(&wid).unwrap().task = Some(synthetic_task_record(
+            12,
+            CommandSpec::UmpRunIos {
+                device_id: "SIM-1".into(),
+                variant: Some(crate::domain::command::RunVariant::Dev),
+            },
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(12),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::StoreIosSimulatorCache {
+                    worktree_id,
+                    request,
+                } if *worktree_id == wid
+                    && request.worktree_path == std::path::Path::new("/tmp/wt-1")
+                    && request.variant == "dev"
+            )),
+            "successful iOS run should enqueue native cache store; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn failed_ios_run_does_not_enqueue_native_cache_store() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+        state.worktrees.get_mut(&wid).unwrap().task = Some(synthetic_task_record(
+            13,
+            CommandSpec::UmpRunIos {
+                device_id: "SIM-1".into(),
+                variant: Some(crate::domain::command::RunVariant::Dev),
+            },
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(13),
+                status: crate::domain::task::ExitStatus::Failure { code: Some(1) },
+            },
+        );
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StoreIosSimulatorCache { .. })),
+            "failed iOS run must not cache an artifact; got {effects:?}"
+        );
     }
 
     #[test]

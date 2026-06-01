@@ -1398,7 +1398,21 @@ fn last_ios_run(state: &AppState) -> Option<&LastRunConfig> {
 
 fn cached_ios_hit(state: &AppState) -> Option<&crate::domain::native_cache::IosSimulatorCacheHit> {
     let id = active_worktree_id(state)?;
-    state.worktrees.get(&id)?.ios_simulator_cache.hit()
+    let selected_cache = &state.worktrees.get(&id)?.ios_simulator_cache;
+    if let Some(hit) = selected_cache.hit() {
+        return Some(hit);
+    }
+
+    let crate::domain::native_cache::IosSimulatorCacheState::Miss { fingerprint } = selected_cache
+    else {
+        return None;
+    };
+
+    state
+        .worktrees
+        .values()
+        .filter_map(|slice| slice.ios_simulator_cache.hit())
+        .find(|hit| hit.metadata.fingerprint == *fingerprint)
 }
 
 fn has_last_android_run(state: &AppState) -> bool {

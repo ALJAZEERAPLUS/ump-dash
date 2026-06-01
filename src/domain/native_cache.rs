@@ -39,6 +39,12 @@ impl IosSimulatorCacheLookup {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IosSimulatorCacheStoreRequest {
+    pub worktree_path: PathBuf,
+    pub variant: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum IosSimulatorCacheState {
     #[default]

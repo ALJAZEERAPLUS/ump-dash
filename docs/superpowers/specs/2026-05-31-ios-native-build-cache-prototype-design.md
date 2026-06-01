@@ -65,7 +65,7 @@ metadata.json
 }
 ```
 
-For the prototype, cache population is manual: a developer seeds the cache by placing `artifact.app` and `metadata.json` in the expected directory. Automatic miss-build-and-store behavior is out of scope for this prototype.
+After a successful normal iOS run, the dashboard stores the built simulator `.app` in the cache directory for the worktree's native fingerprint and writes `metadata.json`. Manual seeding remains useful for debugging, but is not required for the normal prototype flow.
 
 ## Fingerprint
 
@@ -159,18 +159,27 @@ Manual verification should cover:
 
 - Android caching.
 - Physical iOS devices.
-- Automatic cache population after a miss.
 - Cache eviction or clear-cache UI.
 - CI/shared cache behavior.
 - Complete native-input fingerprint policy.
 - Build-folder snapshot caching.
 
-## Prototype Cache Seeding
+## Prototype Cache Population
 
-To seed a local iOS simulator cache entry:
+The normal flow is:
 
 1. Build the UMP iOS simulator app once through the normal `i>r` flow.
-2. Compute the fingerprint from the worktree root:
+2. On successful command exit, the dashboard locates the newest matching simulator `.app` from `ios/build/Build/Products` or Xcode DerivedData.
+3. The dashboard copies the app to:
+
+```text
+~/.cache/ump-dash/native-builds/ios-simulator/<fingerprint>/artifact.app
+```
+
+4. The dashboard writes `metadata.json` with the bundle id, variant, source worktree, and matching fingerprint.
+5. Worktrees that already show the same fingerprint can use the same cache hit.
+
+To inspect or manually seed a local iOS simulator cache entry, compute the fingerprint from the worktree root:
 
 ```bash
 cargo test domain::native_cache::tests::print_current_worktree_ios_fingerprint -- --ignored --nocapture
@@ -181,15 +190,3 @@ Expected output includes one line shaped like:
 ```text
 ios-simulator fingerprint for /absolute/path/to/worktree: <64-hex-character-sha256>
 ```
-
-3. Create:
-
-```text
-~/.cache/ump-dash/native-builds/ios-simulator/<fingerprint>/artifact.app
-~/.cache/ump-dash/native-builds/ios-simulator/<fingerprint>/metadata.json
-```
-
-4. Copy the built `.app` directory to `artifact.app`.
-5. Write `metadata.json` with the bundle id and the matching fingerprint.
-
-The prototype intentionally does not auto-populate the cache after misses.

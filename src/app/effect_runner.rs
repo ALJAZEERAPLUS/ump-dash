@@ -23,6 +23,7 @@
 //!   KillProcess { pid }                            → adapters.port_probe.kill_process(pid)
 //!   LoadDevices { kind, request_id }               → adapters.devices.list(kind)
 //!   LookupIosSimulatorCache { worktree_id, worktree_path } → adapters.native_cache.lookup_ios_simulator(...)
+//!   StoreIosSimulatorCache { worktree_id, request } → adapters.native_cache.store_ios_simulator(...)
 //!   InstallAndLaunchCachedIosSimulator { worktree_id, request } → Task 6 implements launch behavior
 //!   ListWorktrees { repo_root }                    → adapters.worktrees.list(repo_root)
 //!   RemoveWorktree { repo_root, path }             → adapters.worktrees.remove(...)
@@ -245,6 +246,25 @@ impl EffectRunner {
                     let result = native_cache
                         .lookup_ios_simulator(worktree_path)
                         .await
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(Action::IosSimulatorCacheLookupFinished {
+                        worktree_id,
+                        result,
+                    });
+                });
+            }
+
+            Effect::StoreIosSimulatorCache {
+                worktree_id,
+                request,
+            } => {
+                let native_cache = self.adapters.native_cache.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result = native_cache
+                        .store_ios_simulator(request)
+                        .await
+                        .map(crate::domain::native_cache::IosSimulatorCacheLookup::Hit)
                         .map_err(|e| e.to_string());
                     let _ = tx.send(Action::IosSimulatorCacheLookupFinished {
                         worktree_id,

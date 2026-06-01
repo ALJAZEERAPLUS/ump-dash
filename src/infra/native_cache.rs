@@ -1,11 +1,13 @@
 use crate::domain::native_cache::{
     CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
-    IosSimulatorCacheLookup, IosSimulatorCacheMetadata, ios_native_fingerprint,
+    IosSimulatorCacheLookup, IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest,
+    ios_native_fingerprint,
 };
 use crate::domain::ports::native_cache_port::NativeCachePort;
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
-use tokio::process::Command;
+use std::process::{Command as StdCommand, Output, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::process::Command as TokioCommand;
 
 #[derive(Debug, Default)]
 pub struct LocalNativeCache;
@@ -28,6 +30,231 @@ pub fn native_cache_root() -> PathBuf {
 
 fn ios_entry_dir(root: &Path, fingerprint: &str) -> PathBuf {
     root.join("ios-simulator").join(fingerprint)
+}
+
+fn default_derived_data_root() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join("Library")
+            .join("Developer")
+            .join("Xcode")
+            .join("DerivedData")
+    })
+}
+
+fn created_at_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into())
+}
+
+fn ios_project_app_names(worktree_path: &Path) -> Vec<String> {
+    let ios_dir = worktree_path.join("ios");
+    let Ok(entries) = std::fs::read_dir(ios_dir) else {
+        return Vec::new();
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("xcodeproj"))
+                .then(|| path.file_stem()?.to_str().map(str::to_string))
+                .flatten()
+        })
+        .filter(|name| name != "Pods")
+        .collect()
+}
+
+fn read_bundle_identifier_from_xml(contents: &str) -> Option<String> {
+    let key_index = contents.find("<key>CFBundleIdentifier</key>")?;
+    let after_key = &contents[key_index..];
+    let string_start = after_key.find("<string>")? + "<string>".len();
+    let after_string = &after_key[string_start..];
+    let string_end = after_string.find("</string>")?;
+    let value = after_string[..string_end].trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn read_bundle_identifier(app_path: &Path) -> anyhow::Result<String> {
+    let info_plist = app_path.join("Info.plist");
+    if let Ok(contents) = std::fs::read_to_string(&info_plist)
+        && let Some(bundle_id) = read_bundle_identifier_from_xml(&contents)
+    {
+        return Ok(bundle_id);
+    }
+
+    let output = StdCommand::new("plutil")
+        .args(["-extract", "CFBundleIdentifier", "raw"])
+        .arg(&info_plist)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("failed to read bundle id from {}", info_plist.display());
+    }
+    let bundle_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if bundle_id.is_empty() {
+        anyhow::bail!("bundle id missing in {}", info_plist.display());
+    }
+    Ok(bundle_id)
+}
+
+fn is_simulator_app(path: &Path, allowed_app_names: &[String]) -> bool {
+    if !path.is_dir() || path.extension().and_then(|ext| ext.to_str()) != Some("app") {
+        return false;
+    }
+    if !path.join("Info.plist").is_file() {
+        return false;
+    }
+    if !path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .map(|name| name.contains("iphonesimulator"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    if allowed_app_names.is_empty() {
+        return true;
+    }
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .map(|name| allowed_app_names.iter().any(|allowed| allowed == name))
+        .unwrap_or(false)
+}
+
+fn collect_app_candidates_from_products(
+    products_dir: &Path,
+    allowed_app_names: &[String],
+    candidates: &mut Vec<PathBuf>,
+) {
+    let mut stack = vec![products_dir.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if is_simulator_app(&entry_path, allowed_app_names) {
+                candidates.push(entry_path);
+                continue;
+            }
+            if entry.file_type().map(|ty| ty.is_dir()).unwrap_or(false) {
+                stack.push(entry_path);
+            }
+        }
+    }
+}
+
+fn find_latest_ios_simulator_app(
+    worktree_path: &Path,
+    derived_data_root: Option<&Path>,
+) -> anyhow::Result<PathBuf> {
+    let allowed_app_names = ios_project_app_names(worktree_path);
+    let mut candidates = Vec::new();
+    collect_app_candidates_from_products(
+        &worktree_path.join("ios/build/Build/Products"),
+        &allowed_app_names,
+        &mut candidates,
+    );
+
+    if let Some(derived_data_root) = derived_data_root
+        && let Ok(entries) = std::fs::read_dir(derived_data_root)
+    {
+        for entry in entries.flatten() {
+            collect_app_candidates_from_products(
+                &entry.path().join("Build/Products"),
+                &allowed_app_names,
+                &mut candidates,
+            );
+        }
+    }
+
+    candidates
+        .into_iter()
+        .filter_map(|path| {
+            let modified = std::fs::metadata(path.join("Info.plist"))
+                .and_then(|metadata| metadata.modified())
+                .ok()?;
+            Some((modified, path))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, path)| path)
+        .ok_or_else(|| anyhow::anyhow!("no built iOS simulator .app found"))
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+        } else if file_type.is_symlink() {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(std::fs::read_link(&src_path)?, &dst_path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn store_ios_simulator_in_root(
+    root: &Path,
+    request: IosSimulatorCacheStoreRequest,
+) -> anyhow::Result<IosSimulatorCacheHit> {
+    store_ios_simulator_in_root_with_derived_data(
+        root,
+        request,
+        default_derived_data_root().as_deref(),
+    )
+}
+
+fn store_ios_simulator_in_root_with_derived_data(
+    root: &Path,
+    request: IosSimulatorCacheStoreRequest,
+    derived_data_root: Option<&Path>,
+) -> anyhow::Result<IosSimulatorCacheHit> {
+    let fingerprint = ios_native_fingerprint(&request.worktree_path)?;
+    let app_path = find_latest_ios_simulator_app(&request.worktree_path, derived_data_root)?;
+    let bundle_id = read_bundle_identifier(&app_path)?;
+    let entry = ios_entry_dir(root, &fingerprint);
+    let artifact_path = entry.join("artifact.app");
+
+    std::fs::create_dir_all(&entry)?;
+    if artifact_path.exists() {
+        if artifact_path.is_dir() {
+            std::fs::remove_dir_all(&artifact_path)?;
+        } else {
+            std::fs::remove_file(&artifact_path)?;
+        }
+    }
+    copy_dir_recursive(&app_path, &artifact_path)?;
+
+    let metadata = IosSimulatorCacheMetadata {
+        platform: IOS_SIMULATOR_PLATFORM.into(),
+        fingerprint,
+        bundle_id,
+        variant: request.variant,
+        created_at: created_at_string(),
+        source_worktree: request.worktree_path.display().to_string(),
+        artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
+    };
+    std::fs::write(
+        entry.join("metadata.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
+
+    Ok(IosSimulatorCacheHit {
+        metadata,
+        artifact_path,
+    })
 }
 
 pub fn lookup_ios_simulator_in_root(
@@ -126,11 +353,18 @@ impl NativeCachePort for LocalNativeCache {
         lookup_ios_simulator_in_root(&native_cache_root(), worktree_path)
     }
 
+    async fn store_ios_simulator(
+        &self,
+        request: IosSimulatorCacheStoreRequest,
+    ) -> anyhow::Result<IosSimulatorCacheHit> {
+        store_ios_simulator_in_root(&native_cache_root(), request)
+    }
+
     async fn install_and_launch_ios_simulator(
         &self,
         request: CachedIosLaunchRequest,
     ) -> anyhow::Result<Vec<String>> {
-        let install_status = Command::new("xcrun")
+        let install_status = TokioCommand::new("xcrun")
             .args(simctl_install_args(
                 &request.simulator_udid,
                 request.app_path.as_path(),
@@ -143,7 +377,7 @@ impl NativeCachePort for LocalNativeCache {
         }
 
         let launch = simctl_launch_command(&request);
-        let mut command = Command::new(&launch.program);
+        let mut command = TokioCommand::new(&launch.program);
         command.args(&launch.args);
         for (key, value) in &launch.env {
             command.env(key, value);
@@ -171,7 +405,7 @@ mod tests {
     use super::*;
     use crate::domain::native_cache::{
         CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM,
-        IosSimulatorCacheMetadata, ios_native_fingerprint,
+        IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest, ios_native_fingerprint,
     };
     use std::fs;
     #[cfg(unix)]
@@ -235,6 +469,30 @@ mod tests {
         Ok(())
     }
 
+    fn seed_xcode_project(worktree: &Path, name: &str) -> anyhow::Result<()> {
+        fs::create_dir_all(worktree.join("ios").join(format!("{name}.xcodeproj")))?;
+        Ok(())
+    }
+
+    fn seed_simulator_app(app: &Path, bundle_id: &str) -> anyhow::Result<()> {
+        fs::create_dir_all(app)?;
+        fs::write(
+            app.join("Info.plist"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>{bundle_id}</string>
+</dict>
+</plist>
+"#
+            ),
+        )?;
+        fs::write(app.join("AppBinary"), "binary")?;
+        Ok(())
+    }
+
     #[test]
     fn lookup_returns_valid_cache_hit() -> anyhow::Result<()> {
         let root = TempTree::new("root")?;
@@ -272,6 +530,73 @@ mod tests {
         let lookup = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?;
 
         assert_eq!(lookup, IosSimulatorCacheLookup::Miss { fingerprint });
+        Ok(())
+    }
+
+    #[test]
+    fn store_copies_worktree_build_app_and_writes_metadata() -> anyhow::Result<()> {
+        let root = TempTree::new("store-root")?;
+        let worktree = TempTree::new("store-worktree")?;
+        seed_fingerprint_files(worktree.path())?;
+        seed_xcode_project(worktree.path(), "AlJazeeraMobile")?;
+        let app = worktree
+            .path()
+            .join("ios/build/Build/Products/Debug-iphonesimulator/AlJazeeraMobile.app");
+        seed_simulator_app(&app, "com.aljazeera.mobile.local")?;
+        let fingerprint = ios_native_fingerprint(worktree.path())?;
+
+        let hit = store_ios_simulator_in_root_with_derived_data(
+            root.path(),
+            IosSimulatorCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "dev".into(),
+            },
+            None,
+        )?;
+
+        assert_eq!(hit.metadata.fingerprint, fingerprint);
+        assert_eq!(hit.metadata.bundle_id, "com.aljazeera.mobile.local");
+        assert_eq!(hit.metadata.variant, "dev");
+        assert!(hit.artifact_path.join("Info.plist").is_file());
+        assert!(hit.artifact_path.join("AppBinary").is_file());
+        assert!(
+            root.path()
+                .join("ios-simulator")
+                .join(&fingerprint)
+                .join("metadata.json")
+                .is_file()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn store_uses_derived_data_when_worktree_build_app_is_empty() -> anyhow::Result<()> {
+        let root = TempTree::new("store-derived-root")?;
+        let worktree = TempTree::new("store-derived-worktree")?;
+        let derived = TempTree::new("derived-data")?;
+        seed_fingerprint_files(worktree.path())?;
+        seed_xcode_project(worktree.path(), "AlJazeeraMobile")?;
+        fs::create_dir_all(
+            worktree
+                .path()
+                .join("ios/build/Build/Products/Debug-iphonesimulator/AlJazeeraMobile.app"),
+        )?;
+        let derived_app = derived
+            .path()
+            .join("AlJazeeraMobile-abc/Build/Products/Debug-iphonesimulator/AlJazeeraMobile.app");
+        seed_simulator_app(&derived_app, "com.aljazeera.mobile.local")?;
+
+        let hit = store_ios_simulator_in_root_with_derived_data(
+            root.path(),
+            IosSimulatorCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".into(),
+            },
+            Some(derived.path()),
+        )?;
+
+        assert_eq!(hit.metadata.bundle_id, "com.aljazeera.mobile.local");
+        assert!(hit.artifact_path.join("AppBinary").is_file());
         Ok(())
     }
 

@@ -1185,7 +1185,7 @@ ios-simulator fingerprint for /absolute/path/to/worktree: <64-hex-character-sha2
 4. Copy the built `.app` directory to `artifact.app`.
 5. Write `metadata.json` with the bundle id and the matching fingerprint.
 
-The prototype intentionally does not auto-populate the cache after misses.
+Follow-up implementation now auto-populates the cache after a successful normal iOS simulator run.
 ````
 
 - [ ] **Step 2: Run static search**

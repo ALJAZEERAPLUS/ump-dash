@@ -20,6 +20,7 @@ use crate::domain::action::Action;
 use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::ports::device_port::DeviceKind;
+use crate::domain::task::ExitStatus;
 use crate::domain::worktree::WorktreeId;
 use crate::domain::worktree_slice::LastRunConfig;
 use std::path::{Path, PathBuf};
@@ -109,6 +110,34 @@ fn queue_ios_cache_lookups_for_loaded_worktrees(state: &mut AppState, effects: &
     for (worktree_id, worktree_path) in worktrees {
         queue_ios_cache_lookup_for_worktree(state, effects, worktree_id, worktree_path);
     }
+}
+
+fn completed_ios_store_request(
+    state: &AppState,
+    worktree_id: &WorktreeId,
+    completed_cmd: &CommandSpec,
+    status: &ExitStatus,
+) -> Option<Effect> {
+    let CommandSpec::UmpRunIos { variant, .. } = completed_cmd else {
+        return None;
+    };
+    if !matches!(status, ExitStatus::Success) {
+        return None;
+    }
+    let worktree_path = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| &wt.id == worktree_id)?
+        .path
+        .clone();
+    Some(Effect::StoreIosSimulatorCache {
+        worktree_id: worktree_id.clone(),
+        request: crate::domain::native_cache::IosSimulatorCacheStoreRequest {
+            worktree_path,
+            variant: variant.unwrap_or(RunVariant::Local).label().into(),
+        },
+    })
 }
 
 fn active_metro_worktree_path(state: &AppState) -> PathBuf {
@@ -1124,7 +1153,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
         }
 
-        Action::CommandExited { task_id, status: _ } => {
+        Action::CommandExited { task_id, status } => {
             // Phase 14 D-11 PRIMARY: find the slice whose task matches task_id.
             let target_id = state
                 .worktrees
@@ -1162,6 +1191,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         wt.stale_pods = crate::domain::staleness::check_stale_pods(&wt.path);
                     }
                 }
+            }
+
+            if let (Some(id), Some(cmd)) = (&target_id, &completed_cmd)
+                && let Some(effect) = completed_ios_store_request(state, id, cmd, &status)
+            {
+                effects.push(effect);
             }
 
             // === Slice-local drain (D-11 + D-13) ===
@@ -2069,16 +2104,35 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::IosSimulatorCacheLookupFinished {
             worktree_id,
             result,
-        } => {
-            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                slice.ios_simulator_cache = match result {
-                    Ok(lookup) => lookup.into_cache_state(),
-                    Err(message) => {
-                        crate::domain::native_cache::IosSimulatorCacheState::Error(message)
+        } => match result {
+            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
+                let fingerprint = hit.metadata.fingerprint.clone();
+                for (id, slice) in state.worktrees.iter_mut() {
+                    let same_fingerprint_miss = matches!(
+                        &slice.ios_simulator_cache,
+                        crate::domain::native_cache::IosSimulatorCacheState::Miss {
+                            fingerprint: miss_fingerprint
+                        } if miss_fingerprint == &fingerprint
+                    );
+                    if id == &worktree_id || same_fingerprint_miss {
+                        slice.ios_simulator_cache =
+                            crate::domain::native_cache::IosSimulatorCacheState::Hit(hit.clone());
                     }
-                };
+                }
             }
-        }
+            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    slice.ios_simulator_cache =
+                        crate::domain::native_cache::IosSimulatorCacheState::Miss { fingerprint };
+                }
+            }
+            Err(message) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    slice.ios_simulator_cache =
+                        crate::domain::native_cache::IosSimulatorCacheState::Error(message);
+                }
+            }
+        },
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
