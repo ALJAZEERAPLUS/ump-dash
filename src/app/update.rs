@@ -78,6 +78,39 @@ fn active_worktree_snapshot(
     Some((wt.id.clone(), wt.path.clone()))
 }
 
+fn queue_ios_cache_lookup_for_worktree(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    worktree_id: crate::domain::worktree::WorktreeId,
+    worktree_path: PathBuf,
+) {
+    let slice = state
+        .worktrees
+        .entry(worktree_id.clone())
+        .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+            id: worktree_id.clone(),
+            ..Default::default()
+        });
+    slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Checking;
+    effects.push(Effect::LookupIosSimulatorCache {
+        worktree_id,
+        worktree_path,
+    });
+}
+
+fn queue_ios_cache_lookups_for_loaded_worktrees(state: &mut AppState, effects: &mut Vec<Effect>) {
+    let worktrees = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .map(|wt| (wt.id.clone(), wt.path.clone()))
+        .collect::<Vec<_>>();
+
+    for (worktree_id, worktree_path) in worktrees {
+        queue_ios_cache_lookup_for_worktree(state, effects, worktree_id, worktree_path);
+    }
+}
+
 fn active_metro_worktree_path(state: &AppState) -> PathBuf {
     state
         .metro_state
@@ -778,6 +811,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let loaded_for_merge: Vec<crate::domain::worktree::Worktree> =
                 state.worktree_browser.worktrees.clone();
             crate::app::state::merge_slices(state, &loaded_for_merge);
+            queue_ios_cache_lookups_for_loaded_worktrees(state, &mut effects);
 
             if !state.worktree_browser.worktrees.is_empty() {
                 // Re-derive selected index from selected_worktree_id (stable across sorts)
@@ -1930,19 +1964,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::EnterIosPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Ios);
             if let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) {
-                let slice = state
-                    .worktrees
-                    .entry(worktree_id.clone())
-                    .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
-                        id: worktree_id.clone(),
-                        ..Default::default()
-                    });
-                slice.ios_simulator_cache =
-                    crate::domain::native_cache::IosSimulatorCacheState::Checking;
-                effects.push(Effect::LookupIosSimulatorCache {
+                queue_ios_cache_lookup_for_worktree(
+                    state,
+                    &mut effects,
                     worktree_id,
                     worktree_path,
-                });
+                );
             }
         }
         Action::EnterYarnPalette => {

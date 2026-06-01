@@ -1,31 +1,40 @@
+use crate::{
+    app::{AppState, FocusedPanel},
+    domain::{dash_config::WorktreeTableColumn, worktree::WorktreeMetroStatus},
+    ui::{
+        indicators::{SpinnerStyle, format_elapsed, spinner_frame, task_short_label},
+        theme,
+    },
+};
 use ratatui::{
+    Frame,
     layout::{Constraint, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{
-        Block, BorderType, Cell, Paragraph, Row, Scrollbar,
-        ScrollbarOrientation,
-        ScrollbarState, Table,
+        Block, BorderType, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table,
     },
-    Frame,
-};
-use crate::{
-    app::{AppState, FocusedPanel},
-    domain::{dash_config::WorktreeTableColumn, worktree::WorktreeMetroStatus},
-    ui::{indicators::{spinner_frame, format_elapsed, task_short_label, SpinnerStyle}, theme},
 };
 
 /// Renders the application title bar with double border.
 /// Only shown in normal (non-fullscreen) layout.
 #[allow(dead_code)]
 pub fn render_title_bar(f: &mut Frame, area: Rect, state: &AppState) {
-    let title = state.app_config.config.as_ref()
+    let title = state
+        .app_config
+        .config
+        .as_ref()
         .map(|c| c.app_title.as_str())
         .unwrap_or("UMP Dash");
     let block = Block::bordered()
         .border_type(BorderType::Double)
         .title(format!(" {title} "))
-        .title_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD));
+        .title_style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        );
     f.render_widget(block, area);
 }
 
@@ -47,6 +56,7 @@ fn worktree_column_constraint(column: WorktreeTableColumn) -> Constraint {
         WorktreeTableColumn::Ticket => Constraint::Min(20),
         WorktreeTableColumn::Dir => Constraint::Length(16),
         WorktreeTableColumn::Task => Constraint::Length(20),
+        WorktreeTableColumn::Cache => Constraint::Length(8),
     }
 }
 
@@ -62,10 +72,27 @@ fn activity_column_index(columns: &[WorktreeTableColumn]) -> Option<usize> {
         .or_else(|| (!columns.is_empty()).then_some(0))
 }
 
-fn metro_activity_label(activity: Option<&crate::domain::metro::MetroActivity>, port: u16) -> String {
+fn metro_activity_label(
+    activity: Option<&crate::domain::metro::MetroActivity>,
+    port: u16,
+) -> String {
     match activity {
         Some(activity) => format!("\u{2502} {activity} :{port}"),
         None => format!("\u{2502} Metro :{port}"),
+    }
+}
+
+fn cache_column_label(slice: Option<&crate::domain::worktree_slice::WorktreeSlice>) -> String {
+    match slice.map(|slice| &slice.ios_simulator_cache) {
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Hit(hit)) => {
+            let short = hit.metadata.fingerprint.chars().take(8).collect::<String>();
+            if short.is_empty() { "-".into() } else { short }
+        }
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Checking) => "...".into(),
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Error(_)) => "err".into(),
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Miss)
+        | Some(crate::domain::native_cache::IosSimulatorCacheState::Unknown)
+        | None => "-".into(),
     }
 }
 
@@ -111,7 +138,8 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         let branch = &wt.branch;
 
         // Extract ticket number from branch if possible
-        let ticket_num = crate::domain::jira::extract_jira_key(branch, &state.jira.project_prefix).unwrap_or_default();
+        let ticket_num = crate::domain::jira::extract_jira_key(branch, &state.jira.project_prefix)
+            .unwrap_or_default();
         let title = wt.jira_title.as_deref().unwrap_or("");
 
         // Merged ticket display: "UMP-1234 Title text" or just one or the other
@@ -122,8 +150,11 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             (true, true) => String::new(),
         };
 
+        let slice = state.worktrees.get(&wt.id);
+
         // Per-row running task lookup — Option<&TaskRecord> is Copy; safe to use twice below.
         let task = crate::app::state::task_for_worktree(state, &wt.id);
+        let cache_cell = cache_column_label(slice);
 
         // Status icons: Y (yarn) and P (pods) with color indicating freshness.
         // Metro state surfaces via row bg + detail row, not via an icon column.
@@ -131,7 +162,10 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         // Y cell: yellow spinner if yarn-install running (D-02/D-09), else staleness color
         if let Some(record) = task {
-            if matches!(&record.spec, crate::domain::command::CommandSpec::YarnInstall) {
+            if matches!(
+                &record.spec,
+                crate::domain::command::CommandSpec::YarnInstall
+            ) {
                 let frame = spinner_frame(record.started_at.elapsed(), spinner_style);
                 icon_spans.push(Span::styled(frame, Style::default().fg(Color::Yellow)));
             } else {
@@ -149,15 +183,26 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         // P cell: yellow spinner if pod-install running (D-02/D-09), else staleness color
         if let Some(record) = task {
-            if matches!(&record.spec, crate::domain::command::CommandSpec::YarnPodInstall) {
+            if matches!(
+                &record.spec,
+                crate::domain::command::CommandSpec::YarnPodInstall
+            ) {
                 let frame = spinner_frame(record.started_at.elapsed(), spinner_style);
                 icon_spans.push(Span::styled(frame, Style::default().fg(Color::Yellow)));
             } else {
-                let pods_color = if wt.stale_pods { Color::Red } else { Color::Green };
+                let pods_color = if wt.stale_pods {
+                    Color::Red
+                } else {
+                    Color::Green
+                };
                 icon_spans.push(Span::styled("P", Style::default().fg(pods_color)));
             }
         } else {
-            let pods_color = if wt.stale_pods { Color::Red } else { Color::Green };
+            let pods_color = if wt.stale_pods {
+                Color::Red
+            } else {
+                Color::Green
+            };
             icon_spans.push(Span::styled("P", Style::default().fg(pods_color)));
         }
 
@@ -170,7 +215,9 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         };
 
         // Extract dir name from path
-        let dir_name = wt.path.file_name()
+        let dir_name = wt
+            .path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
@@ -178,11 +225,13 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         // Task column: spinner + short label + elapsed for non-yarn/pod tasks (D-04/UI-02)
         // YarnInstall/YarnPodInstall animate in Y/P cells; task column empty for them.
         let task_cell: String = match task {
-            Some(record) if !matches!(
-                &record.spec,
-                crate::domain::command::CommandSpec::YarnInstall
-                    | crate::domain::command::CommandSpec::YarnPodInstall
-            ) => {
+            Some(record)
+                if !matches!(
+                    &record.spec,
+                    crate::domain::command::CommandSpec::YarnInstall
+                        | crate::domain::command::CommandSpec::YarnPodInstall
+                ) =>
+            {
                 let elapsed = record.started_at.elapsed();
                 format!(
                     "{} {} {}",
@@ -202,36 +251,42 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
                 WorktreeTableColumn::Ticket => Cell::from(ticket_display.clone()),
                 WorktreeTableColumn::Dir => Cell::from(dir_name.clone()),
                 WorktreeTableColumn::Task => Cell::from(task_cell.clone()),
+                WorktreeTableColumn::Cache => Cell::from(cache_cell.clone()),
             })
             .collect::<Vec<_>>();
 
         rows.push(Row::new(row_cells).style(row_style));
 
         // If this worktree is running metro, add a detail row with activity and port.
-        let slice_metro = state.worktrees.get(&wt.id).map(|slice| &slice.metro);
+        let slice_metro = slice.map(|slice| &slice.metro);
         if wt.metro_status == WorktreeMetroStatus::Running
             && let Some(metro) = slice_metro
-            && let Some(port) = metro.running_port() {
-                let mut detail_cells = columns
-                    .iter()
-                    .map(|_| Cell::from(""))
-                    .collect::<Vec<_>>();
-                if let Some(idx) = activity_column_index(columns) {
-                    detail_cells[idx] = Cell::from(Span::styled(
-                        metro_activity_label(metro.activity(), port),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-                let detail_row = Row::new(detail_cells)
-                    .style(Style::default().bg(Color::Rgb(0, 60, 0)));
-                detail_row_indices.push(rows.len());
-                rows.push(detail_row);
+            && let Some(port) = metro.running_port()
+        {
+            let mut detail_cells = columns.iter().map(|_| Cell::from("")).collect::<Vec<_>>();
+            if let Some(idx) = activity_column_index(columns) {
+                detail_cells[idx] = Cell::from(Span::styled(
+                    metro_activity_label(metro.activity(), port),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+            let detail_row =
+                Row::new(detail_cells).style(Style::default().bg(Color::Rgb(0, 60, 0)));
+            detail_row_indices.push(rows.len());
+            rows.push(detail_row);
         }
     }
 
     // Use green highlight when the selected row is metro-active, gray otherwise
-    let selected_idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
-    let selected_is_metro = state.worktree_browser.worktrees.get(selected_idx)
+    let selected_idx = state
+        .worktree_browser
+        .worktree_table_state
+        .selected()
+        .unwrap_or(0);
+    let selected_is_metro = state
+        .worktree_browser
+        .worktrees
+        .get(selected_idx)
         .map(|wt| wt.metro_status == WorktreeMetroStatus::Running)
         .unwrap_or(false);
 
@@ -252,8 +307,8 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         .collect::<Vec<_>>();
 
     let table = Table::new(rows, constraints)
-    .block(block)
-    .row_highlight_style(highlight_style);
+        .block(block)
+        .row_highlight_style(highlight_style);
     // No highlight_symbol — selection is conveyed by row bg only, so the
     // left gutter (`> ` for selected, blank for others) is not reserved.
 
@@ -266,11 +321,18 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             }
         }
         if visual != logical {
-            state.worktree_browser.worktree_table_state.select(Some(visual));
+            state
+                .worktree_browser
+                .worktree_table_state
+                .select(Some(visual));
         }
     }
 
-    f.render_stateful_widget(table, area, &mut state.worktree_browser.worktree_table_state);
+    f.render_stateful_widget(
+        table,
+        area,
+        &mut state.worktree_browser.worktree_table_state,
+    );
 
     // Restore logical index after render so app state stays consistent
     if let Some(visual) = state.worktree_browser.worktree_table_state.selected() {
@@ -281,7 +343,10 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             }
         }
         if logical != visual {
-            state.worktree_browser.worktree_table_state.select(Some(logical));
+            state
+                .worktree_browser
+                .worktree_table_state
+                .select(Some(logical));
         }
     }
 }
@@ -297,9 +362,11 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
     // Title shows running command name, [running] indicator, and queue count.
     // Plan 14-09: reads from slice via task_for_worktree + slice queue length.
     let active_id = crate::app::state::active_worktree_id(state);
-    let active_task = active_id.as_ref()
+    let active_task = active_id
+        .as_ref()
         .and_then(|id| crate::app::state::task_for_worktree(state, id));
-    let active_queue_count = active_id.as_ref()
+    let active_queue_count = active_id
+        .as_ref()
         .and_then(|id| state.worktrees.get(id))
         .map(|s| s.queue.len())
         .unwrap_or(0);
@@ -307,7 +374,11 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
     let title = match active_task {
         Some(record) => {
             if active_queue_count > 0 {
-                format!(" Output — {} [running] (+{} queued) ", record.spec.label(), active_queue_count)
+                format!(
+                    " Output — {} [running] (+{} queued) ",
+                    record.spec.label(),
+                    active_queue_count
+                )
             } else {
                 format!(" Output — {} [running] ", record.spec.label())
             }
@@ -368,6 +439,11 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
 mod tests {
     use super::*;
     use crate::domain::metro::MetroActivity;
+    use crate::domain::native_cache::{
+        IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
+        IosSimulatorCacheMetadata, IosSimulatorCacheState,
+    };
+    use crate::domain::worktree_slice::WorktreeSlice;
 
     #[test]
     fn metro_activity_label_shows_selected_port() {
@@ -380,5 +456,51 @@ mod tests {
     #[test]
     fn metro_activity_label_falls_back_to_port_when_activity_missing() {
         assert_eq!(metro_activity_label(None, 8083), "\u{2502} Metro :8083");
+    }
+
+    fn cache_hit(fingerprint: &str) -> IosSimulatorCacheHit {
+        IosSimulatorCacheHit {
+            metadata: IosSimulatorCacheMetadata {
+                platform: IOS_SIMULATOR_PLATFORM.into(),
+                fingerprint: fingerprint.into(),
+                bundle_id: "com.example.app".into(),
+                variant: "local".into(),
+                created_at: "2026-06-01T00:00:00Z".into(),
+                source_worktree: "/tmp/wt".into(),
+                artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
+            },
+            artifact_path: "/tmp/cached.app".into(),
+        }
+    }
+
+    #[test]
+    fn cache_column_label_shows_short_fingerprint_for_hits() {
+        let slice = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Hit(cache_hit("abcdef1234567890")),
+            ..Default::default()
+        };
+
+        assert_eq!(cache_column_label(Some(&slice)), "abcdef12");
+    }
+
+    #[test]
+    fn cache_column_label_shows_compact_statuses() {
+        let checking = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Checking,
+            ..Default::default()
+        };
+        let error = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Error("bad metadata".into()),
+            ..Default::default()
+        };
+        let miss = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Miss,
+            ..Default::default()
+        };
+
+        assert_eq!(cache_column_label(Some(&checking)), "...");
+        assert_eq!(cache_column_label(Some(&error)), "err");
+        assert_eq!(cache_column_label(Some(&miss)), "-");
+        assert_eq!(cache_column_label(None), "-");
     }
 }

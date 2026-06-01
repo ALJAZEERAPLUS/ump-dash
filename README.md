@@ -83,7 +83,7 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 | `claude_flags` | string | `"--dangerously-skip-permissions"` | Any string | Flags passed when launching Claude Code. |
 | `auto_sync` | boolean | `false` | `true`, `false` | Automatically accept sync-before-run and sync-before-metro prompts. |
 | `spinner_style` | string | `"circles"` | `"circles"`, `"braille"`, `"dots"` | Spinner glyph set for live task indicators. |
-| `columns` | array of strings | `["status", "branch", "ticket", "dir", "task"]` | `"status"`, `"branch"`, `"ticket"`, `"dir"`, `"task"` | Worktree table columns in display order. Omit a value to hide that column. |
+| `columns` | array of strings | `["status", "branch", "ticket", "dir", "task", "cache"]` | `"status"`, `"branch"`, `"ticket"`, `"dir"`, `"task"`, `"cache"` | Worktree table columns in display order. Omit a value to hide that column. |
 
 ### Invalid config values
 

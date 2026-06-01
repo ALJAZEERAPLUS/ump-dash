@@ -1733,6 +1733,56 @@ mod worktrees_loaded {
     }
 
     #[test]
+    fn worktrees_loaded_starts_ios_cache_lookup_for_each_worktree() {
+        let mut state = AppState::default();
+        let worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
+
+        let effects = update(&mut state, Action::WorktreesLoaded(worktrees));
+
+        assert!(matches!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-A".into()))
+                .unwrap()
+                .ios_simulator_cache,
+            crate::domain::native_cache::IosSimulatorCacheState::Checking
+        ));
+        assert!(matches!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-B".into()))
+                .unwrap()
+                .ios_simulator_cache,
+            crate::domain::native_cache::IosSimulatorCacheState::Checking
+        ));
+
+        let lookup_worktrees = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::LookupIosSimulatorCache {
+                    worktree_id,
+                    worktree_path,
+                } => Some((worktree_id.clone(), worktree_path.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            lookup_worktrees,
+            vec![
+                (
+                    WorktreeId("wt-A".into()),
+                    std::path::PathBuf::from("/tmp/wt-A")
+                ),
+                (
+                    WorktreeId("wt-B".into()),
+                    std::path::PathBuf::from("/tmp/wt-B")
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn worktrees_loaded_marks_every_running_metro_worktree() {
         let mut state = AppState::default();
 

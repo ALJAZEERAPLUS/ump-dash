@@ -29,12 +29,13 @@ fn default_spinner_style() -> String {
     "circles".to_string()
 }
 
-pub const DEFAULT_WORKTREE_COLUMNS: [WorktreeTableColumn; 5] = [
+pub const DEFAULT_WORKTREE_COLUMNS: [WorktreeTableColumn; 6] = [
     WorktreeTableColumn::Status,
     WorktreeTableColumn::Branch,
     WorktreeTableColumn::Ticket,
     WorktreeTableColumn::Dir,
     WorktreeTableColumn::Task,
+    WorktreeTableColumn::Cache,
 ];
 
 fn default_worktree_columns() -> Vec<WorktreeTableColumn> {
@@ -80,6 +81,7 @@ pub enum WorktreeTableColumn {
     Ticket,
     Dir,
     Task,
+    Cache,
 }
 
 /// Application configuration stored in ~/.config/ump-dash/config.toml.
@@ -190,13 +192,14 @@ jira_token = "token"
 
     #[test]
     fn columns_config_controls_order_and_visibility() {
-        let config = parse_config(r#"columns = ["ticket", "branch", "task"]"#);
+        let config = parse_config(r#"columns = ["ticket", "branch", "cache", "task"]"#);
 
         assert_eq!(
             config.columns,
             vec![
                 WorktreeTableColumn::Ticket,
                 WorktreeTableColumn::Branch,
+                WorktreeTableColumn::Cache,
                 WorktreeTableColumn::Task,
             ]
         );
@@ -210,10 +213,19 @@ jira_token = "token"
     }
 
     #[test]
+
     fn seed_files_config_overrides_default() {
         let config = parse_config(r#"seed_files = [".env.local", "fastlane/.env"]"#);
 
         assert_eq!(config.seed_files, vec![".env.local", "fastlane/.env"]);
+    }
+
+    #[test]
+
+    fn default_columns_end_with_cache() {
+        let config = parse_config("");
+
+        assert_eq!(config.columns.last(), Some(&WorktreeTableColumn::Cache));
     }
 
     #[test]
