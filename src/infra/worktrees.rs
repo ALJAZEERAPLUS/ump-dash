@@ -156,12 +156,49 @@ pub async fn remove_worktree(repo_root: &Path, worktree_path: &Path) -> anyhow::
     Ok(())
 }
 
+/// Gitignored local files the ump repo needs at build time but git does not
+/// track, so a freshly-created worktree lacks them (build failure). Each entry
+/// is a path RELATIVE to the repo root — identical across every teammate's
+/// clone, so seeding works regardless of where main/new worktrees live on disk.
+/// Edit this list to change what every dashboard user copies into new worktrees.
+const WORKTREE_SEED_FILES: &[&str] = &[
+    ".env",
+    "android/keystore/release.keystore",
+    "android/keystore/debug.keystore",
+];
+
+/// Copies each `WORKTREE_SEED_FILES` entry from `repo_root` into `worktree_path`.
+///
+/// Best-effort and non-fatal: the worktree is already created, so a missing
+/// source or copy error is logged and skipped rather than failing the add. A
+/// destination that already exists is left untouched (never clobbers).
+fn seed_worktree_files(repo_root: &Path, worktree_path: &Path) {
+    for rel in WORKTREE_SEED_FILES {
+        let src = repo_root.join(rel);
+        let dest = worktree_path.join(rel);
+        if !src.exists() || dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                tracing::warn!("seed_worktree_files: mkdir {} failed: {e}", parent.display());
+                continue;
+            }
+        }
+        match std::fs::copy(&src, &dest) {
+            Ok(_) => tracing::info!("seed_worktree_files: copied {rel} into new worktree"),
+            Err(e) => tracing::warn!("seed_worktree_files: copy {rel} failed: {e}"),
+        }
+    }
+}
+
 /// Creates a new worktree as a sibling directory of repo_root.
 ///
 /// Computes the worktree path as `repo_root.parent().unwrap().join(branch_name)`.
 /// Runs `git worktree add -b <branch_name> <path>` to create a new branch, or
 /// retries with `git worktree add <path> <branch_name>` if the branch already exists.
-/// Returns the created worktree path on success.
+/// On success, seeds gitignored local files (see `seed_worktree_files`) so the
+/// new worktree builds. Returns the created worktree path on success.
 pub async fn add_worktree(repo_root: &Path, branch_name: &str) -> anyhow::Result<std::path::PathBuf> {
     let parent = repo_root.parent().ok_or_else(|| anyhow::anyhow!("repo_root has no parent directory"))?;
     let worktree_path = parent.join(branch_name);
@@ -180,6 +217,7 @@ pub async fn add_worktree(repo_root: &Path, branch_name: &str) -> anyhow::Result
         .await?;
 
     if output.status.success() {
+        seed_worktree_files(repo_root, &worktree_path);
         return Ok(worktree_path);
     }
 
@@ -194,6 +232,7 @@ pub async fn add_worktree(repo_root: &Path, branch_name: &str) -> anyhow::Result
             .await?;
 
         if retry_output.status.success() {
+            seed_worktree_files(repo_root, &worktree_path);
             return Ok(worktree_path);
         }
 
@@ -252,6 +291,7 @@ pub async fn add_worktree_new_branch(
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git worktree add -b failed: {}", stderr.trim());
     }
+    seed_worktree_files(repo_root, &worktree_path);
     Ok(worktree_path)
 }
 
