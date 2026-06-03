@@ -3,6 +3,44 @@
 //! `CommandSpec` describes *what* to run. The infrastructure layer converts it
 //! to an actual process via `to_argv()`. No process spawning happens here.
 
+const ANDROID_AVD_PREFIX: &str = "avd:";
+
+pub fn android_avd_name(device_id: &str) -> Option<&str> {
+    device_id
+        .strip_prefix(ANDROID_AVD_PREFIX)
+        .filter(|name| !name.is_empty())
+}
+
+pub fn android_avd_device_id(avd_name: &str) -> String {
+    format!("{ANDROID_AVD_PREFIX}{avd_name}")
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn android_wait_for_avd_script(avd_name: &str) -> String {
+    let quoted_avd = shell_single_quote(avd_name);
+    format!(
+        "avd={quoted_avd}; i=0; while [ \"$i\" -lt 180 ]; do for serial in $(adb devices | awk 'NR > 1 && $2 == \"device\" && $1 ~ /^emulator-/ {{ print $1 }}'); do name=$(adb -s \"$serial\" emu avd name 2>/dev/null | awk 'NF && $0 != \"OK\" {{ print; exit }}' | tr -d '\\r'); if [ \"$name\" = \"$avd\" ]; then exit 0; fi; done; i=$((i + 1)); sleep 1; done; echo \"[error] could not find running emulator for AVD $avd\" >&2; exit 1"
+    )
+}
+
+pub fn android_boot_avd_command(avd_name: &str) -> String {
+    format!(
+        "emulator -avd {} > /dev/null 2>&1 & {}",
+        shell_single_quote(avd_name),
+        android_wait_for_avd_script(avd_name)
+    )
+}
+
+fn android_run_avd_script(avd_name: &str, yarn_script: &str) -> String {
+    let quoted_avd = shell_single_quote(avd_name);
+    format!(
+        "avd={quoted_avd}; for serial in $(adb devices | awk 'NR > 1 && $2 == \"device\" && $1 ~ /^emulator-/ {{ print $1 }}'); do name=$(adb -s \"$serial\" emu avd name 2>/dev/null | awk 'NF && $0 != \"OK\" {{ print; exit }}' | tr -d '\\r'); if [ \"$name\" = \"$avd\" ]; then exec yarn {yarn_script} --device \"$serial\"; fi; done; echo \"[error] could not find running emulator for AVD $avd\" >&2; exit 1"
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunVariant {
     Local,
@@ -116,7 +154,12 @@ impl CommandSpec {
             CommandSpec::YarnPodInstall => vec!["yarn".into(), "pod-install".into()],
 
             CommandSpec::UmpRunAndroid { device_id, variant } => {
-                let mut argv = vec!["yarn".into(), variant.unwrap_or(RunVariant::Local).android_script().into()];
+                let yarn_script = variant.unwrap_or(RunVariant::Local).android_script();
+                if let Some(avd_name) = android_avd_name(device_id) {
+                    return vec!["sh".into(), "-c".into(), android_run_avd_script(avd_name, yarn_script)];
+                }
+
+                let mut argv = vec!["yarn".into(), yarn_script.into()];
                 if !device_id.is_empty() {
                     argv.push("--device".into());
                     argv.push(device_id.clone());
@@ -419,6 +462,34 @@ mod tests {
             }
             .to_argv(),
             vec!["yarn", "ios:prod", "--udid", "ios-udid-1"]
+        );
+    }
+
+    #[test]
+    fn ump_android_run_for_avd_resolves_serial_before_yarn_script() {
+        let argv = CommandSpec::UmpRunAndroid {
+            device_id: "avd:Pixel_9a".into(),
+            variant: Some(RunVariant::Local),
+        }
+        .to_argv();
+
+        assert_eq!(&argv[0], "sh");
+        assert_eq!(&argv[1], "-c");
+        assert!(
+            argv[2].contains("adb devices"),
+            "AVD run should inspect connected adb serials, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("adb -s \"$serial\" emu avd name"),
+            "AVD run should map adb serials back to AVD names, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("Pixel_9a"),
+            "AVD run should preserve the selected AVD name, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("yarn android:local --device \"$serial\""),
+            "AVD run should pass the resolved adb serial to yarn, got {argv:?}"
         );
     }
 

@@ -14,7 +14,7 @@
 use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
-use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
+use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::worktree::WorktreeId;
 use crate::domain::worktree_slice::LastRunConfig;
@@ -1235,9 +1235,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 };
                 if let Some(device) = filtered.get(selected) {
                     let device_id = device.id.clone();
-                    let device_name = device.name.clone();
                     let is_ios = matches!(pending_template.as_ref(), CommandSpec::UmpRunIos { .. });
-                    let is_available_emulator = device_name.ends_with("(available)");
+                    let is_available_emulator = android_avd_name(&device_id).is_some();
 
                     if is_available_emulator && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. }) {
                         let real_spec = command_with_device(*pending_template, device_id);
@@ -1279,10 +1278,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 if boot_android_emulator
                     && let CommandSpec::UmpRunAndroid { device_id, .. } = &real_spec
+                    && let Some(avd_name) = android_avd_name(device_id)
                 {
                     remember_ump_run_config(state, &real_spec);
                     let boot = CommandSpec::ShellCommand {
-                        command: format!("emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device"),
+                        command: android_boot_avd_command(avd_name),
                     };
                     if let Some(eff) = dispatch_command(state, boot) {
                         effects.push(eff);
@@ -1319,7 +1319,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                     1 => {
                         // Only one device — skip picker
-                        let is_available_emulator = devices[0].name.ends_with("(available)");
+                        let is_available_emulator = android_avd_name(&devices[0].id).is_some();
 
                         // Available emulator: boot it, then run via shell command
                         if is_available_emulator {

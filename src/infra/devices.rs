@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use crate::domain::command::DeviceInfo;
+use crate::domain::command::{android_avd_device_id, DeviceInfo};
 
 // ---------------------------------------------------------------------------
 // Parsers (pure functions)
@@ -179,6 +179,14 @@ pub fn parse_xctrace_devices(output: &str) -> Vec<DeviceInfo> {
     result
 }
 
+pub fn parse_adb_emu_avd_name(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(|line| line.trim().trim_end_matches('\r'))
+        .find(|line| !line.is_empty() && *line != "OK")
+        .map(|line| line.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Async runners
 // ---------------------------------------------------------------------------
@@ -196,10 +204,36 @@ pub fn parse_avd_list(output: &str) -> Vec<DeviceInfo> {
         .map(|l| l.trim())
         .filter(|l| !l.is_empty())
         .map(|name| DeviceInfo {
-            id: name.to_string(),
+            id: android_avd_device_id(name),
             name: name.replace('_', " "),
         })
         .collect()
+}
+
+async fn annotate_running_android_emulators(
+    devices: &mut [DeviceInfo],
+) -> std::collections::HashSet<String> {
+    let mut running_avd_ids = std::collections::HashSet::new();
+
+    for device in devices.iter_mut().filter(|device| device.id.starts_with("emulator-")) {
+        let output = tokio::process::Command::new("adb")
+            .args(["-s", &device.id, "emu", "avd", "name"])
+            .output()
+            .await;
+
+        let Ok(output) = output else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let Some(avd_name) = parse_adb_emu_avd_name(&text) else {
+            continue;
+        };
+
+        running_avd_ids.insert(android_avd_device_id(&avd_name));
+        device.name = avd_name.replace('_', " ");
+    }
+
+    running_avd_ids
 }
 
 /// Runs `adb devices -l` + `emulator -list-avds` and returns the merged list.
@@ -219,15 +253,14 @@ pub async fn list_android_devices() -> anyhow::Result<Vec<DeviceInfo>> {
         let text = String::from_utf8_lossy(&adb_output?.stdout).to_string();
         parse_adb_devices(&text)
     };
+    let running_avd_ids = annotate_running_android_emulators(&mut devices).await;
 
     // Merge available AVDs that aren't already running
     if let Ok(output) = avd_output {
         let text = String::from_utf8_lossy(&output.stdout).to_string();
         let avds = parse_avd_list(&text);
-        let running_ids: std::collections::HashSet<String> =
-            devices.iter().map(|d| d.id.clone()).collect();
         for avd in avds {
-            if !running_ids.contains(&avd.id) {
+            if !running_avd_ids.contains(&avd.id) {
                 devices.push(DeviceInfo {
                     name: format!("{} (available)", avd.name),
                     ..avd
@@ -313,6 +346,31 @@ impl crate::domain::ports::device_port::DevicePort for AdbXcrunDevices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avd_list_marks_stopped_emulators_as_avd_targets() {
+        assert_eq!(
+            parse_avd_list("Pixel_9a\nPixel_8a\n"),
+            vec![
+                DeviceInfo {
+                    id: "avd:Pixel_9a".into(),
+                    name: "Pixel 9a".into(),
+                },
+                DeviceInfo {
+                    id: "avd:Pixel_8a".into(),
+                    name: "Pixel 8a".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn adb_emu_avd_name_parser_ignores_ok_line() {
+        assert_eq!(
+            parse_adb_emu_avd_name("Pixel_9a\r\nOK\r\n"),
+            Some("Pixel_9a".into())
+        );
+    }
 
     #[test]
     fn ios_device_source_merges_physical_devices_with_simulators() {

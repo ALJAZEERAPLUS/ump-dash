@@ -726,6 +726,51 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn available_android_avd_boot_waits_for_selected_avd_before_queued_run() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: "avd:Pixel_9a".into(),
+                variant: None,
+            }),
+            boot_android_emulator: true,
+        });
+
+        let effects = update(&mut state, Action::ModalRunVariantConfirm);
+
+        let command = effects.iter().find_map(|effect| match effect {
+            Effect::SpawnTask {
+                spec: CommandSpec::ShellCommand { command },
+                ..
+            } => Some(command.as_str()),
+            _ => None,
+        });
+
+        let command = command.expect("booting an available AVD should spawn a shell command");
+        assert!(
+            command.contains("emulator -avd 'Pixel_9a'"),
+            "boot command should launch the selected AVD, got {command}"
+        );
+        assert!(
+            command.contains("adb -s \"$serial\" emu avd name"),
+            "boot command should wait for the selected AVD serial, got {command}"
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|slice| slice.queue.front())
+                == Some(&CommandSpec::UmpRunAndroid {
+                    device_id: "avd:Pixel_9a".into(),
+                    variant: Some(RunVariant::Local),
+                }),
+            "boot flow should queue the final AVD run after the boot command"
+        );
+    }
+
+    #[test]
     fn uppercase_r_uses_selected_worktree_run_history_only() {
         let mut state = base_state();
         seed_two_worktrees(&mut state, "wt-a", "wt-b");
