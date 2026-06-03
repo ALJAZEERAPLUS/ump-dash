@@ -126,7 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
-| 260603-pif | Fix Android AVD run targets by resolving Pixel_9a to the adb emulator serial | 2026-06-03 | pending | [260603-pif-fix-android-run-target-pixel-9a-device-m](./quick/260603-pif-fix-android-run-target-pixel-9a-device-m/) |
+| 260603-pif | Fix Android AVD run targets by resolving Pixel_9a to the adb emulator serial | 2026-06-03 | 37f8746 | [260603-pif-fix-android-run-target-pixel-9a-device-m](./quick/260603-pif-fix-android-run-target-pixel-9a-device-m/) |
 | 260531-awm | Remove Metro port lock, use next available port, and keep Metro scoped per worktree | 2026-05-31 | c7caf62 | [260531-awm-let-s-remove-the-lock-from-metro-now-whe](./quick/260531-awm-let-s-remove-the-lock-from-metro-now-whe/) |
 | 260529-hhm | Move project identity and release flow to ALJAZEERAPLUS/ump-dash, then publish v1.3.0 | 2026-05-29 | dd47972 | [260529-hhm-the-origin-has-changed-now-it-is-github-](./quick/260529-hhm-the-origin-has-changed-now-it-is-github-/) |
 | 260529-fs9 | Add Ghostty support for terminal surfaces | 2026-05-29 | 2839c35 | [260529-fs9-let-s-add-support-for-ghostty-the-same-w](./quick/260529-fs9-let-s-add-support-for-ghostty-the-same-w/) |
