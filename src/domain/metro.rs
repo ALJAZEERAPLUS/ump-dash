@@ -133,6 +133,13 @@ impl WorktreeMetro {
             .or(self.reserved_port)
     }
 
+    /// TCP port from a registered Metro process handle.
+    ///
+    /// Unlike `running_port`, this excludes a merely reserved startup port.
+    pub fn process_port(&self) -> Option<u16> {
+        self.handle.as_ref().map(|handle| handle.port())
+    }
+
     /// Clear the handle after the process has been killed and reaped.
     /// Transitions status to Stopped and clears activity state.
     pub fn clear(&mut self) {

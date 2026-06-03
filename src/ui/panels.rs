@@ -56,6 +56,7 @@ fn worktree_column_constraint(column: WorktreeTableColumn) -> Constraint {
         WorktreeTableColumn::Ticket => Constraint::Min(20),
         WorktreeTableColumn::Dir => Constraint::Length(16),
         WorktreeTableColumn::Task => Constraint::Length(20),
+        WorktreeTableColumn::CacheStatus => Constraint::Length(3),
         WorktreeTableColumn::Cache => Constraint::Length(8),
     }
 }
@@ -98,6 +99,36 @@ fn cache_column_label(slice: Option<&crate::domain::worktree_slice::WorktreeSlic
             short_fingerprint(fingerprint)
         }
         Some(crate::domain::native_cache::IosSimulatorCacheState::Unknown) | None => "-".into(),
+    }
+}
+
+fn cache_status_column_label(
+    slice: Option<&crate::domain::worktree_slice::WorktreeSlice>,
+) -> String {
+    match slice.map(|slice| &slice.ios_simulator_cache) {
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Hit(_)) => "\u{25cf}".into(),
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Checking) => "...".into(),
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Error(_)) => "!".into(),
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Miss { .. })
+        | Some(crate::domain::native_cache::IosSimulatorCacheState::Unknown)
+        | None => String::new(),
+    }
+}
+
+fn cache_status_column_style(
+    slice: Option<&crate::domain::worktree_slice::WorktreeSlice>,
+) -> Style {
+    match slice.map(|slice| &slice.ios_simulator_cache) {
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Hit(_)) => {
+            Style::default().fg(Color::Green)
+        }
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Checking) => {
+            Style::default().fg(Color::DarkGray)
+        }
+        Some(crate::domain::native_cache::IosSimulatorCacheState::Error(_)) => {
+            Style::default().fg(Color::Red)
+        }
+        _ => Style::default(),
     }
 }
 
@@ -160,6 +191,8 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         // Per-row running task lookup — Option<&TaskRecord> is Copy; safe to use twice below.
         let task = crate::app::state::task_for_worktree(state, &wt.id);
         let cache_cell = cache_column_label(slice);
+        let cache_status_cell = cache_status_column_label(slice);
+        let cache_status_style = cache_status_column_style(slice);
 
         // Status icons: Y (yarn) and P (pods) with color indicating freshness.
         // Metro state surfaces via row bg + detail row, not via an icon column.
@@ -256,6 +289,9 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
                 WorktreeTableColumn::Ticket => Cell::from(ticket_display.clone()),
                 WorktreeTableColumn::Dir => Cell::from(dir_name.clone()),
                 WorktreeTableColumn::Task => Cell::from(task_cell.clone()),
+                WorktreeTableColumn::CacheStatus => {
+                    Cell::from(Span::styled(cache_status_cell.clone(), cache_status_style))
+                }
                 WorktreeTableColumn::Cache => Cell::from(cache_cell.clone()),
             })
             .collect::<Vec<_>>();
@@ -509,5 +545,33 @@ mod tests {
         assert_eq!(cache_column_label(Some(&error)), "err");
         assert_eq!(cache_column_label(Some(&miss)), "01234567");
         assert_eq!(cache_column_label(None), "-");
+    }
+
+    #[test]
+    fn cache_status_column_label_shows_availability_light_only_for_hits() {
+        let hit = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Hit(cache_hit("abcdef1234567890")),
+            ..Default::default()
+        };
+        let miss = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Miss {
+                fingerprint: "0123456789abcdef".into(),
+            },
+            ..Default::default()
+        };
+        let checking = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Checking,
+            ..Default::default()
+        };
+        let error = WorktreeSlice {
+            ios_simulator_cache: IosSimulatorCacheState::Error("bad metadata".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(cache_status_column_label(Some(&hit)), "\u{25cf}");
+        assert_eq!(cache_status_column_label(Some(&miss)), "");
+        assert_eq!(cache_status_column_label(Some(&checking)), "...");
+        assert_eq!(cache_status_column_label(Some(&error)), "!");
+        assert_eq!(cache_status_column_label(None), "");
     }
 }

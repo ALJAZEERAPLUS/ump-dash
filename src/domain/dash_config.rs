@@ -29,12 +29,13 @@ fn default_spinner_style() -> String {
     "circles".to_string()
 }
 
-pub const DEFAULT_WORKTREE_COLUMNS: [WorktreeTableColumn; 6] = [
+pub const DEFAULT_WORKTREE_COLUMNS: [WorktreeTableColumn; 7] = [
     WorktreeTableColumn::Status,
     WorktreeTableColumn::Branch,
     WorktreeTableColumn::Ticket,
     WorktreeTableColumn::Dir,
     WorktreeTableColumn::Task,
+    WorktreeTableColumn::CacheStatus,
     WorktreeTableColumn::Cache,
 ];
 
@@ -81,6 +82,7 @@ pub enum WorktreeTableColumn {
     Ticket,
     Dir,
     Task,
+    CacheStatus,
     Cache,
 }
 
@@ -192,13 +194,15 @@ jira_token = "token"
 
     #[test]
     fn columns_config_controls_order_and_visibility() {
-        let config = parse_config(r#"columns = ["ticket", "branch", "cache", "task"]"#);
+        let config =
+            parse_config(r#"columns = ["ticket", "branch", "cache_status", "cache", "task"]"#);
 
         assert_eq!(
             config.columns,
             vec![
                 WorktreeTableColumn::Ticket,
                 WorktreeTableColumn::Branch,
+                WorktreeTableColumn::CacheStatus,
                 WorktreeTableColumn::Cache,
                 WorktreeTableColumn::Task,
             ]
@@ -222,10 +226,21 @@ jira_token = "token"
 
     #[test]
 
-    fn default_columns_end_with_cache() {
+    fn default_columns_end_with_cache_status_and_cache() {
         let config = parse_config("");
 
-        assert_eq!(config.columns.last(), Some(&WorktreeTableColumn::Cache));
+        assert_eq!(
+            config.columns.as_slice(),
+            [
+                WorktreeTableColumn::Status,
+                WorktreeTableColumn::Branch,
+                WorktreeTableColumn::Ticket,
+                WorktreeTableColumn::Dir,
+                WorktreeTableColumn::Task,
+                WorktreeTableColumn::CacheStatus,
+                WorktreeTableColumn::Cache,
+            ]
+        );
     }
 
     #[test]

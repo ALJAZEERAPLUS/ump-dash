@@ -304,6 +304,37 @@ pub fn simctl_install_args(simulator_udid: &str, app_path: &Path) -> Vec<String>
     ]
 }
 
+pub fn simctl_bootstatus_command(simulator_udid: &str) -> SimctlLaunchCommand {
+    SimctlLaunchCommand {
+        program: "xcrun".to_string(),
+        args: vec![
+            "simctl".to_string(),
+            "bootstatus".to_string(),
+            simulator_udid.to_string(),
+            "-b".to_string(),
+        ],
+        env: Vec::new(),
+    }
+}
+
+pub fn simctl_set_js_location_command(request: &CachedIosLaunchRequest) -> SimctlLaunchCommand {
+    SimctlLaunchCommand {
+        program: "xcrun".to_string(),
+        args: vec![
+            "simctl".to_string(),
+            "spawn".to_string(),
+            request.simulator_udid.clone(),
+            "defaults".to_string(),
+            "write".to_string(),
+            request.bundle_id.clone(),
+            "RCT_jsLocation".to_string(),
+            "-string".to_string(),
+            format!("localhost:{}", request.metro_port),
+        ],
+        env: Vec::new(),
+    }
+}
+
 pub fn simctl_launch_command(request: &CachedIosLaunchRequest) -> SimctlLaunchCommand {
     SimctlLaunchCommand {
         program: "xcrun".to_string(),
@@ -364,6 +395,14 @@ impl NativeCachePort for LocalNativeCache {
         &self,
         request: CachedIosLaunchRequest,
     ) -> anyhow::Result<Vec<String>> {
+        let bootstatus = simctl_bootstatus_command(&request.simulator_udid);
+        let mut boot_command = TokioCommand::new(&bootstatus.program);
+        boot_command.args(&bootstatus.args);
+        let boot_status = boot_command.stdin(Stdio::null()).output().await?;
+        if !boot_status.status.success() {
+            anyhow::bail!(process_failure_message("bootstatus", &boot_status));
+        }
+
         let install_status = TokioCommand::new("xcrun")
             .args(simctl_install_args(
                 &request.simulator_udid,
@@ -374,6 +413,14 @@ impl NativeCachePort for LocalNativeCache {
             .await?;
         if !install_status.status.success() {
             anyhow::bail!(process_failure_message("install", &install_status));
+        }
+
+        let js_location = simctl_set_js_location_command(&request);
+        let mut defaults_command = TokioCommand::new(&js_location.program);
+        defaults_command.args(&js_location.args);
+        let defaults_status = defaults_command.stdin(Stdio::null()).output().await?;
+        if !defaults_status.status.success() {
+            anyhow::bail!(process_failure_message("defaults", &defaults_status));
         }
 
         let launch = simctl_launch_command(&request);
@@ -388,13 +435,17 @@ impl NativeCachePort for LocalNativeCache {
         }
 
         let mut lines = vec![
+            format!("booted simulator {}", request.simulator_udid),
             format!("installed {}", request.app_path.display()),
+            format!("configured Metro location localhost:{}", request.metro_port),
             format!(
                 "launched {} on {} with Metro port {}",
                 request.bundle_id, request.simulator_udid, request.metro_port
             ),
         ];
+        lines.extend(process_output_lines("bootstatus", &boot_status));
         lines.extend(process_output_lines("install", &install_status));
+        lines.extend(process_output_lines("defaults", &defaults_status));
         lines.extend(process_output_lines("launch", &launch_status));
         Ok(lines)
     }
@@ -629,6 +680,44 @@ mod tests {
                 "19001".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn simctl_bootstatus_command_boots_and_waits_for_simulator() {
+        let command = simctl_bootstatus_command("SIM-123");
+
+        assert_eq!(command.program, "xcrun");
+        assert_eq!(command.args, vec!["simctl", "bootstatus", "SIM-123", "-b"]);
+        assert!(command.env.is_empty());
+    }
+
+    #[test]
+    fn simctl_js_location_command_targets_requested_metro_port() {
+        let request = CachedIosLaunchRequest {
+            simulator_udid: "SIM-123".to_string(),
+            app_path: PathBuf::from("/tmp/App.app"),
+            bundle_id: "com.aljazeera.dashboard".to_string(),
+            metro_port: 19001,
+        };
+
+        let command = simctl_set_js_location_command(&request);
+
+        assert_eq!(command.program, "xcrun");
+        assert_eq!(
+            command.args,
+            vec![
+                "simctl",
+                "spawn",
+                "SIM-123",
+                "defaults",
+                "write",
+                "com.aljazeera.dashboard",
+                "RCT_jsLocation",
+                "-string",
+                "localhost:19001"
+            ]
+        );
+        assert!(command.env.is_empty());
     }
 
     #[test]

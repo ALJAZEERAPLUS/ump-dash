@@ -419,7 +419,7 @@ fn begin_cached_ios_launch(
         device_id.clone(),
     )));
 
-    let (ready_port, should_start_metro) = {
+    let (launch_port, should_start_metro) = {
         let slice = state
             .worktrees
             .entry(worktree_id.clone())
@@ -427,21 +427,13 @@ fn begin_cached_ios_launch(
                 id: worktree_id.clone(),
                 ..Default::default()
             });
-        let ready_port = if slice.metro.is_running()
-            && matches!(
-                slice.metro.activity(),
-                Some(crate::domain::metro::MetroActivity::Ready)
-            ) {
-            slice.metro.running_port()
-        } else {
-            None
-        };
+        let launch_port = slice.metro.process_port();
         let has_running_or_reserved_metro =
             slice.metro.is_running() || slice.metro.running_port().is_some();
-        (ready_port, !has_running_or_reserved_metro)
+        (launch_port, !has_running_or_reserved_metro)
     };
 
-    if let Some(port) = ready_port {
+    if let Some(port) = launch_port {
         effects.push(Effect::InstallAndLaunchCachedIosSimulator {
             worktree_id,
             request: cached_ios_launch_request(&cache_hit, device_id, port),

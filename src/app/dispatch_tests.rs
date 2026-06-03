@@ -292,6 +292,19 @@ fn register_ready_metro(state: &mut AppState, id: &str, port: u16) {
         .record_activity(crate::domain::metro::MetroActivity::Ready);
 }
 
+fn register_metro_without_activity(state: &mut AppState, id: &str, port: u16) {
+    state
+        .worktrees
+        .get_mut(&WorktreeId(id.into()))
+        .expect("slice should exist")
+        .metro
+        .register(Box::new(FakeMetroHandle {
+            pid: 9002,
+            worktree_id: id.into(),
+            port,
+        }));
+}
+
 /// Build a synthetic `TaskRecord` for unit tests (no real runtime needed).
 fn synthetic_task_record(
     id_value: u64,
@@ -1272,6 +1285,50 @@ mod ump_run_dialog {
                         && request.metro_port == 19001
             )),
             "expected cached install/launch effect with selected simulator and metro port; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_ios_device_selection_launches_when_metro_process_exists_before_ready_activity() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_ios_hit_fixture();
+        register_metro_without_activity(&mut state, "wt-1", 19007);
+        state.modal_stack.pending_cached_ios_run =
+            Some(pending_cached_ios_run_fixture("wt-1", hit.clone()));
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "SIM-stale".into(),
+                name: "iPhone 15 Pro".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.simulator_udid == "SIM-stale"
+                        && request.metro_port == 19007
+            )),
+            "cached launch should use an already registered Metro process port even if the Ready activity was missed; got {effects:?}"
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("slice should exist")
+                .pending_cached_ios_launch
+                .is_none(),
+            "launch should not stay parked when a live Metro handle already exists"
         );
     }
 
