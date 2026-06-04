@@ -51,11 +51,18 @@ async fn main() -> color_eyre::Result<()> {
     });
     let multiplexer_port = ump_dash::infra::multiplexer::detect_multiplexer().map(Arc::from);
 
+    // Worktree seed-file list comes from config; fall back to the domain default
+    // when no config is loaded so worktree creation still seeds sane defaults.
+    let seed_files = config
+        .as_ref()
+        .map(|cfg| cfg.seed_files.clone())
+        .unwrap_or_else(ump_dash::domain::dash_config::default_seed_files);
+
     let adapters = Adapters {
         command_runner: Arc::new(ump_dash::infra::command_runner::TokioCommandRunner),
         metro: Arc::new(ump_dash::infra::metro::TokioMetroAdapter::new()),
         port_probe: Arc::new(ump_dash::infra::port::LsofPortProbe),
-        worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter),
+        worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter::new(seed_files)),
         devices: Arc::new(ump_dash::infra::devices::AdbXcrunDevices),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),

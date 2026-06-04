@@ -41,6 +41,16 @@ fn default_worktree_columns() -> Vec<WorktreeTableColumn> {
     DEFAULT_WORKTREE_COLUMNS.to_vec()
 }
 
+/// Default gitignored local files seeded into every newly-created worktree.
+/// `pub` so the composition root can fall back to it when no config is loaded.
+pub fn default_seed_files() -> Vec<String> {
+    vec![
+        ".env".to_string(),
+        "android/keystore/release.keystore".to_string(),
+        "android/keystore/debug.keystore".to_string(),
+    ]
+}
+
 fn deserialize_worktree_columns<'de, D>(
     deserializer: D,
 ) -> Result<Vec<WorktreeTableColumn>, D::Error>
@@ -132,6 +142,13 @@ pub struct DashConfig {
         deserialize_with = "deserialize_worktree_columns"
     )]
     pub columns: Vec<WorktreeTableColumn>,
+
+    /// Gitignored local files copied into each newly-created worktree so it
+    /// builds — the repo's `.gitignore` excludes them, so git can't carry them
+    /// across. Paths are relative to the repo root. Defaults to `.env` plus the
+    /// Android keystores; override in config.toml to seed a different set.
+    #[serde(default = "default_seed_files")]
+    pub seed_files: Vec<String>,
 }
 
 impl DashConfig {
@@ -183,6 +200,20 @@ jira_token = "token"
                 WorktreeTableColumn::Task,
             ]
         );
+    }
+
+    #[test]
+    fn seed_files_default_to_env_and_keystores() {
+        let config = parse_config("");
+
+        assert_eq!(config.seed_files, default_seed_files());
+    }
+
+    #[test]
+    fn seed_files_config_overrides_default() {
+        let config = parse_config(r#"seed_files = [".env.local", "fastlane/.env"]"#);
+
+        assert_eq!(config.seed_files, vec![".env.local", "fastlane/.env"]);
     }
 
     #[test]

@@ -156,24 +156,16 @@ pub async fn remove_worktree(repo_root: &Path, worktree_path: &Path) -> anyhow::
     Ok(())
 }
 
-/// Gitignored local files the ump repo needs at build time but git does not
-/// track, so a freshly-created worktree lacks them (build failure). Each entry
-/// is a path RELATIVE to the repo root — identical across every teammate's
-/// clone, so seeding works regardless of where main/new worktrees live on disk.
-/// Edit this list to change what every dashboard user copies into new worktrees.
-const WORKTREE_SEED_FILES: &[&str] = &[
-    ".env",
-    "android/keystore/release.keystore",
-    "android/keystore/debug.keystore",
-];
-
-/// Copies each `WORKTREE_SEED_FILES` entry from `repo_root` into `worktree_path`.
+/// Copies each `seed_files` entry from `repo_root` into `worktree_path`. Entries
+/// are paths RELATIVE to the repo root (identical across every teammate's clone),
+/// so seeding works regardless of where main/new worktrees live on disk. The
+/// list is supplied by the caller from `DashConfig::seed_files`.
 ///
 /// Best-effort and non-fatal: the worktree is already created, so a missing
 /// source or copy error is logged and skipped rather than failing the add. A
 /// destination that already exists is left untouched (never clobbers).
-fn seed_worktree_files(repo_root: &Path, worktree_path: &Path) {
-    for rel in WORKTREE_SEED_FILES {
+fn seed_worktree_files(repo_root: &Path, worktree_path: &Path, seed_files: &[String]) {
+    for rel in seed_files {
         let src = repo_root.join(rel);
         let dest = worktree_path.join(rel);
         if !src.exists() || dest.exists() {
@@ -197,8 +189,8 @@ fn seed_worktree_files(repo_root: &Path, worktree_path: &Path) {
 /// Computes the worktree path as `repo_root.parent().unwrap().join(branch_name)`.
 /// Runs `git worktree add -b <branch_name> <path>` to create a new branch, or
 /// retries with `git worktree add <path> <branch_name>` if the branch already exists.
-/// On success, seeds gitignored local files (see `seed_worktree_files`) so the
-/// new worktree builds. Returns the created worktree path on success.
+/// Returns the created worktree path on success. Seeding of gitignored local
+/// files happens at the `WorktreePort` boundary (`GitWorktreeAdapter`), not here.
 pub async fn add_worktree(repo_root: &Path, branch_name: &str) -> anyhow::Result<std::path::PathBuf> {
     let parent = repo_root.parent().ok_or_else(|| anyhow::anyhow!("repo_root has no parent directory"))?;
     let worktree_path = parent.join(branch_name);
@@ -216,31 +208,28 @@ pub async fn add_worktree(repo_root: &Path, branch_name: &str) -> anyhow::Result
         .output()
         .await?;
 
-    if output.status.success() {
-        seed_worktree_files(repo_root, &worktree_path);
-        return Ok(worktree_path);
-    }
+    // If the first attempt fails because the branch already exists, retry
+    // without -b to check it out; any other failure is fatal. Both the first-try
+    // and retry success paths fall through to the single seed-and-return below.
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !(stderr.contains("already exists") || stderr.contains("branch")) {
+            anyhow::bail!("git worktree add -b failed: {}", stderr.trim());
+        }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // If branch already exists, retry without -b to checkout existing branch
-    if stderr.contains("already exists") || stderr.contains("branch") {
         let retry_output = tokio::process::Command::new("git")
             .args(["worktree", "add", &path_str, branch_name])
             .current_dir(repo_root)
             .output()
             .await?;
 
-        if retry_output.status.success() {
-            seed_worktree_files(repo_root, &worktree_path);
-            return Ok(worktree_path);
+        if !retry_output.status.success() {
+            let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+            anyhow::bail!("git worktree add failed: {}", retry_stderr.trim());
         }
-
-        let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
-        anyhow::bail!("git worktree add failed: {}", retry_stderr.trim());
     }
 
-    anyhow::bail!("git worktree add -b failed: {}", stderr.trim());
+    Ok(worktree_path)
 }
 
 /// Lists remote branch names by running `git branch -r` in repo_root.
@@ -269,7 +258,8 @@ pub async fn list_remote_branches(repo_root: &Path) -> anyhow::Result<Vec<String
 
 /// Creates a worktree with a new branch based on a given base branch.
 /// Runs `git worktree add -b <new_branch> <path> origin/<base_branch>`.
-/// Returns the created worktree path on success.
+/// Returns the created worktree path on success. Seeding of gitignored local
+/// files happens at the `WorktreePort` boundary (`GitWorktreeAdapter`), not here.
 pub async fn add_worktree_new_branch(
     repo_root: &Path,
     new_branch: &str,
@@ -291,7 +281,6 @@ pub async fn add_worktree_new_branch(
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git worktree add -b failed: {}", stderr.trim());
     }
-    seed_worktree_files(repo_root, &worktree_path);
     Ok(worktree_path)
 }
 
@@ -312,11 +301,22 @@ pub async fn list_worktrees(repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
     parse_worktree_porcelain(&text)
 }
 
-/// F-104 adapter: wraps the existing async worktree free fns behind the
-/// `WorktreePort` trait. Consumers after Plan 13-08 receive this as
-/// `Arc<dyn WorktreePort>`; until then the free fns above remain the primary
-/// call path.
-pub struct GitWorktreeAdapter;
+/// F-104 adapter: wraps the async worktree free fns behind the `WorktreePort`
+/// trait. Consumers receive this as `Arc<dyn WorktreePort>`. Seeding of
+/// gitignored local files is owned here at the port boundary, so every worktree
+/// created through the port is seeded regardless of which `add*` path runs.
+pub struct GitWorktreeAdapter {
+    /// Files copied into each newly-created worktree, resolved from
+    /// `DashConfig::seed_files` at the composition root.
+    seed_files: Vec<String>,
+}
+
+impl GitWorktreeAdapter {
+    /// Builds the adapter with the seed-file list (see `DashConfig::seed_files`).
+    pub fn new(seed_files: Vec<String>) -> Self {
+        Self { seed_files }
+    }
+}
 
 #[async_trait::async_trait]
 impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
@@ -340,7 +340,9 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         repo_root: &std::path::Path,
         branch_name: &str,
     ) -> anyhow::Result<std::path::PathBuf> {
-        add_worktree(repo_root, branch_name).await
+        let worktree_path = add_worktree(repo_root, branch_name).await?;
+        seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
+        Ok(worktree_path)
     }
 
     async fn add_new_branch(
@@ -349,7 +351,10 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         new_branch: &str,
         base_branch: &str,
     ) -> anyhow::Result<std::path::PathBuf> {
-        add_worktree_new_branch(repo_root, new_branch, base_branch).await
+        let worktree_path =
+            add_worktree_new_branch(repo_root, new_branch, base_branch).await?;
+        seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
+        Ok(worktree_path)
     }
 
     async fn list_remote_branches(
@@ -375,9 +380,8 @@ mod tests {
         fn new(tag: &str) -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
             let p = std::env::temp_dir().join(format!(
-                "ump-seed-{}-{}-{tag}-{n}",
+                "ump-seed-{}-{tag}-{n}",
                 std::process::id(),
-                env!("CARGO_PKG_NAME"),
             ));
             fs::create_dir_all(&p).unwrap();
             TempDir(p)
@@ -399,7 +403,7 @@ mod tests {
         let wt = TempDir::new("wt");
         fs::write(repo.path().join(".env"), b"SECRET=1").unwrap();
 
-        seed_worktree_files(repo.path(), wt.path());
+        seed_worktree_files(repo.path(), wt.path(), &[".env".to_string()]);
 
         assert_eq!(
             fs::read(wt.path().join(".env")).unwrap(),
@@ -417,7 +421,11 @@ mod tests {
         fs::create_dir_all(nested.parent().unwrap()).unwrap();
         fs::write(&nested, b"keystore-bytes").unwrap();
 
-        seed_worktree_files(repo.path(), wt.path());
+        seed_worktree_files(
+            repo.path(),
+            wt.path(),
+            &["android/keystore/release.keystore".to_string()],
+        );
 
         assert_eq!(
             fs::read(wt.path().join("android/keystore/release.keystore")).unwrap(),
@@ -434,7 +442,7 @@ mod tests {
         fs::write(repo.path().join(".env"), b"FROM_REPO").unwrap();
         fs::write(wt.path().join(".env"), b"ALREADY_THERE").unwrap();
 
-        seed_worktree_files(repo.path(), wt.path());
+        seed_worktree_files(repo.path(), wt.path(), &[".env".to_string()]);
 
         assert_eq!(
             fs::read(wt.path().join(".env")).unwrap(),
@@ -449,7 +457,7 @@ mod tests {
         let repo = TempDir::new("repo");
         let wt = TempDir::new("wt");
 
-        seed_worktree_files(repo.path(), wt.path());
+        seed_worktree_files(repo.path(), wt.path(), &[".env".to_string()]);
 
         assert!(
             !wt.path().join(".env").exists(),
