@@ -28,3 +28,6 @@ Thumbs.db
 
 # Coverage artifacts (D-03 — HTML gitignored, JSON committed to .planning/)
 /target/llvm-cov*
+
+# Understand Anything knowledge graph (local-only, regenerate with /understand)
+.understand-anything/
