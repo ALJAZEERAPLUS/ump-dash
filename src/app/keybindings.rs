@@ -563,6 +563,15 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: has_last_android_run,
     },
     KeyBinding {
+        key: KeyCode::Char('c'),
+        label: "c",
+        short_desc: "cached",
+        long_desc: "Install cached Android build",
+        context: BindingContext::Palette(PaletteMode::Android),
+        action: cached_android_run,
+        visible: has_cached_android_hit,
+    },
+    KeyBinding {
         key: KeyCode::Esc,
         label: "Esc",
         short_desc: "cancel",
@@ -1415,6 +1424,25 @@ fn cached_ios_hit(state: &AppState) -> Option<&crate::domain::native_cache::IosS
         .find(|hit| hit.metadata.fingerprint == *fingerprint)
 }
 
+fn cached_android_hit(state: &AppState) -> Option<&crate::domain::native_cache::AndroidCacheHit> {
+    let id = active_worktree_id(state)?;
+    let selected_cache = &state.worktrees.get(&id)?.android_cache;
+    if let Some(hit) = selected_cache.hit() {
+        return Some(hit);
+    }
+
+    let crate::domain::native_cache::AndroidCacheState::Miss { fingerprint } = selected_cache
+    else {
+        return None;
+    };
+
+    state
+        .worktrees
+        .values()
+        .filter_map(|slice| slice.android_cache.hit())
+        .find(|hit| hit.metadata.fingerprint == *fingerprint)
+}
+
 fn has_last_android_run(state: &AppState) -> bool {
     last_android_run(state).is_some()
 }
@@ -1425,6 +1453,10 @@ fn has_last_ios_run(state: &AppState) -> bool {
 
 fn has_cached_ios_hit(state: &AppState) -> bool {
     cached_ios_hit(state).is_some()
+}
+
+fn has_cached_android_hit(state: &AppState) -> bool {
+    cached_android_hit(state).is_some()
 }
 
 fn repeat_last_android_run(state: &AppState) -> Option<Action> {
@@ -1452,6 +1484,14 @@ fn cached_ios_run(state: &AppState) -> Option<Action> {
         cached_ios_hit(state)
             .cloned()
             .map_or(Action::ModalCancel, Action::CachedIosRun),
+    )
+}
+
+fn cached_android_run(state: &AppState) -> Option<Action> {
+    Some(
+        cached_android_hit(state)
+            .cloned()
+            .map_or(Action::ModalCancel, Action::CachedAndroidRun),
     )
 }
 

@@ -58,6 +58,8 @@ fn worktree_column_constraint(column: WorktreeTableColumn) -> Constraint {
         WorktreeTableColumn::Task => Constraint::Length(20),
         WorktreeTableColumn::CacheStatus => Constraint::Length(3),
         WorktreeTableColumn::Cache => Constraint::Length(8),
+        WorktreeTableColumn::AndroidCacheStatus => Constraint::Length(3),
+        WorktreeTableColumn::AndroidCache => Constraint::Length(8),
     }
 }
 
@@ -83,12 +85,12 @@ fn metro_activity_label(
     }
 }
 
-fn cache_column_label(slice: Option<&crate::domain::worktree_slice::WorktreeSlice>) -> String {
-    fn short_fingerprint(fingerprint: &str) -> String {
-        let short = fingerprint.chars().take(8).collect::<String>();
-        if short.is_empty() { "-".into() } else { short }
-    }
+fn short_fingerprint(fingerprint: &str) -> String {
+    let short = fingerprint.chars().take(8).collect::<String>();
+    if short.is_empty() { "-".into() } else { short }
+}
 
+fn cache_column_label(slice: Option<&crate::domain::worktree_slice::WorktreeSlice>) -> String {
     match slice.map(|slice| &slice.ios_simulator_cache) {
         Some(crate::domain::native_cache::IosSimulatorCacheState::Hit(hit)) => {
             short_fingerprint(&hit.metadata.fingerprint)
@@ -99,6 +101,22 @@ fn cache_column_label(slice: Option<&crate::domain::worktree_slice::WorktreeSlic
             short_fingerprint(fingerprint)
         }
         Some(crate::domain::native_cache::IosSimulatorCacheState::Unknown) | None => "-".into(),
+    }
+}
+
+fn android_cache_column_label(
+    slice: Option<&crate::domain::worktree_slice::WorktreeSlice>,
+) -> String {
+    match slice.map(|slice| &slice.android_cache) {
+        Some(crate::domain::native_cache::AndroidCacheState::Hit(hit)) => {
+            short_fingerprint(&hit.metadata.fingerprint)
+        }
+        Some(crate::domain::native_cache::AndroidCacheState::Checking) => "...".into(),
+        Some(crate::domain::native_cache::AndroidCacheState::Error(_)) => "err".into(),
+        Some(crate::domain::native_cache::AndroidCacheState::Miss { fingerprint }) => {
+            short_fingerprint(fingerprint)
+        }
+        Some(crate::domain::native_cache::AndroidCacheState::Unknown) | None => "-".into(),
     }
 }
 
@@ -115,6 +133,19 @@ fn cache_status_column_label(
     }
 }
 
+fn android_cache_status_column_label(
+    slice: Option<&crate::domain::worktree_slice::WorktreeSlice>,
+) -> String {
+    match slice.map(|slice| &slice.android_cache) {
+        Some(crate::domain::native_cache::AndroidCacheState::Hit(_)) => "\u{25cf}".into(),
+        Some(crate::domain::native_cache::AndroidCacheState::Checking) => "...".into(),
+        Some(crate::domain::native_cache::AndroidCacheState::Error(_)) => "!".into(),
+        Some(crate::domain::native_cache::AndroidCacheState::Miss { .. })
+        | Some(crate::domain::native_cache::AndroidCacheState::Unknown)
+        | None => String::new(),
+    }
+}
+
 fn cache_status_column_style(
     slice: Option<&crate::domain::worktree_slice::WorktreeSlice>,
 ) -> Style {
@@ -126,6 +157,23 @@ fn cache_status_column_style(
             Style::default().fg(Color::DarkGray)
         }
         Some(crate::domain::native_cache::IosSimulatorCacheState::Error(_)) => {
+            Style::default().fg(Color::Red)
+        }
+        _ => Style::default(),
+    }
+}
+
+fn android_cache_status_column_style(
+    slice: Option<&crate::domain::worktree_slice::WorktreeSlice>,
+) -> Style {
+    match slice.map(|slice| &slice.android_cache) {
+        Some(crate::domain::native_cache::AndroidCacheState::Hit(_)) => {
+            Style::default().fg(Color::Green)
+        }
+        Some(crate::domain::native_cache::AndroidCacheState::Checking) => {
+            Style::default().fg(Color::DarkGray)
+        }
+        Some(crate::domain::native_cache::AndroidCacheState::Error(_)) => {
             Style::default().fg(Color::Red)
         }
         _ => Style::default(),
@@ -193,6 +241,9 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         let cache_cell = cache_column_label(slice);
         let cache_status_cell = cache_status_column_label(slice);
         let cache_status_style = cache_status_column_style(slice);
+        let android_cache_cell = android_cache_column_label(slice);
+        let android_cache_status_cell = android_cache_status_column_label(slice);
+        let android_cache_status_style = android_cache_status_column_style(slice);
 
         // Status icons: Y (yarn) and P (pods) with color indicating freshness.
         // Metro state surfaces via row bg + detail row, not via an icon column.
@@ -293,6 +344,11 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
                     Cell::from(Span::styled(cache_status_cell.clone(), cache_status_style))
                 }
                 WorktreeTableColumn::Cache => Cell::from(cache_cell.clone()),
+                WorktreeTableColumn::AndroidCacheStatus => Cell::from(Span::styled(
+                    android_cache_status_cell.clone(),
+                    android_cache_status_style,
+                )),
+                WorktreeTableColumn::AndroidCache => Cell::from(android_cache_cell.clone()),
             })
             .collect::<Vec<_>>();
 
@@ -481,7 +537,8 @@ mod tests {
     use super::*;
     use crate::domain::metro::MetroActivity;
     use crate::domain::native_cache::{
-        IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
+        ANDROID_APK_ARTIFACT_KIND, ANDROID_PLATFORM, AndroidCacheHit, AndroidCacheMetadata,
+        AndroidCacheState, IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
         IosSimulatorCacheMetadata, IosSimulatorCacheState,
     };
     use crate::domain::worktree_slice::WorktreeSlice;
@@ -511,6 +568,21 @@ mod tests {
                 artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
             },
             artifact_path: "/tmp/cached.app".into(),
+        }
+    }
+
+    fn android_cache_hit(fingerprint: &str) -> AndroidCacheHit {
+        AndroidCacheHit {
+            metadata: AndroidCacheMetadata {
+                platform: ANDROID_PLATFORM.into(),
+                fingerprint: fingerprint.into(),
+                application_id: "com.example.app".into(),
+                variant: "localDebugOptimized".into(),
+                created_at: "2026-06-04T00:00:00Z".into(),
+                source_worktree: "/tmp/wt".into(),
+                artifact_kind: ANDROID_APK_ARTIFACT_KIND.into(),
+            },
+            artifact_path: "/tmp/cached.apk".into(),
         }
     }
 
@@ -573,5 +645,61 @@ mod tests {
         assert_eq!(cache_status_column_label(Some(&checking)), "...");
         assert_eq!(cache_status_column_label(Some(&error)), "!");
         assert_eq!(cache_status_column_label(None), "");
+    }
+
+    #[test]
+    fn android_cache_column_label_shows_fingerprint_and_compact_statuses() {
+        let hit = WorktreeSlice {
+            android_cache: AndroidCacheState::Hit(android_cache_hit("abcdef1234567890")),
+            ..Default::default()
+        };
+        let miss = WorktreeSlice {
+            android_cache: AndroidCacheState::Miss {
+                fingerprint: "0123456789abcdef".into(),
+            },
+            ..Default::default()
+        };
+        let checking = WorktreeSlice {
+            android_cache: AndroidCacheState::Checking,
+            ..Default::default()
+        };
+        let error = WorktreeSlice {
+            android_cache: AndroidCacheState::Error("bad metadata".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(android_cache_column_label(Some(&hit)), "abcdef12");
+        assert_eq!(android_cache_column_label(Some(&miss)), "01234567");
+        assert_eq!(android_cache_column_label(Some(&checking)), "...");
+        assert_eq!(android_cache_column_label(Some(&error)), "err");
+        assert_eq!(android_cache_column_label(None), "-");
+    }
+
+    #[test]
+    fn android_cache_status_column_label_shows_availability_light_only_for_hits() {
+        let hit = WorktreeSlice {
+            android_cache: AndroidCacheState::Hit(android_cache_hit("abcdef1234567890")),
+            ..Default::default()
+        };
+        let miss = WorktreeSlice {
+            android_cache: AndroidCacheState::Miss {
+                fingerprint: "0123456789abcdef".into(),
+            },
+            ..Default::default()
+        };
+        let checking = WorktreeSlice {
+            android_cache: AndroidCacheState::Checking,
+            ..Default::default()
+        };
+        let error = WorktreeSlice {
+            android_cache: AndroidCacheState::Error("bad metadata".into()),
+            ..Default::default()
+        };
+
+        assert_eq!(android_cache_status_column_label(Some(&hit)), "\u{25cf}");
+        assert_eq!(android_cache_status_column_label(Some(&miss)), "");
+        assert_eq!(android_cache_status_column_label(Some(&checking)), "...");
+        assert_eq!(android_cache_status_column_label(Some(&error)), "!");
+        assert_eq!(android_cache_status_column_label(None), "");
     }
 }

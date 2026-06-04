@@ -57,9 +57,13 @@ jira_token = "your-api-token-here"
 #   "ticket" -> JIRA ticket key + title
 #   "dir"    -> Worktree directory name
 #   "task"   -> Running task spinner + label + elapsed time
+#   "cache_status"         -> iOS native cache availability
+#   "cache"                -> iOS native cache fingerprint
+#   "android_cache_status" -> Android native cache availability
+#   "android_cache"        -> Android native cache fingerprint
 # Omit a value to hide that column. Widths are fixed by ump-dash.
-# Default: ["status", "branch", "ticket", "dir", "task"]
-# columns = ["status", "branch", "ticket", "dir", "task"]
+# Default: ["status", "branch", "ticket", "dir", "task", "cache_status", "cache"]
+# columns = ["status", "branch", "ticket", "dir", "task", "android_cache_status", "android_cache"]
 
 # Invalid config behavior:
 # - Malformed TOML, missing required fields, wrong types, unknown column names,

@@ -135,6 +135,15 @@ pub enum Action {
         worktree_id: crate::domain::worktree::WorktreeId,
         result: crate::domain::native_cache::CachedIosLaunchResult,
     },
+    AndroidCacheLookupFinished {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        result: Result<crate::domain::native_cache::AndroidCacheLookup, String>,
+    },
+    CachedAndroidRun(crate::domain::native_cache::AndroidCacheHit),
+    CachedAndroidLaunchFinished {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        result: crate::domain::native_cache::CachedAndroidLaunchResult,
+    },
 
     // Phase 5.1: Sync-before-run
     SyncBeforeRunAccept,  // user said "Yes" to sync prompt

@@ -84,6 +84,8 @@ pub enum WorktreeTableColumn {
     Task,
     CacheStatus,
     Cache,
+    AndroidCacheStatus,
+    AndroidCache,
 }
 
 /// Application configuration stored in ~/.config/ump-dash/config.toml.
@@ -226,6 +228,23 @@ jira_token = "token"
 
     #[test]
 
+    fn columns_config_accepts_android_cache_columns() {
+        let config = parse_config(
+            r#"columns = ["ticket", "android_cache_status", "android_cache", "task"]"#,
+        );
+
+        assert_eq!(
+            config.columns,
+            vec![
+                WorktreeTableColumn::Ticket,
+                WorktreeTableColumn::AndroidCacheStatus,
+                WorktreeTableColumn::AndroidCache,
+                WorktreeTableColumn::Task,
+            ]
+        );
+    }
+
+    #[test]
     fn default_columns_end_with_cache_status_and_cache() {
         let config = parse_config("");
 

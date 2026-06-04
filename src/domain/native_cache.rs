@@ -4,8 +4,17 @@ use std::path::{Path, PathBuf};
 
 pub const IOS_SIMULATOR_PLATFORM: &str = "ios-simulator";
 pub const IOS_APP_ARTIFACT_KIND: &str = "app-bundle";
+pub const ANDROID_PLATFORM: &str = "android";
+pub const ANDROID_APK_ARTIFACT_KIND: &str = "apk";
 
 pub const IOS_FINGERPRINT_FILES: &[&str] = &["yarn.lock", "package.json", "ios/Podfile"];
+pub const ANDROID_FINGERPRINT_FILES: &[&str] = &[
+    "yarn.lock",
+    "package.json",
+    "android/settings.gradle",
+    "android/build.gradle",
+    "android/app/build.gradle",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IosSimulatorCacheMetadata {
@@ -21,6 +30,23 @@ pub struct IosSimulatorCacheMetadata {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IosSimulatorCacheHit {
     pub metadata: IosSimulatorCacheMetadata,
+    pub artifact_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AndroidCacheMetadata {
+    pub platform: String,
+    pub fingerprint: String,
+    pub application_id: String,
+    pub variant: String,
+    pub created_at: String,
+    pub source_worktree: String,
+    pub artifact_kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndroidCacheHit {
+    pub metadata: AndroidCacheMetadata,
     pub artifact_path: PathBuf,
 }
 
@@ -40,7 +66,28 @@ impl IosSimulatorCacheLookup {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AndroidCacheLookup {
+    Hit(AndroidCacheHit),
+    Miss { fingerprint: String },
+}
+
+impl AndroidCacheLookup {
+    pub fn into_cache_state(self) -> AndroidCacheState {
+        match self {
+            Self::Hit(hit) => AndroidCacheState::Hit(hit),
+            Self::Miss { fingerprint } => AndroidCacheState::Miss { fingerprint },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IosSimulatorCacheStoreRequest {
+    pub worktree_path: PathBuf,
+    pub variant: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndroidCacheStoreRequest {
     pub worktree_path: PathBuf,
     pub variant: String,
 }
@@ -66,10 +113,37 @@ impl IosSimulatorCacheState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AndroidCacheState {
+    #[default]
+    Unknown,
+    Checking,
+    Hit(AndroidCacheHit),
+    Miss {
+        fingerprint: String,
+    },
+    Error(String),
+}
+
+impl AndroidCacheState {
+    pub fn hit(&self) -> Option<&AndroidCacheHit> {
+        match self {
+            Self::Hit(hit) => Some(hit),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingCachedIosLaunch {
     pub device_id: String,
     pub cache_hit: IosSimulatorCacheHit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCachedAndroidLaunch {
+    pub device_id: String,
+    pub cache_hit: AndroidCacheHit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,14 +155,28 @@ pub struct CachedIosLaunchRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedAndroidLaunchRequest {
+    pub device_id: String,
+    pub apk_path: PathBuf,
+    pub application_id: String,
+    pub metro_port: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CachedIosLaunchResult {
     Success(Vec<String>),
     Failure(String),
 }
 
-pub fn ios_native_fingerprint(worktree_path: &Path) -> anyhow::Result<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CachedAndroidLaunchResult {
+    Success(Vec<String>),
+    Failure(String),
+}
+
+fn native_fingerprint(worktree_path: &Path, files: &[&str]) -> anyhow::Result<String> {
     let mut hasher = Sha256::new();
-    for rel in IOS_FINGERPRINT_FILES {
+    for rel in files {
         hasher.update(rel.as_bytes());
         hasher.update([0]);
         let path = worktree_path.join(rel);
@@ -106,6 +194,14 @@ pub fn ios_native_fingerprint(worktree_path: &Path) -> anyhow::Result<String> {
         hasher.update([0xff]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn ios_native_fingerprint(worktree_path: &Path) -> anyhow::Result<String> {
+    native_fingerprint(worktree_path, IOS_FINGERPRINT_FILES)
+}
+
+pub fn android_native_fingerprint(worktree_path: &Path) -> anyhow::Result<String> {
+    native_fingerprint(worktree_path, ANDROID_FINGERPRINT_FILES)
 }
 
 #[cfg(test)]
@@ -130,7 +226,9 @@ mod tests {
                 std::process::id(),
                 nanos
             ));
-            fs::create_dir_all(path.join("ios")).expect("temp worktree should be created");
+            fs::create_dir_all(path.join("ios")).expect("temp ios directory should be created");
+            fs::create_dir_all(path.join("android/app"))
+                .expect("temp android directory should be created");
             Self { path }
         }
 
@@ -190,6 +288,60 @@ mod tests {
         };
         let state = IosSimulatorCacheState::Hit(hit.clone());
 
+        assert_eq!(state.hit(), Some(&hit));
+    }
+
+    #[test]
+    fn android_fingerprint_uses_declared_inputs() {
+        let worktree = TempWorktree::new();
+        worktree.write("yarn.lock", "yarn-a\n");
+        worktree.write("package.json", "{}\n");
+        worktree.write("android/settings.gradle", "settings-a\n");
+        worktree.write("android/build.gradle", "root-a\n");
+        worktree.write("android/app/build.gradle", "app-a\n");
+
+        let initial = android_native_fingerprint(worktree.path()).expect("fingerprint should hash");
+
+        worktree.write("android/app/src.kt", "ignored\n");
+        let after_untracked_native_source =
+            android_native_fingerprint(worktree.path()).expect("fingerprint should hash");
+
+        assert_eq!(initial, after_untracked_native_source);
+
+        worktree.write("android/app/build.gradle", "app-b\n");
+        let after_declared_input_change =
+            android_native_fingerprint(worktree.path()).expect("fingerprint should hash");
+
+        assert_eq!(ANDROID_FINGERPRINT_FILES.len(), 5);
+        assert_ne!(initial, after_declared_input_change);
+    }
+
+    #[test]
+    fn android_cache_state_hit_helper_returns_only_hits() {
+        let hit = AndroidCacheHit {
+            metadata: AndroidCacheMetadata {
+                platform: ANDROID_PLATFORM.to_string(),
+                fingerprint: "fingerprint".to_string(),
+                application_id: "com.aljazeera.test".to_string(),
+                variant: "localDebugOptimized".to_string(),
+                created_at: "2026-06-04T00:00:00Z".to_string(),
+                source_worktree: "/tmp/worktree".to_string(),
+                artifact_kind: ANDROID_APK_ARTIFACT_KIND.to_string(),
+            },
+            artifact_path: PathBuf::from("/tmp/app.apk"),
+        };
+        let state = AndroidCacheState::Hit(hit.clone());
+
+        assert_eq!(AndroidCacheState::Unknown.hit(), None);
+        assert_eq!(
+            AndroidCacheState::Miss {
+                fingerprint: "fingerprint".to_string(),
+            }
+            .hit(),
+            None
+        );
+        assert_eq!(AndroidCacheState::Checking.hit(), None);
+        assert_eq!(AndroidCacheState::Error("bad".to_string()).hit(), None);
         assert_eq!(state.hit(), Some(&hit));
     }
 

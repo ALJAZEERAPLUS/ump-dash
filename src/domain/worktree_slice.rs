@@ -18,7 +18,9 @@
 use crate::domain::action::Action;
 use crate::domain::command::{CommandSpec, RunVariant};
 use crate::domain::metro::WorktreeMetro;
-use crate::domain::native_cache::{IosSimulatorCacheState, PendingCachedIosLaunch};
+use crate::domain::native_cache::{
+    AndroidCacheState, IosSimulatorCacheState, PendingCachedAndroidLaunch, PendingCachedIosLaunch,
+};
 use crate::domain::task::TaskRecord;
 use crate::domain::worktree::WorktreeId;
 use std::collections::VecDeque;
@@ -45,6 +47,8 @@ pub struct WorktreeSlice {
     pub last_ios_run: Option<LastRunConfig>,
     pub ios_simulator_cache: IosSimulatorCacheState,
     pub pending_cached_ios_launch: Option<PendingCachedIosLaunch>,
+    pub android_cache: AndroidCacheState,
+    pub pending_cached_android_launch: Option<PendingCachedAndroidLaunch>,
 }
 
 #[cfg(test)]
@@ -61,6 +65,8 @@ mod tests {
         assert!(s.last_ios_run.is_none());
         assert_eq!(s.ios_simulator_cache, IosSimulatorCacheState::Unknown);
         assert!(s.pending_cached_ios_launch.is_none());
+        assert_eq!(s.android_cache, AndroidCacheState::Unknown);
+        assert!(s.pending_cached_android_launch.is_none());
     }
 
     #[test]

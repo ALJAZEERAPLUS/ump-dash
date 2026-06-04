@@ -273,6 +273,43 @@ impl EffectRunner {
                 });
             }
 
+            Effect::LookupAndroidCache {
+                worktree_id,
+                worktree_path,
+            } => {
+                let native_cache = self.adapters.native_cache.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result = native_cache
+                        .lookup_android(worktree_path)
+                        .await
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(Action::AndroidCacheLookupFinished {
+                        worktree_id,
+                        result,
+                    });
+                });
+            }
+
+            Effect::StoreAndroidCache {
+                worktree_id,
+                request,
+            } => {
+                let native_cache = self.adapters.native_cache.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result = native_cache
+                        .store_android(request)
+                        .await
+                        .map(crate::domain::native_cache::AndroidCacheLookup::Hit)
+                        .map_err(|e| e.to_string());
+                    let _ = tx.send(Action::AndroidCacheLookupFinished {
+                        worktree_id,
+                        result,
+                    });
+                });
+            }
+
             Effect::InstallAndLaunchCachedIosSimulator {
                 worktree_id,
                 request,
@@ -290,6 +327,28 @@ impl EffectRunner {
                         ),
                     };
                     let _ = tx.send(Action::CachedIosLaunchFinished {
+                        worktree_id,
+                        result,
+                    });
+                });
+            }
+
+            Effect::InstallAndLaunchCachedAndroid {
+                worktree_id,
+                request,
+            } => {
+                let native_cache = self.adapters.native_cache.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    let result = match native_cache.install_and_launch_android(request).await {
+                        Ok(lines) => {
+                            crate::domain::native_cache::CachedAndroidLaunchResult::Success(lines)
+                        }
+                        Err(e) => crate::domain::native_cache::CachedAndroidLaunchResult::Failure(
+                            e.to_string(),
+                        ),
+                    };
+                    let _ = tx.send(Action::CachedAndroidLaunchFinished {
                         worktree_id,
                         result,
                     });

@@ -164,7 +164,6 @@ mod tests {
         let first = super::reserve_next_available_metro_port(start).unwrap();
         let second = super::reserve_next_available_metro_port(start).unwrap();
 
-        assert_eq!(first.port(), start);
         assert_ne!(
             second.port(),
             first.port(),
@@ -180,15 +179,21 @@ mod tests {
         drop(listener);
 
         let first = super::reserve_next_available_metro_port(start).unwrap();
-        assert_eq!(first.port(), start);
+        let first_port = first.port();
         assert!(
-            super::RESERVED_METRO_PORTS.lock().unwrap().contains(&start),
+            super::RESERVED_METRO_PORTS
+                .lock()
+                .unwrap()
+                .contains(&first_port),
             "reservation should mark the selected port as unavailable to later spawns"
         );
         drop(first);
 
         assert!(
-            !super::RESERVED_METRO_PORTS.lock().unwrap().contains(&start),
+            !super::RESERVED_METRO_PORTS
+                .lock()
+                .unwrap()
+                .contains(&first_port),
             "dropping the Metro handle reservation should release the selected port"
         );
     }

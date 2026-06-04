@@ -13,11 +13,14 @@
 
 use super::effect::Effect;
 use super::state::{
-    AppState, ErrorState, FocusedPanel, MAX_COMMAND_LINES, PaletteMode, PendingCachedIosRun,
-    active_output, active_worktree_id,
+    AppState, ErrorState, FocusedPanel, MAX_COMMAND_LINES, PaletteMode, PendingCachedAndroidRun,
+    PendingCachedIosRun, active_output, active_worktree_id,
 };
 use crate::domain::action::Action;
-use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
+use crate::domain::command::{
+    CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant, android_avd_name,
+    android_boot_avd_command,
+};
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::ports::device_port::DeviceKind;
 use crate::domain::task::ExitStatus;
@@ -112,6 +115,42 @@ fn queue_ios_cache_lookups_for_loaded_worktrees(state: &mut AppState, effects: &
     }
 }
 
+fn queue_android_cache_lookup_for_worktree(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    worktree_id: crate::domain::worktree::WorktreeId,
+    worktree_path: PathBuf,
+) {
+    let slice = state
+        .worktrees
+        .entry(worktree_id.clone())
+        .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+            id: worktree_id.clone(),
+            ..Default::default()
+        });
+    slice.android_cache = crate::domain::native_cache::AndroidCacheState::Checking;
+    effects.push(Effect::LookupAndroidCache {
+        worktree_id,
+        worktree_path,
+    });
+}
+
+fn queue_android_cache_lookups_for_loaded_worktrees(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+) {
+    let worktrees = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .map(|wt| (wt.id.clone(), wt.path.clone()))
+        .collect::<Vec<_>>();
+
+    for (worktree_id, worktree_path) in worktrees {
+        queue_android_cache_lookup_for_worktree(state, effects, worktree_id, worktree_path);
+    }
+}
+
 fn completed_ios_store_request(
     state: &AppState,
     worktree_id: &WorktreeId,
@@ -134,6 +173,34 @@ fn completed_ios_store_request(
     Some(Effect::StoreIosSimulatorCache {
         worktree_id: worktree_id.clone(),
         request: crate::domain::native_cache::IosSimulatorCacheStoreRequest {
+            worktree_path,
+            variant: variant.unwrap_or(RunVariant::Local).label().into(),
+        },
+    })
+}
+
+fn completed_android_store_request(
+    state: &AppState,
+    worktree_id: &WorktreeId,
+    completed_cmd: &CommandSpec,
+    status: &ExitStatus,
+) -> Option<Effect> {
+    let CommandSpec::UmpRunAndroid { variant, .. } = completed_cmd else {
+        return None;
+    };
+    if !matches!(status, ExitStatus::Success) {
+        return None;
+    }
+    let worktree_path = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| &wt.id == worktree_id)?
+        .path
+        .clone();
+    Some(Effect::StoreAndroidCache {
+        worktree_id: worktree_id.clone(),
+        request: crate::domain::native_cache::AndroidCacheStoreRequest {
             worktree_path,
             variant: variant.unwrap_or(RunVariant::Local).label().into(),
         },
@@ -407,6 +474,19 @@ fn cached_ios_launch_request(
     }
 }
 
+fn cached_android_launch_request(
+    cache_hit: &crate::domain::native_cache::AndroidCacheHit,
+    device_id: String,
+    metro_port: u16,
+) -> crate::domain::native_cache::CachedAndroidLaunchRequest {
+    crate::domain::native_cache::CachedAndroidLaunchRequest {
+        device_id,
+        apk_path: cache_hit.artifact_path.clone(),
+        application_id: cache_hit.metadata.application_id.clone(),
+        metro_port,
+    }
+}
+
 fn begin_cached_ios_launch(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
@@ -461,6 +541,65 @@ fn begin_cached_ios_launch(
             .worktrees
             .get_mut(&worktree_id)
             .expect("cached iOS launch slice should exist")
+            .metro
+            .reserve_start(port);
+        effects.push(Effect::SpawnMetro {
+            worktree: worktree_path,
+            port,
+        });
+    }
+}
+
+fn begin_cached_android_launch(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    worktree_id: WorktreeId,
+    worktree_path: PathBuf,
+    device_id: String,
+    cache_hit: crate::domain::native_cache::AndroidCacheHit,
+) {
+    let (launch_port, should_start_metro) = {
+        let slice = state
+            .worktrees
+            .entry(worktree_id.clone())
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: worktree_id.clone(),
+                ..Default::default()
+            });
+        let launch_port = slice.metro.process_port();
+        let has_running_or_reserved_metro =
+            slice.metro.is_running() || slice.metro.running_port().is_some();
+        (launch_port, !has_running_or_reserved_metro)
+    };
+
+    if let Some(port) = launch_port {
+        effects.push(Effect::InstallAndLaunchCachedAndroid {
+            worktree_id,
+            request: cached_android_launch_request(&cache_hit, device_id, port),
+        });
+        return;
+    }
+
+    {
+        let slice = state
+            .worktrees
+            .entry(worktree_id.clone())
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: worktree_id.clone(),
+                ..Default::default()
+            });
+        slice.pending_cached_android_launch =
+            Some(crate::domain::native_cache::PendingCachedAndroidLaunch {
+                device_id,
+                cache_hit,
+            });
+    }
+    if should_start_metro {
+        let port = next_available_reserved_metro_port(state);
+        state
+            .worktrees
+            .get_mut(&worktree_id)
+            .expect("cached Android launch slice should exist")
             .metro
             .reserve_start(port);
         effects.push(Effect::SpawnMetro {
@@ -614,10 +753,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
             {
                 let had_pending_cached_launch = slice.pending_cached_ios_launch.take().is_some();
+                let had_pending_cached_android_launch =
+                    slice.pending_cached_android_launch.take().is_some();
                 if had_pending_cached_launch {
                     slice
                         .output
                         .push_back("[cached-ios error] Metro exited before cached launch".into());
+                }
+                if had_pending_cached_android_launch {
+                    slice.output.push_back(
+                        "[cached-android error] Metro exited before cached launch".into(),
+                    );
+                }
+                if had_pending_cached_launch || had_pending_cached_android_launch {
                     while slice.output.len() > MAX_COMMAND_LINES {
                         slice.output.pop_front();
                     }
@@ -655,11 +803,20 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
             {
                 let had_pending_cached_launch = slice.pending_cached_ios_launch.take().is_some();
+                let had_pending_cached_android_launch =
+                    slice.pending_cached_android_launch.take().is_some();
                 slice.metro.clear();
                 if had_pending_cached_launch {
                     slice.output.push_back(format!(
                         "[cached-ios error] Metro failed to start: {message}"
                     ));
+                }
+                if had_pending_cached_android_launch {
+                    slice.output.push_back(format!(
+                        "[cached-android error] Metro failed to start: {message}"
+                    ));
+                }
+                if had_pending_cached_launch || had_pending_cached_android_launch {
                     while slice.output.len() > MAX_COMMAND_LINES {
                         slice.output.pop_front();
                     }
@@ -728,6 +885,26 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         effects.push(Effect::InstallAndLaunchCachedIosSimulator {
                             worktree_id: slice_id,
                             request: cached_ios_launch_request(
+                                &pending.cache_hit,
+                                pending.device_id,
+                                port,
+                            ),
+                        });
+                    }
+                }
+                if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id) {
+                    let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
+                        slice.metro.running_port().and_then(|port| {
+                            slice
+                                .pending_cached_android_launch
+                                .take()
+                                .map(|pending| (port, pending))
+                        })
+                    });
+                    if let Some((port, pending)) = launch {
+                        effects.push(Effect::InstallAndLaunchCachedAndroid {
+                            worktree_id: slice_id,
+                            request: cached_android_launch_request(
                                 &pending.cache_hit,
                                 pending.device_id,
                                 port,
@@ -833,6 +1010,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.worktree_browser.worktrees.clone();
             crate::app::state::merge_slices(state, &loaded_for_merge);
             queue_ios_cache_lookups_for_loaded_worktrees(state, &mut effects);
+            queue_android_cache_lookups_for_loaded_worktrees(state, &mut effects);
 
             if !state.worktree_browser.worktrees.is_empty() {
                 // Re-derive selected index from selected_worktree_id (stable across sorts)
@@ -1190,6 +1368,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             {
                 effects.push(effect);
             }
+            if let (Some(id), Some(cmd)) = (&target_id, &completed_cmd)
+                && let Some(effect) = completed_android_store_request(state, id, cmd, &status)
+            {
+                effects.push(effect);
+            }
 
             // === Slice-local drain (D-11 + D-13) ===
             // Borrow split: extract the next spec and post_drain BEFORE calling
@@ -1385,6 +1568,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
             if state.modal_stack.pending_cached_ios_run.take().is_some() {
+                state.modal_stack.pending_device_command = None;
+            }
+            if state
+                .modal_stack
+                .pending_cached_android_run
+                .take()
+                .is_some()
+            {
                 state.modal_stack.pending_device_command = None;
             }
             state.modal_stack.pending_worktree_removal = None; // discard any pending removal on cancel
@@ -1608,6 +1799,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         return effects;
                     }
 
+                    if let Some(cache_hit) = state.modal_stack.pending_cached_android_run.take() {
+                        state.modal_stack.pending_device_command = None;
+                        begin_cached_android_launch(
+                            state,
+                            &mut effects,
+                            cache_hit.worktree_id,
+                            cache_hit.worktree_path,
+                            device_id,
+                            cache_hit.cache_hit,
+                        );
+                        return effects;
+                    }
+
                     if is_available_emulator
                         && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. })
                     {
@@ -1739,6 +1943,57 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             devices: sorted_devices,
                             selected: 0,
                             pending_template: Box::new(CommandSpec::UmpRunIos {
+                                device_id: String::new(),
+                                variant: Some(RunVariant::Local),
+                            }),
+                            filter: String::new(),
+                        });
+                    }
+                }
+                return effects;
+            }
+
+            if let Some(pending_run) = state.modal_stack.pending_cached_android_run.as_ref()
+                && (kind != DeviceKind::Android
+                    || request_id != Some(pending_run.device_request_id))
+            {
+                return effects;
+            }
+
+            if let Some(pending_run) = state.modal_stack.pending_cached_android_run.take() {
+                state.modal_stack.pending_device_command = None;
+                match devices.len() {
+                    0 => {
+                        let slice = state
+                            .worktrees
+                            .entry(pending_run.worktree_id.clone())
+                            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                                id: pending_run.worktree_id,
+                                ..Default::default()
+                            });
+                        slice
+                            .output
+                            .push_back("[error] no Android devices found for cached run".into());
+                        while slice.output.len() > MAX_COMMAND_LINES {
+                            slice.output.pop_front();
+                        }
+                    }
+                    1 => {
+                        begin_cached_android_launch(
+                            state,
+                            &mut effects,
+                            pending_run.worktree_id,
+                            pending_run.worktree_path,
+                            devices[0].id.clone(),
+                            pending_run.cache_hit,
+                        );
+                    }
+                    _ => {
+                        state.modal_stack.pending_cached_android_run = Some(pending_run);
+                        state.modal_stack.modal = Some(ModalState::DevicePicker {
+                            devices,
+                            selected: 0,
+                            pending_template: Box::new(CommandSpec::UmpRunAndroid {
                                 device_id: String::new(),
                                 variant: Some(RunVariant::Local),
                             }),
@@ -1987,6 +2242,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         // --- Phase 5.1: New submenu and action stubs ---
         Action::EnterAndroidPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Android);
+            if let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) {
+                queue_android_cache_lookup_for_worktree(
+                    state,
+                    &mut effects,
+                    worktree_id,
+                    worktree_path,
+                );
+            }
         }
         Action::EnterIosPalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Ios);
@@ -2125,6 +2388,45 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
             }
         },
+        Action::AndroidCacheLookupFinished {
+            worktree_id,
+            result,
+        } => match result {
+            Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
+                let fingerprint = hit.metadata.fingerprint.clone();
+                for (id, slice) in state.worktrees.iter_mut() {
+                    let same_fingerprint_miss = matches!(
+                        &slice.android_cache,
+                        crate::domain::native_cache::AndroidCacheState::Miss {
+                            fingerprint: miss_fingerprint
+                        } if miss_fingerprint == &fingerprint
+                    );
+                    if id == &worktree_id || same_fingerprint_miss {
+                        slice.android_cache =
+                            crate::domain::native_cache::AndroidCacheState::Hit(hit.clone());
+                    }
+                }
+            }
+            Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    slice.android_cache =
+                        crate::domain::native_cache::AndroidCacheState::Miss { fingerprint };
+                }
+            }
+            Err(message) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    slice.android_cache =
+                        crate::domain::native_cache::AndroidCacheState::Error(message.clone());
+                    slice
+                        .output
+                        .push_back(format!("[cached-android error] {message}"));
+                    while slice.output.len() > MAX_COMMAND_LINES {
+                        slice.output.pop_front();
+                    }
+                    slice.output_scroll = 0;
+                }
+            }
+        },
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
@@ -2150,6 +2452,31 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 request_id: Some(device_request_id),
             });
         }
+        Action::CachedAndroidRun(cache_hit) => {
+            state.modal_stack.modal = None;
+            state.modal_stack.palette_mode = None;
+            state.modal_stack.pending_cached_android_run = None;
+            state.modal_stack.pending_device_command = None;
+            let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) else {
+                return effects;
+            };
+            state.modal_stack.next_device_request_id += 1;
+            let device_request_id = state.modal_stack.next_device_request_id;
+            state.modal_stack.pending_cached_android_run = Some(PendingCachedAndroidRun {
+                worktree_id,
+                worktree_path,
+                cache_hit,
+                device_request_id,
+            });
+            state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            });
+            effects.push(Effect::LoadDevices {
+                kind: DeviceKind::Android,
+                request_id: Some(device_request_id),
+            });
+        }
         Action::CachedIosLaunchFinished {
             worktree_id,
             result,
@@ -2168,6 +2495,32 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         slice
                             .output
                             .push_back(format!("[cached-ios error] {message}"));
+                    }
+                }
+                while slice.output.len() > MAX_COMMAND_LINES {
+                    slice.output.pop_front();
+                }
+                slice.output_scroll = 0;
+            }
+        }
+        Action::CachedAndroidLaunchFinished {
+            worktree_id,
+            result,
+        } => {
+            if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                match result {
+                    crate::domain::native_cache::CachedAndroidLaunchResult::Success(lines) => {
+                        slice
+                            .output
+                            .push_back("[cached-android] installed and launched cached app".into());
+                        for line in lines {
+                            slice.output.push_back(format!("[cached-android] {line}"));
+                        }
+                    }
+                    crate::domain::native_cache::CachedAndroidLaunchResult::Failure(message) => {
+                        slice
+                            .output
+                            .push_back(format!("[cached-android error] {message}"));
                     }
                 }
                 while slice.output.len() > MAX_COMMAND_LINES {

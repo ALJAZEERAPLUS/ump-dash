@@ -13,7 +13,10 @@
 #![allow(dead_code)]
 
 use crate::domain::command::CommandSpec;
-use crate::domain::native_cache::{CachedIosLaunchRequest, IosSimulatorCacheStoreRequest};
+use crate::domain::native_cache::{
+    AndroidCacheStoreRequest, CachedAndroidLaunchRequest, CachedIosLaunchRequest,
+    IosSimulatorCacheStoreRequest,
+};
 use crate::domain::ports::device_port::DeviceKind;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -72,6 +75,18 @@ pub enum Effect {
     InstallAndLaunchCachedIosSimulator {
         worktree_id: crate::domain::worktree::WorktreeId,
         request: CachedIosLaunchRequest,
+    },
+    LookupAndroidCache {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        worktree_path: PathBuf,
+    },
+    StoreAndroidCache {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        request: AndroidCacheStoreRequest,
+    },
+    InstallAndLaunchCachedAndroid {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        request: CachedAndroidLaunchRequest,
     },
 
     // Worktrees — Plan 13-08: variants now carry repo_root from update().
@@ -189,11 +204,31 @@ mod tests {
             },
         };
         let _ = Effect::InstallAndLaunchCachedIosSimulator {
-            worktree_id,
+            worktree_id: worktree_id.clone(),
             request: crate::domain::native_cache::CachedIosLaunchRequest {
                 simulator_udid: "SIM-1".into(),
                 app_path: PathBuf::from("build/app.app"),
                 bundle_id: "com.aljazeera.test".into(),
+                metro_port: 8081,
+            },
+        };
+        let _ = Effect::LookupAndroidCache {
+            worktree_id: worktree_id.clone(),
+            worktree_path: PathBuf::from("."),
+        };
+        let _ = Effect::StoreAndroidCache {
+            worktree_id: worktree_id.clone(),
+            request: crate::domain::native_cache::AndroidCacheStoreRequest {
+                worktree_path: PathBuf::from("."),
+                variant: "local".into(),
+            },
+        };
+        let _ = Effect::InstallAndLaunchCachedAndroid {
+            worktree_id,
+            request: crate::domain::native_cache::CachedAndroidLaunchRequest {
+                device_id: "emulator-5554".into(),
+                apk_path: PathBuf::from("build/app.apk"),
+                application_id: "com.aljazeera.test".into(),
                 metro_port: 8081,
             },
         };
@@ -241,6 +276,9 @@ mod tests {
                 Effect::LookupIosSimulatorCache { .. } => 16,
                 Effect::InstallAndLaunchCachedIosSimulator { .. } => 17,
                 Effect::StoreIosSimulatorCache { .. } => 18,
+                Effect::LookupAndroidCache { .. } => 19,
+                Effect::StoreAndroidCache { .. } => 20,
+                Effect::InstallAndLaunchCachedAndroid { .. } => 21,
             }
         }
         let e = Effect::ListWorktrees {

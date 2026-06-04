@@ -21,6 +21,7 @@ use super::*;
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState, RunVariant};
 use crate::domain::native_cache::{
+    AndroidCacheHit, AndroidCacheLookup, AndroidCacheMetadata, AndroidCacheState,
     CachedIosLaunchResult, IosSimulatorCacheHit, IosSimulatorCacheMetadata, IosSimulatorCacheState,
 };
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
@@ -112,11 +113,38 @@ fn cached_ios_hit_fixture() -> IosSimulatorCacheHit {
     }
 }
 
+fn cached_android_hit_fixture() -> AndroidCacheHit {
+    AndroidCacheHit {
+        metadata: AndroidCacheMetadata {
+            platform: "android".into(),
+            fingerprint: "fingerprint-a".into(),
+            application_id: "com.aljazeera.test".into(),
+            variant: "localDebugOptimized".into(),
+            created_at: "2026-06-04T00:00:00Z".into(),
+            source_worktree: "wt-1".into(),
+            artifact_kind: "apk".into(),
+        },
+        artifact_path: std::path::PathBuf::from("/tmp/cached.apk"),
+    }
+}
+
 fn pending_cached_ios_run_fixture(
     worktree_id: &str,
     cache_hit: IosSimulatorCacheHit,
 ) -> super::state::PendingCachedIosRun {
     super::state::PendingCachedIosRun {
+        worktree_id: WorktreeId(worktree_id.into()),
+        worktree_path: std::path::PathBuf::from(format!("/tmp/{worktree_id}")),
+        cache_hit,
+        device_request_id: 1,
+    }
+}
+
+fn pending_cached_android_run_fixture(
+    worktree_id: &str,
+    cache_hit: AndroidCacheHit,
+) -> super::state::PendingCachedAndroidRun {
+    super::state::PendingCachedAndroidRun {
         worktree_id: WorktreeId(worktree_id.into()),
         worktree_path: std::path::PathBuf::from(format!("/tmp/{worktree_id}")),
         cache_hit,
@@ -429,6 +457,54 @@ mod palette_resolution {
         assert_eq!(
             handle_key(&state, key('c')),
             Some(Action::CachedIosRun(hit))
+        );
+    }
+
+    #[test]
+    fn android_palette_cached_key_visible_only_with_cache_hit() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.palette_mode = Some(PaletteMode::Android);
+
+        assert_eq!(handle_key(&state, key('c')), Some(Action::ModalCancel));
+
+        let hit = cached_android_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("active slice should exist")
+            .android_cache = AndroidCacheState::Hit(hit.clone());
+
+        assert_eq!(
+            handle_key(&state, key('c')),
+            Some(Action::CachedAndroidRun(hit))
+        );
+    }
+
+    #[test]
+    fn android_palette_cached_key_uses_matching_hit_from_another_worktree() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-hit");
+        seed_one_worktree_id(&mut state, "wt-miss");
+        state.modal_stack.palette_mode = Some(PaletteMode::Android);
+
+        let hit = cached_android_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-hit".into()))
+            .expect("source slice should exist")
+            .android_cache = AndroidCacheState::Hit(hit.clone());
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-miss".into()))
+            .expect("selected slice should exist")
+            .android_cache = AndroidCacheState::Miss {
+            fingerprint: hit.metadata.fingerprint.clone(),
+        };
+
+        assert_eq!(
+            handle_key(&state, key('c')),
+            Some(Action::CachedAndroidRun(hit))
         );
     }
 
@@ -816,6 +892,33 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn entering_android_palette_starts_cache_lookup_for_selected_worktree() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let effects = update(&mut state, Action::EnterAndroidPalette);
+
+        assert_eq!(state.modal_stack.palette_mode, Some(PaletteMode::Android));
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("selected slice should exist")
+                .android_cache,
+            AndroidCacheState::Checking
+        );
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::LookupAndroidCache { worktree_id, worktree_path }]
+                    if *worktree_id == WorktreeId("wt-1".into())
+                        && worktree_path == std::path::Path::new("/tmp/wt-1")
+            ),
+            "expected one Android cache lookup effect for wt-1; got {effects:?}"
+        );
+    }
+
+    #[test]
     fn ios_cache_lookup_finished_maps_result_to_slice_state() {
         let worktree_id = WorktreeId("wt-1".into());
         let hit = cached_ios_hit_fixture();
@@ -877,6 +980,100 @@ mod ump_run_dialog {
                 .expect("slice should exist")
                 .ios_simulator_cache,
             IosSimulatorCacheState::Error("lookup failed".into())
+        );
+    }
+
+    #[test]
+    fn android_cache_lookup_finished_maps_result_to_slice_state() {
+        let worktree_id = WorktreeId("wt-1".into());
+        let hit = cached_android_hit_fixture();
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(AndroidCacheLookup::Hit(hit.clone())),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should exist")
+                .android_cache,
+            AndroidCacheState::Hit(hit)
+        );
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(AndroidCacheLookup::Miss {
+                    fingerprint: "0123456789abcdef".into(),
+                }),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should exist")
+                .android_cache,
+            AndroidCacheState::Miss {
+                fingerprint: "0123456789abcdef".into(),
+            }
+        );
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Err("lookup failed".into()),
+            },
+        );
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&worktree_id)
+                .expect("slice should exist")
+                .android_cache,
+            AndroidCacheState::Error("lookup failed".into())
+        );
+    }
+
+    #[test]
+    fn android_cache_lookup_failure_appends_error_output() {
+        let worktree_id = WorktreeId("wt-1".into());
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Err("missing application id".into()),
+            },
+        );
+
+        assert!(effects.is_empty());
+        let output = state
+            .worktrees
+            .get(&worktree_id)
+            .expect("slice should exist")
+            .output
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            output
+                .iter()
+                .any(|line| line == "[cached-android error] missing application id"),
+            "expected visible Android cache error in output; got {output:?}"
         );
     }
 
@@ -992,6 +1189,49 @@ mod ump_run_dialog {
                     if *request_id == pending_run.device_request_id
             ),
             "expected cached iOS run to load iOS devices; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_android_run_loads_android_devices() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.palette_mode = Some(PaletteMode::Android);
+        let hit = cached_android_hit_fixture();
+
+        let effects = update(&mut state, Action::CachedAndroidRun(hit.clone()));
+
+        assert!(state.modal_stack.modal.is_none());
+        assert!(state.modal_stack.palette_mode.is_none());
+        let pending_run = state
+            .modal_stack
+            .pending_cached_android_run
+            .as_ref()
+            .expect("cached Android run should be pending");
+        assert_eq!(pending_run.worktree_id, WorktreeId("wt-1".into()));
+        assert_eq!(
+            pending_run.worktree_path,
+            std::path::PathBuf::from("/tmp/wt-1")
+        );
+        assert_eq!(pending_run.cache_hit, hit);
+        assert_eq!(pending_run.device_request_id, 1);
+        assert!(matches!(
+            state.modal_stack.pending_device_command,
+            Some(CommandSpec::UmpRunAndroid {
+                ref device_id,
+                variant: Some(RunVariant::Local),
+            }) if device_id.is_empty()
+        ));
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [Effect::LoadDevices {
+                    kind: DeviceKind::Android,
+                    request_id: Some(request_id),
+                }]
+                    if *request_id == pending_run.device_request_id
+            ),
+            "expected cached Android run to load Android devices; got {effects:?}"
         );
     }
 
@@ -1289,6 +1529,133 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn cached_android_device_selection_launches_when_metro_already_running() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        register_ready_metro(&mut state, "wt-1", 19001);
+        state.modal_stack.pending_cached_android_run =
+            Some(pending_cached_android_run_fixture("wt-1", hit.clone()));
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "emulator-5554".into(),
+                name: "Pixel 9a".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedAndroid { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.device_id == "emulator-5554"
+                        && request.application_id == "com.aljazeera.test"
+                        && request.apk_path.as_path() == std::path::Path::new("/tmp/cached.apk")
+                        && request.metro_port == 19001
+            )),
+            "expected cached Android install/launch effect with selected target and metro port; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_android_device_selection_starts_metro_when_needed() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        state.modal_stack.pending_cached_android_run =
+            Some(pending_cached_android_run_fixture("wt-1", hit.clone()));
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "emulator-5554".into(),
+                name: "Pixel 9a".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(state.modal_stack.pending_cached_android_run.is_none());
+        assert!(state.modal_stack.pending_device_command.is_none());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|slice| slice.pending_cached_android_launch.as_ref())
+                .map(|pending| (&pending.device_id, &pending.cache_hit)),
+            Some((&"emulator-5554".to_string(), &hit))
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::SpawnMetro { .. })),
+            "cached Android launch should start Metro when no port is running; got {effects:?}"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::InstallAndLaunchCachedAndroid { .. })),
+            "cached Android launch should wait for Metro before install; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn cached_android_device_selection_launches_when_metro_process_exists_before_ready_activity() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        register_metro_without_activity(&mut state, "wt-1", 19007);
+        state.modal_stack.pending_cached_android_run =
+            Some(pending_cached_android_run_fixture("wt-1", hit.clone()));
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "emulator-5554".into(),
+                name: "Pixel 9a".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedAndroid { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.device_id == "emulator-5554"
+                        && request.metro_port == 19007
+            )),
+            "cached Android launch should use an already registered Metro process port even if the Ready activity was missed; got {effects:?}"
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("slice should exist")
+                .pending_cached_android_launch
+                .is_none(),
+            "Android launch should not stay parked when a live Metro handle already exists"
+        );
+    }
+
+    #[test]
     fn cached_ios_device_selection_launches_when_metro_process_exists_before_ready_activity() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -1384,6 +1751,57 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn cached_android_device_selection_defers_when_metro_is_starting() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .metro
+            .reserve_start(19005);
+        state.modal_stack.pending_cached_android_run =
+            Some(pending_cached_android_run_fixture("wt-1", hit.clone()));
+        state.modal_stack.modal = Some(ModalState::DevicePicker {
+            devices: vec![crate::domain::command::DeviceInfo {
+                id: "emulator-5554".into(),
+                name: "Pixel 9a".into(),
+            }],
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: Some(RunVariant::Local),
+            }),
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::ModalDeviceConfirm);
+
+        let pending = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .pending_cached_android_launch
+            .as_ref()
+            .expect("cached Android launch should wait for Metro Ready");
+        assert_eq!(pending.device_id, "emulator-5554");
+        assert_eq!(pending.cache_hit, hit);
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::InstallAndLaunchCachedAndroid { .. })),
+            "cached Android launch should not run while Metro is only starting; got {effects:?}"
+        );
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::SpawnMetro { .. })),
+            "cached Android launch should not spawn a duplicate Metro while one is starting; got {effects:?}"
+        );
+    }
+
+    #[test]
     fn cached_ios_launch_runs_after_deferred_metro_ready() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -1432,6 +1850,54 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn cached_android_launch_runs_after_deferred_metro_ready() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        {
+            let slice = state
+                .worktrees
+                .get_mut(&WorktreeId("wt-1".into()))
+                .expect("slice should exist");
+            slice.metro.reserve_start(19002);
+            slice.pending_cached_android_launch =
+                Some(crate::domain::native_cache::PendingCachedAndroidLaunch {
+                    device_id: "emulator-5554".into(),
+                    cache_hit: hit.clone(),
+                });
+        }
+
+        let effects = update(
+            &mut state,
+            Action::MetroActivityUpdate {
+                worktree_id: "wt-1".into(),
+                activity: crate::domain::metro::MetroActivity::Ready,
+            },
+        );
+
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("slice should exist")
+                .pending_cached_android_launch
+                .is_none()
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedAndroid { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.device_id == "emulator-5554"
+                        && request.application_id == "com.aljazeera.test"
+                        && request.apk_path.as_path() == std::path::Path::new("/tmp/cached.apk")
+                        && request.metro_port == 19002
+            )),
+            "expected deferred cached Android install/launch after Metro Ready; got {effects:?}"
+        );
+    }
+
+    #[test]
     fn cached_ios_run_with_zero_devices_appends_error() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -1458,6 +1924,36 @@ mod ump_run_dialog {
         assert_eq!(
             slice_output(&state, "wt-1").last().map(String::as_str),
             Some("[error] no iOS simulators found for cached run")
+        );
+    }
+
+    #[test]
+    fn cached_android_run_with_zero_devices_appends_error() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.pending_cached_android_run = Some(pending_cached_android_run_fixture(
+            "wt-1",
+            cached_android_hit_fixture(),
+        ));
+        state.modal_stack.pending_device_command = Some(CommandSpec::UmpRunAndroid {
+            device_id: String::new(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Android,
+                request_id: Some(1),
+                devices: vec![],
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(state.modal_stack.pending_cached_android_run.is_none());
+        assert_eq!(
+            slice_output(&state, "wt-1").last().map(String::as_str),
+            Some("[error] no Android devices found for cached run")
         );
     }
 
@@ -1779,6 +2275,41 @@ mod command_queue {
     }
 
     #[test]
+    fn successful_android_run_enqueues_native_cache_store() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let wid = WorktreeId("wt-1".into());
+        state.worktrees.get_mut(&wid).unwrap().task = Some(synthetic_task_record(
+            14,
+            CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: Some(crate::domain::command::RunVariant::Dev),
+            },
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(14),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::StoreAndroidCache {
+                    worktree_id,
+                    request,
+                } if *worktree_id == wid
+                    && request.worktree_path == std::path::Path::new("/tmp/wt-1")
+                    && request.variant == "dev"
+            )),
+            "successful Android run should enqueue native cache store; got {effects:?}"
+        );
+    }
+
+    #[test]
     fn failed_ios_run_does_not_enqueue_native_cache_store() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -1957,6 +2488,56 @@ mod worktrees_loaded {
             .iter()
             .filter_map(|effect| match effect {
                 Effect::LookupIosSimulatorCache {
+                    worktree_id,
+                    worktree_path,
+                } => Some((worktree_id.clone(), worktree_path.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            lookup_worktrees,
+            vec![
+                (
+                    WorktreeId("wt-A".into()),
+                    std::path::PathBuf::from("/tmp/wt-A")
+                ),
+                (
+                    WorktreeId("wt-B".into()),
+                    std::path::PathBuf::from("/tmp/wt-B")
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn worktrees_loaded_starts_android_cache_lookup_for_each_worktree() {
+        let mut state = AppState::default();
+        let worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
+
+        let effects = update(&mut state, Action::WorktreesLoaded(worktrees));
+
+        assert!(matches!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-A".into()))
+                .unwrap()
+                .android_cache,
+            crate::domain::native_cache::AndroidCacheState::Checking
+        ));
+        assert!(matches!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-B".into()))
+                .unwrap()
+                .android_cache,
+            crate::domain::native_cache::AndroidCacheState::Checking
+        ));
+
+        let lookup_worktrees = effects
+            .iter()
+            .filter_map(|effect| match effect {
+                Effect::LookupAndroidCache {
                     worktree_id,
                     worktree_path,
                 } => Some((worktree_id.clone(), worktree_path.clone())),
@@ -2299,6 +2880,104 @@ mod parallelism {
                 .any(|effect| matches!(effect, Effect::InstallAndLaunchCachedIosSimulator { .. })),
             "stale cached iOS launch must not fire after later Metro Ready; got {effects:?}"
         );
+    }
+
+    #[test]
+    fn metro_exited_clears_pending_cached_android_launch() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        {
+            let slice = state
+                .worktrees
+                .get_mut(&WorktreeId("wt-1".into()))
+                .expect("slice should exist");
+            slice.metro.reserve_start(19003);
+            slice.pending_cached_android_launch =
+                Some(crate::domain::native_cache::PendingCachedAndroidLaunch {
+                    device_id: "emulator-5554".into(),
+                    cache_hit: hit,
+                });
+        }
+
+        let _ = update(&mut state, Action::MetroExited("wt-1".into()));
+
+        let slice = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .expect("slice should exist");
+        assert!(slice.pending_cached_android_launch.is_none());
+        assert!(
+            slice
+                .output
+                .iter()
+                .any(|line| line == "[cached-android error] Metro exited before cached launch"),
+            "expected cached-android Metro exit error in origin output; got {:?}",
+            slice.output
+        );
+
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .metro
+            .reserve_start(19004);
+        let effects = update(
+            &mut state,
+            Action::MetroActivityUpdate {
+                worktree_id: "wt-1".into(),
+                activity: crate::domain::metro::MetroActivity::Ready,
+            },
+        );
+
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::InstallAndLaunchCachedAndroid { .. })),
+            "stale cached Android launch must not fire after later Metro Ready; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn metro_spawn_failure_clears_pending_cached_android_launch() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let hit = cached_android_hit_fixture();
+        {
+            let slice = state
+                .worktrees
+                .get_mut(&WorktreeId("wt-1".into()))
+                .expect("slice should exist");
+            slice.metro.reserve_start(19003);
+            slice.pending_cached_android_launch =
+                Some(crate::domain::native_cache::PendingCachedAndroidLaunch {
+                    device_id: "emulator-5554".into(),
+                    cache_hit: hit,
+                });
+        }
+
+        let effects = update(
+            &mut state,
+            Action::MetroSpawnFailed {
+                worktree_id: "wt-1".into(),
+                message: "port unavailable".into(),
+            },
+        );
+
+        let slice = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .expect("slice should exist");
+        assert!(effects.is_empty());
+        assert!(slice.pending_cached_android_launch.is_none());
+        assert!(
+            slice.output.iter().any(
+                |line| line == "[cached-android error] Metro failed to start: port unavailable"
+            ),
+            "expected cached-android Metro spawn error in origin output; got {:?}",
+            slice.output
+        );
+        assert!(state.error_state.is_some());
     }
 }
 

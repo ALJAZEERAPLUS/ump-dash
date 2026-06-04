@@ -115,6 +115,14 @@ pub struct PendingCachedIosRun {
     pub device_request_id: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingCachedAndroidRun {
+    pub worktree_id: crate::domain::worktree::WorktreeId,
+    pub worktree_path: std::path::PathBuf,
+    pub cache_hit: crate::domain::native_cache::AndroidCacheHit,
+    pub device_request_id: u64,
+}
+
 /// Modal + palette + pending coordinator state. Single bag for one-modal-at-a-time
 /// dispatch and the various pending_* fields that survive between palette → modal
 /// → submit handoffs.
@@ -134,6 +142,9 @@ pub struct ModalStackState {
 
     /// Pending cached iOS run — stored while async simulator enumeration is in flight.
     pub pending_cached_ios_run: Option<PendingCachedIosRun>,
+
+    /// Pending cached Android run — stored while async target enumeration is in flight.
+    pub pending_cached_android_run: Option<PendingCachedAndroidRun>,
 
     /// Monotonic request id used to ignore stale cached iOS device enumeration callbacks.
     pub next_device_request_id: u64,
