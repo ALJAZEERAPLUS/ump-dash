@@ -179,11 +179,11 @@ fn seed_worktree_files(repo_root: &Path, worktree_path: &Path) {
         if !src.exists() || dest.exists() {
             continue;
         }
-        if let Some(parent) = dest.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                tracing::warn!("seed_worktree_files: mkdir {} failed: {e}", parent.display());
-                continue;
-            }
+        if let Some(parent) = dest.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!("seed_worktree_files: mkdir {} failed: {e}", parent.display());
+            continue;
         }
         match std::fs::copy(&src, &dest) {
             Ok(_) => tracing::info!("seed_worktree_files: copied {rel} into new worktree"),
@@ -357,5 +357,103 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         repo_root: &std::path::Path,
     ) -> anyhow::Result<Vec<String>> {
         list_remote_branches(repo_root).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Unique temp dir per call; removed when the returned guard drops.
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!(
+                "ump-seed-{}-{}-{tag}-{n}",
+                std::process::id(),
+                env!("CARGO_PKG_NAME"),
+            ));
+            fs::create_dir_all(&p).unwrap();
+            TempDir(p)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Seeds a flat file present in the repo root but absent in the worktree.
+    #[test]
+    fn seeds_existing_file_into_worktree() {
+        let repo = TempDir::new("repo");
+        let wt = TempDir::new("wt");
+        fs::write(repo.path().join(".env"), b"SECRET=1").unwrap();
+
+        seed_worktree_files(repo.path(), wt.path());
+
+        assert_eq!(
+            fs::read(wt.path().join(".env")).unwrap(),
+            b"SECRET=1",
+            ".env should be copied into the worktree"
+        );
+    }
+
+    /// Nested seed paths get their parent directories created in the worktree.
+    #[test]
+    fn creates_parent_dirs_for_nested_seed() {
+        let repo = TempDir::new("repo");
+        let wt = TempDir::new("wt");
+        let nested = repo.path().join("android/keystore/release.keystore");
+        fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        fs::write(&nested, b"keystore-bytes").unwrap();
+
+        seed_worktree_files(repo.path(), wt.path());
+
+        assert_eq!(
+            fs::read(wt.path().join("android/keystore/release.keystore")).unwrap(),
+            b"keystore-bytes",
+            "nested seed file should be copied, creating parent dirs"
+        );
+    }
+
+    /// An existing destination is never clobbered.
+    #[test]
+    fn does_not_clobber_existing_dest() {
+        let repo = TempDir::new("repo");
+        let wt = TempDir::new("wt");
+        fs::write(repo.path().join(".env"), b"FROM_REPO").unwrap();
+        fs::write(wt.path().join(".env"), b"ALREADY_THERE").unwrap();
+
+        seed_worktree_files(repo.path(), wt.path());
+
+        assert_eq!(
+            fs::read(wt.path().join(".env")).unwrap(),
+            b"ALREADY_THERE",
+            "pre-existing worktree file must be left untouched"
+        );
+    }
+
+    /// A missing source file is skipped without creating anything in the worktree.
+    #[test]
+    fn skips_missing_source() {
+        let repo = TempDir::new("repo");
+        let wt = TempDir::new("wt");
+
+        seed_worktree_files(repo.path(), wt.path());
+
+        assert!(
+            !wt.path().join(".env").exists(),
+            "no dest should be created when source is absent"
+        );
     }
 }
