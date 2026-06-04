@@ -47,7 +47,7 @@ impl CommandRunnerPort for TokioCommandRunner {
     }
 }
 
-/// Inner body: builds argv, spawns the child, streams lines, waits for exit,
+/// Inner body: builds argv, spawns the child, streams lines while waiting for exit,
 /// emits exactly one `CommandEvent::Exited(status)` on completion (including
 /// the spawn-failure path — a synthetic failure status keeps downstream
 /// consumers draining the receiver to completion).
@@ -95,19 +95,34 @@ async fn run_command(
     // Phase 15 / Plan 15-01 Task 3: emit child PID as the FIRST event so
     // effect_runner can construct TokioTaskHandle { child_pid, .. } before
     // any OutputLine arrives. Spec: command_runner_port::CommandEvent doc.
-    let child_pid = child.id().expect("child pid available after successful spawn");
+    let child_pid = child
+        .id()
+        .expect("child pid available after successful spawn");
     let _ = tx.send(CommandEvent::ProcessStarted { pid: child_pid });
 
     // Take IO handles immediately before any wait/kill call.
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
-    // Stream stdout and stderr concurrently, then wait for process exit.
-    stream_command_output(stdout, stderr, tx.clone()).await;
+    // Stream stdout/stderr while waiting for process exit. Some commands
+    // launch background descendants that inherit these pipes; waiting for EOF
+    // before `child.wait()` would keep the dashboard task alive after the
+    // launcher has already exited.
+    let mut stream_task = tokio::spawn(stream_command_output(stdout, stderr, tx.clone()));
     let status = match child.wait().await {
         Ok(s) => s,
         Err(_) => synthetic_failure_status(),
     };
+
+    match tokio::time::timeout(std::time::Duration::from_millis(250), &mut stream_task).await {
+        Ok(Ok(())) => {}
+        Ok(Err(_join_error)) => {}
+        Err(_elapsed) => {
+            stream_task.abort();
+            let _ = stream_task.await;
+        }
+    }
+
     let _ = tx.send(CommandEvent::Exited(status));
 }
 
@@ -205,7 +220,9 @@ mod tests {
     async fn run_command_emits_process_started_first() {
         let runner = TokioCommandRunner;
         let mut rx = runner.spawn(
-            CommandSpec::ShellCommand { command: "echo done".into() },
+            CommandSpec::ShellCommand {
+                command: "echo done".into(),
+            },
             std::env::temp_dir(),
             "main".into(),
         );
@@ -233,5 +250,54 @@ mod tests {
         }
         assert!(output_lines >= 1, "expected at least one OutputLine");
         assert_eq!(exited, 1, "expected exactly one Exited event");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_command_exits_when_background_child_keeps_pipes_open() {
+        let runner = TokioCommandRunner;
+        let mut rx = runner.spawn(
+            CommandSpec::ShellCommand {
+                command: "sleep 5 & echo launched".into(),
+            },
+            std::env::temp_dir(),
+            "main".into(),
+        );
+
+        let pid = match rx.recv().await.expect("at least one event") {
+            CommandEvent::ProcessStarted { pid } => pid,
+            other => panic!("expected ProcessStarted first, got {other:?}"),
+        };
+
+        let mut saw_output = false;
+        let exited = tokio::time::timeout(std::time::Duration::from_millis(750), async {
+            loop {
+                match rx
+                    .recv()
+                    .await
+                    .expect("channel should stay open until exit")
+                {
+                    CommandEvent::ProcessStarted { .. } => {
+                        panic!("ProcessStarted must be emitted exactly once");
+                    }
+                    CommandEvent::OutputLine(line) => {
+                        if line == "launched" {
+                            saw_output = true;
+                        }
+                    }
+                    CommandEvent::Exited(status) => return status,
+                }
+            }
+        })
+        .await;
+
+        unsafe {
+            let _ = libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+
+        let status = exited.expect(
+            "runner should emit Exited after the shell exits, even if a background child keeps stdout/stderr open",
+        );
+        assert!(status.success(), "expected shell success, got {status:?}");
+        assert!(saw_output, "expected to stream command output before exit");
     }
 }
