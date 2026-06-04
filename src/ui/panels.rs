@@ -62,6 +62,13 @@ fn activity_column_index(columns: &[WorktreeTableColumn]) -> Option<usize> {
         .or_else(|| (!columns.is_empty()).then_some(0))
 }
 
+fn metro_activity_label(activity: Option<&crate::domain::metro::MetroActivity>, port: u16) -> String {
+    match activity {
+        Some(activity) => format!("\u{2502} {activity} :{port}"),
+        None => format!("\u{2502} Metro :{port}"),
+    }
+}
+
 /// Renders the worktree table (bottom section) with structured columns.
 pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     let border_style = if state.focused_panel == FocusedPanel::WorktreeTable {
@@ -200,16 +207,18 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
 
         rows.push(Row::new(row_cells).style(row_style));
 
-        // If this worktree is running metro and we have activity info, add a detail row.
+        // If this worktree is running metro, add a detail row with activity and port.
+        let slice_metro = state.worktrees.get(&wt.id).map(|slice| &slice.metro);
         if wt.metro_status == WorktreeMetroStatus::Running
-            && let Some(ref activity) = state.metro.activity {
+            && let Some(metro) = slice_metro
+            && let Some(port) = metro.running_port() {
                 let mut detail_cells = columns
                     .iter()
                     .map(|_| Cell::from(""))
                     .collect::<Vec<_>>();
                 if let Some(idx) = activity_column_index(columns) {
                     detail_cells[idx] = Cell::from(Span::styled(
-                        format!("\u{2502} {activity}"),
+                        metro_activity_label(metro.activity(), port),
                         Style::default().fg(Color::Cyan),
                     ));
                 }
@@ -352,5 +361,24 @@ pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
             }),
             &mut scrollbar_state,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::metro::MetroActivity;
+
+    #[test]
+    fn metro_activity_label_shows_selected_port() {
+        assert_eq!(
+            metro_activity_label(Some(&MetroActivity::Ready), 8082),
+            "\u{2502} Ready :8082"
+        );
+    }
+
+    #[test]
+    fn metro_activity_label_falls_back_to_port_when_activity_missing() {
+        assert_eq!(metro_activity_label(None, 8083), "\u{2502} Metro :8083");
     }
 }

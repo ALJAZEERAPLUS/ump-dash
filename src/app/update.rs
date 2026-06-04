@@ -14,10 +14,11 @@
 use super::effect::Effect;
 use super::state::{active_output, active_worktree_id, AppState, ErrorState, FocusedPanel, PaletteMode, MAX_COMMAND_LINES};
 use crate::domain::action::Action;
-use crate::domain::command::{CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
+use crate::domain::command::{android_avd_name, android_boot_avd_command, CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant};
 use crate::domain::pipeline::{DependencyState, Recipe};
+use crate::domain::worktree::WorktreeId;
 use crate::domain::worktree_slice::LastRunConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Plan 13-09 (F-204 consumer): the 11 inline prereq sites are rewritten to
 // build a `Recipe` and call `Recipe::expand(&deps)` — the dispatcher never
@@ -35,6 +36,77 @@ use std::path::PathBuf;
 //   GitResetHardFetch dispatch                                      → Recipe::GitFetchThenReset
 //   needs_metro pre-dispatch (3 sites: CommandRun / CommandExited drain / SyncBeforeRunDecline)
 //                                                                   → command_queue.push_front + MetroStart
+
+const DEFAULT_METRO_PORT: u16 = 8081;
+
+fn metro_worktree_id_from_path(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
+    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    state
+        .worktree_browser
+        .worktrees
+        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
+        .map(|wt| wt.path.clone())
+}
+
+fn active_metro_worktree_path(state: &AppState) -> PathBuf {
+    state
+        .metro_state
+        .active_worktree_path
+        .clone()
+        .or_else(|| selected_worktree_path(state))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn active_metro_worktree_id(state: &AppState) -> String {
+    metro_worktree_id_from_path(&active_metro_worktree_path(state))
+}
+
+fn slice_id_for_metro_worktree_id(state: &AppState, worktree_id: &str) -> Option<WorktreeId> {
+    state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+        .map(|wt| wt.id.clone())
+        .or_else(|| state.worktrees.keys().find(|id| id.0 == worktree_id).cloned())
+}
+
+fn active_metro_slice_id(state: &AppState) -> WorktreeId {
+    active_worktree_id(state).unwrap_or_else(|| WorktreeId(active_metro_worktree_id(state)))
+}
+
+fn active_worktree_has_metro(state: &AppState) -> bool {
+    let id = active_metro_slice_id(state);
+    state
+        .worktrees
+        .get(&id)
+        .map(|slice| slice.metro.is_running())
+        .unwrap_or(false)
+}
+
+fn next_available_reserved_metro_port(state: &AppState) -> u16 {
+    let mut port = DEFAULT_METRO_PORT;
+    loop {
+        let already_reserved = state
+            .worktrees
+            .values()
+            .any(|slice| slice.metro.running_port() == Some(port));
+        if !already_reserved {
+            return port;
+        }
+        if port == u16::MAX {
+            return DEFAULT_METRO_PORT;
+        }
+        port += 1;
+    }
+}
 
 /// Directly dispatches a command without going through the pre-processing pipeline.
 /// Used by ModalConfirm to run confirmed destructive commands, and internally after
@@ -137,26 +209,18 @@ fn is_ump_run(spec: &CommandSpec) -> bool {
 fn is_run_command(spec: &CommandSpec) -> bool {
     matches!(
         spec,
-        CommandSpec::RnRunAndroid { .. }
-            | CommandSpec::RnRunIos { .. }
-            | CommandSpec::RnRunIosDevice
-            | CommandSpec::UmpRunAndroid { .. }
+        CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild
     )
 }
 
 fn is_ios_run_command(spec: &CommandSpec) -> bool {
-    matches!(
-        spec,
-        CommandSpec::RnRunIos { .. } | CommandSpec::RnRunIosDevice | CommandSpec::UmpRunIos { .. }
-    )
+    matches!(spec, CommandSpec::UmpRunIos { .. })
 }
 
 fn command_with_device(spec: CommandSpec, device_id: String) -> CommandSpec {
     match spec {
-        CommandSpec::RnRunAndroid { mode, .. } => CommandSpec::RnRunAndroid { device_id, mode },
-        CommandSpec::RnRunIos { .. } => CommandSpec::RnRunIos { device_id },
         CommandSpec::UmpRunAndroid { variant, .. } => CommandSpec::UmpRunAndroid { device_id, variant },
         CommandSpec::UmpRunIos { variant, .. } => CommandSpec::UmpRunIos { device_id, variant },
         other => other,
@@ -278,36 +342,37 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroStart => {
             state.modal_stack.palette_mode = None;
-            if state.metro.is_running() {
-                state.metro_state.pending_restart = true;
-                effects.extend(update(state, Action::MetroStop));
+            if active_worktree_has_metro(state) {
                 return effects;
             }
-            // Skip external detection when restarting our own metro (worktree switch or restart).
-            // The port may still be releasing from our just-killed process — not an external conflict.
-            if state.metro_state.skip_external_metro_check {
-                state.metro_state.skip_external_metro_check = false;
-                effects.push(Effect::ScheduleAction(Action::MetroStartConfirmed));
-                return effects;
-            }
-            // Check for external metro conflict before spawning (F-201: DetectExternalMetro)
-            effects.push(Effect::DetectExternalMetro { port: 8081 });
+            state.metro_state.skip_external_metro_check = false;
+            effects.extend(update(state, Action::MetroStartConfirmed));
         }
 
         Action::MetroStartConfirmed => {
-            state.metro.set_starting();
-            let worktree_path = state
-                .metro_state
-                .active_worktree_path
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("."));
-            effects.push(Effect::SpawnMetro { worktree: worktree_path });
+            let worktree_path = active_metro_worktree_path(state);
+            let slice_id = active_metro_slice_id(state);
+            let port = next_available_reserved_metro_port(state);
+            let slice = state.worktrees.entry(slice_id.clone()).or_insert_with(|| {
+                crate::domain::worktree_slice::WorktreeSlice {
+                    id: slice_id,
+                    ..Default::default()
+                }
+            });
+            slice.metro.reserve_start(port);
+            effects.push(Effect::SpawnMetro {
+                worktree: worktree_path,
+                port,
+            });
         }
 
         Action::MetroStop => {
             state.modal_stack.palette_mode = None;
-            if let Some(handle) = state.metro.take_handle() {
-                state.metro.set_stopping();
+            let slice_id = active_metro_slice_id(state);
+            if let Some(slice) = state.worktrees.get_mut(&slice_id)
+                && let Some(handle) = slice.metro.take_handle()
+            {
+                slice.metro.set_stopping();
                 // Plan 13-03: kill() is the consuming trait method.
                 // Post-13-07, the handle is a TokioMetroHandle from TokioMetroAdapter.
                 if let Err(e) = handle.kill() {
@@ -318,9 +383,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroSendDebugger => {
             state.modal_stack.palette_mode = None;
-            if state.metro.is_running() {
+            let slice_id = active_metro_slice_id(state);
+            if let Some(port) = state
+                .worktrees
+                .get(&slice_id)
+                .and_then(|slice| slice.metro.running_port())
+            {
                 effects.push(Effect::MetroHttpPost {
-                    url: "http://localhost:8081/open-debugger".to_string(),
+                    url: format!("http://localhost:{port}/open-debugger"),
                     body: "{}".to_string(),
                 });
             }
@@ -328,33 +398,44 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::MetroSendReload => {
             state.modal_stack.palette_mode = None;
-            if state.metro.is_running() {
+            let slice_id = active_metro_slice_id(state);
+            if let Some(port) = state
+                .worktrees
+                .get(&slice_id)
+                .and_then(|slice| slice.metro.running_port())
+            {
                 effects.push(Effect::MetroHttpPost {
-                    url: "http://localhost:8081/reload".to_string(),
+                    url: format!("http://localhost:{port}/reload"),
                     body: String::new(),
                 });
             }
         }
 
-        Action::MetroExited => {
+        Action::MetroExited(worktree_id) => {
             // Plan 13-09: pending_metro_run is gone — the deferred run command
             // (if any) sits in command_queue.front() and is drained on the
             // next MetroActivityUpdate(Ready). If metro exited unexpectedly,
             // clear the queue so a stale deferred command doesn't fire on the
             // next successful start.
-            if !state.metro_state.pending_restart {
-                for slice in state.worktrees.values_mut() {
-                    slice.queue.clear();
-                    slice.post_drain = None;
-                }
+            if !state.metro_state.pending_restart
+                && let Some(slice_id) = state.worktree_browser.worktrees
+                    .iter()
+                    .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+                    .map(|wt| wt.id.clone())
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
+                slice.queue.clear();
+                slice.post_drain = None;
             }
-            state.metro.clear();
+            if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
+                slice.metro.clear();
+            }
             if state.metro_state.pending_restart {
                 state.metro_state.pending_restart = false;
                 // active_worktree_path is already updated synchronously at the
                 // worktree-switch call site (Plan 13-09 — no pending_switch_path).
-                // Signal MetroStart to skip external detection — the port may still be
-                // releasing from our just-killed process, not an external conflict.
                 state.metro_state.skip_external_metro_check = true;
                 effects.extend(update(state, Action::MetroStart));
             }
@@ -362,22 +443,35 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             effects.extend(update(state, Action::RefreshWorktrees));
         }
 
-        Action::MetroSpawnFailed(msg) => {
+        Action::MetroSpawnFailed { worktree_id, message } => {
             // Plan 13-09: clear queue + post-drain action; pending flags gone.
-            for slice in state.worktrees.values_mut() {
+            if let Some(slice_id) = state.worktree_browser.worktrees
+                .iter()
+                .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+                .map(|wt| wt.id.clone())
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
                 slice.queue.clear();
                 slice.post_drain = None;
             }
-            state.metro.clear();
+            if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
+                slice.metro.clear();
+            }
             state.metro_state.pending_restart = false;
             state.error_state = Some(ErrorState {
-                message: format!("Metro failed to start: {msg}"),
+                message: format!("Metro failed to start: {message}"),
                 can_retry: true,
             });
         }
 
-        Action::MetroActivityUpdate(activity) => {
-            state.metro.activity = Some(activity.clone());
+        Action::MetroActivityUpdate { worktree_id, activity } => {
+            if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
+                && let Some(slice) = state.worktrees.get_mut(&slice_id)
+            {
+                slice.metro.record_activity(activity.clone());
+            }
             // Plan 13-09: pending_metro_run absorbed into command_queue. When
             // metro becomes Ready and nothing is currently running, drain the
             // queue front via CommandRun (preserves the full pipeline:
@@ -385,11 +479,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // pattern at the dispatch sites guarantees the awaited spec sits
             // at the head of the queue.
             if matches!(activity, crate::domain::metro::MetroActivity::Ready) {
-                // Phase 14 D-13 PRIMARY: walk slices for any whose head needs metro.
-                // Single-instance metro means only one slice can win this transition;
-                // others wait for the next CommandExited.
+                // Phase 14 D-13 PRIMARY: drain the queue for the worktree whose
+                // Metro instance just became ready.
                 let candidate_id = state.worktrees.iter()
-                    .find(|(_, s)| {
+                    .find(|(id, s)| {
+                        state.worktree_browser.worktrees
+                            .iter()
+                            .find(|wt| &wt.id == *id)
+                            .map(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+                            .unwrap_or(false)
+                            &&
                         s.task.is_none()
                             && s.queue.front().map(|c| c.needs_metro()).unwrap_or(false)
                     })
@@ -460,15 +559,15 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
             }
 
-            // Derive metro_status from current MetroManager state
-            if let crate::domain::metro::MetroStatus::Running { ref worktree_id, .. } = state.metro.status {
-                for wt in &mut worktrees {
-                    let wt_name = wt.path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("");
-                    if wt_name == worktree_id {
-                        wt.metro_status = crate::domain::worktree::WorktreeMetroStatus::Running;
-                    }
+            // Derive metro_status from each worktree's slice-owned Metro state.
+            for wt in &mut worktrees {
+                if state
+                    .worktrees
+                    .get(&wt.id)
+                    .map(|slice| slice.metro.is_running())
+                    .unwrap_or(false)
+                {
+                    wt.metro_status = crate::domain::worktree::WorktreeMetroStatus::Running;
                 }
             }
 
@@ -612,12 +711,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                 }
 
-            // Plan 13-09 (F-204 site 2): Metro prerequisite — RN run commands
+            // Plan 13-09 (F-204 site 2): Metro prerequisite — native run commands
             // need metro running first. The deferred spec is pushed to the
             // FRONT of the command_queue; on `MetroActivityUpdate(Ready)` the
             // queue is drained head-first via CommandRun (preserves the full
             // pipeline). Replaces the deleted `pending_metro_run` field.
-            if spec.needs_metro() && !state.metro.is_running() {
+            if spec.needs_metro() && !active_worktree_has_metro(state) {
                 // D-12 + D-13: push to head of slice queue (push_front) for the originating worktree.
                 if let Some(wt_id) = active_worktree_id(state) {
                     let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
@@ -662,7 +761,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             if spec.needs_device_selection() {
                 state.modal_stack.pending_device_command = Some(spec.clone());
-                let kind = if matches!(spec, CommandSpec::RnRunAndroid { .. } | CommandSpec::UmpRunAndroid { .. }) {
+                let kind = if matches!(spec, CommandSpec::UmpRunAndroid { .. }) {
                     crate::domain::ports::device_port::DeviceKind::Android
                 } else {
                     crate::domain::ports::device_port::DeviceKind::Ios
@@ -786,21 +885,35 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 /// Head spec needs to be dispatched.
                 Dispatch(crate::domain::command::CommandSpec),
                 /// Head spec needs metro — push back and start metro.
-                NeedsMetro(crate::domain::command::CommandSpec),
+                NeedsMetro(Option<PathBuf>),
                 /// Queue is empty — consume post_drain.
                 PostDrain(Box<Action>),
                 /// Queue is empty, no post_drain.
                 Empty,
             }
 
+            let target_metro_path = target_id.as_ref().and_then(|id| {
+                state
+                    .worktree_browser
+                    .worktrees
+                    .iter()
+                    .find(|wt| &wt.id == id)
+                    .map(|wt| wt.path.clone())
+            });
+            let target_has_metro = target_id
+                .as_ref()
+                .and_then(|id| state.worktrees.get(id))
+                .map(|slice| slice.metro.is_running())
+                .unwrap_or_else(|| active_worktree_has_metro(state));
+
             let slice_drain = if let Some(ref id) = target_id
                 && let Some(slice) = state.worktrees.get_mut(id)
             {
                 if let Some(next_spec) = slice.queue.pop_front() {
-                    if next_spec.needs_metro() && !state.metro.is_running() {
+                    if next_spec.needs_metro() && !target_has_metro {
                         // D-13: metro stays metro-special. Push back to head of slice.
                         slice.queue.push_front(next_spec.clone());
-                        SliceDrainResult::NeedsMetro(next_spec)
+                        SliceDrainResult::NeedsMetro(target_metro_path)
                     } else {
                         SliceDrainResult::Dispatch(next_spec)
                     }
@@ -820,7 +933,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         effects.push(eff);
                     }
                 }
-                SliceDrainResult::NeedsMetro(_) => {
+                SliceDrainResult::NeedsMetro(path) => {
+                    if let Some(path) = path {
+                        state.metro_state.active_worktree_path = Some(path);
+                    }
                     effects.extend(update(state, Action::MetroStart));
                 }
                 SliceDrainResult::PostDrain(post) => {
@@ -891,21 +1007,21 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Phase 3: Modal actions ---
 
-        Action::ShowCommandPalette => {
-            // Palette activation is handled via EnterGitPalette / EnterRnPalette.
-            // This variant is kept for backward compatibility.
-        }
-
         Action::ModalConfirm => {
             // Check for pending worktree removal BEFORE falling through to normal confirm
             if let Some((wt_id, wt_path, _branch)) = state.modal_stack.pending_worktree_removal.take() {
                 state.modal_stack.modal = None;
 
                 // Stop metro if it's running on the worktree being removed
-                if state.metro.is_running()
-                    && state.metro_state.active_worktree_path.as_ref() == Some(&wt_path) {
-                        effects.extend(update(state, Action::MetroStop));
-                    }
+                if state
+                    .worktrees
+                    .get(&wt_id)
+                    .map(|slice| slice.metro.is_running())
+                    .unwrap_or(false)
+                {
+                    state.metro_state.active_worktree_path = Some(wt_path.clone());
+                    effects.extend(update(state, Action::MetroStop));
+                }
 
                 // Immediately remove from worktree list for instant visual feedback
                 state.worktree_browser.worktrees.retain(|wt| wt.id != wt_id);
@@ -938,7 +1054,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::ModalCancel => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_android_mode = false;
             state.modal_stack.pending_worktree_removal = None;  // discard any pending removal on cancel
             state.modal_stack.pending_worktree_add = false;     // discard any pending add on cancel
             state.modal_stack.pending_new_branch_base = None;   // discard new-branch base on cancel
@@ -1005,14 +1120,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         pending_template,
                         ..
                     } => {
-                        if state.modal_stack.pending_android_mode {
-                            state.modal_stack.pending_android_mode = false;
-                            let mode = if buffer.trim().is_empty() { None } else { Some(buffer.trim().to_string()) };
-                            state.app_config.android_mode = mode.clone();
-                            if let Some(m) = mode {
-                                effects.push(Effect::SaveAndroidMode(m));
-                            }
-                        } else if state.modal_stack.pending_new_branch_worktree {
+                        if state.modal_stack.pending_new_branch_worktree {
                             state.modal_stack.pending_new_branch_worktree = false;
                             let new_branch_name = buffer.trim().to_string();
                             let base_branch = state.modal_stack.pending_new_branch_base.take();
@@ -1127,12 +1235,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 };
                 if let Some(device) = filtered.get(selected) {
                     let device_id = device.id.clone();
-                    let device_name = device.name.clone();
-                    let is_ios = matches!(
-                        pending_template.as_ref(),
-                        CommandSpec::RnRunIos { .. } | CommandSpec::UmpRunIos { .. }
-                    );
-                    let is_available_emulator = device_name.ends_with("(available)");
+                    let is_ios = matches!(pending_template.as_ref(), CommandSpec::UmpRunIos { .. });
+                    let is_available_emulator = android_avd_name(&device_id).is_some();
 
                     if is_available_emulator && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. }) {
                         let real_spec = command_with_device(*pending_template, device_id);
@@ -1140,28 +1244,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         return effects;
                     }
 
-                    // Available emulator: boot it, then run via shell command
-                    if is_available_emulator {
-                        if let CommandSpec::RnRunAndroid { mode, .. } = *pending_template {
-                            if let Some(ref m) = mode {
-                                effects.push(Effect::SaveAndroidMode(m.clone()));
-                            }
-                            let mode_flag = mode.map(|m| format!(" --mode {m}")).unwrap_or_default();
-                            let cmd = format!(
-                                "emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device && npx react-native run-android{mode_flag}"
-                            );
-                            if let Some(eff) = dispatch_command(state, CommandSpec::ShellCommand { command: cmd }) {
-                                effects.push(eff);
-                            }
-                        }
-                        return effects;
-                    }
-
                     let real_spec = command_with_device(*pending_template, device_id.clone());
-                    // Persist Android mode if present
-                    if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
-                        effects.push(Effect::SaveAndroidMode(m.clone()));
-                    }
                     // Record iOS simulator usage for sort-by-recent
                     if is_ios {
                         effects.push(Effect::ScheduleAction(Action::SimulatorUsed(device_id)));
@@ -1195,10 +1278,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 if boot_android_emulator
                     && let CommandSpec::UmpRunAndroid { device_id, .. } = &real_spec
+                    && let Some(avd_name) = android_avd_name(device_id)
                 {
                     remember_ump_run_config(state, &real_spec);
                     let boot = CommandSpec::ShellCommand {
-                        command: format!("emulator -avd {device_id} > /dev/null 2>&1 & adb wait-for-device"),
+                        command: android_boot_avd_command(avd_name),
                     };
                     if let Some(eff) = dispatch_command(state, boot) {
                         effects.push(eff);
@@ -1235,7 +1319,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                     1 => {
                         // Only one device — skip picker
-                        let is_available_emulator = devices[0].name.ends_with("(available)");
+                        let is_available_emulator = android_avd_name(&devices[0].id).is_some();
 
                         // Available emulator: boot it, then run via shell command
                         if is_available_emulator {
@@ -1244,25 +1328,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
                                 return effects;
                             }
-
-                            if let CommandSpec::RnRunAndroid { mode, .. } = spec {
-                                if let Some(ref m) = mode {
-                                    effects.push(Effect::SaveAndroidMode(m.clone()));
-                                }
-                                let mode_flag = mode.map(|m| format!(" --mode {m}")).unwrap_or_default();
-                                let cmd = format!(
-                                    "emulator -avd {} > /dev/null 2>&1 & adb wait-for-device && npx react-native run-android{}",
-                                    devices[0].id, mode_flag
-                                );
-                                if let Some(eff) = dispatch_command(state, CommandSpec::ShellCommand { command: cmd }) {
-                                    effects.push(eff);
-                                }
-                            }
                         } else {
                             let real_spec = command_with_device(spec, devices[0].id.clone());
-                            if let CommandSpec::RnRunAndroid { mode: Some(ref m), .. } = real_spec {
-                                effects.push(Effect::SaveAndroidMode(m.clone()));
-                            }
                             open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
                         }
                     }
@@ -1270,7 +1337,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         // Multiple devices — show picker
                         // Sort iOS simulators by last-used from sim_history
                         let mut sorted_devices = devices;
-                        if matches!(spec, CommandSpec::RnRunIos { .. } | CommandSpec::UmpRunIos { .. }) {
+                        if matches!(spec, CommandSpec::UmpRunIos { .. }) {
                             // Plan 13-08: sim_history is loaded into AppState at startup
                             // (src/main.rs) so update() never crosses the infra boundary.
                             let history = &state.app_config.sim_history;
@@ -1296,14 +1363,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.modal_stack.palette_mode = Some(PaletteMode::Git);
         }
 
-        Action::EnterRnPalette => {
-            // EnterRnPalette kept for backward compat — Phase 05.1 will remap 'c' key
-            // to new submenu scheme. For now we just cancel palette mode.
-            state.modal_stack.palette_mode = None;
-        }
-
-
-
         // --- Phase 5: Worktree switching and Claude Code ---
 
         Action::WorktreeSwitchToSelected => {
@@ -1323,10 +1382,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     // synchronously (replaces pending_switch_path).
                     if let Some(path) = target_path {
                         state.metro_state.active_worktree_path = Some(path);
-                    }
-                    if state.metro.is_running() {
-                        state.metro_state.pending_restart = false;
-                        effects.extend(update(state, Action::MetroStop));
                     }
                     let deps = DependencyState::new(true, false, false);
                     let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
@@ -1371,12 +1426,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(path) = target_path {
                 state.metro_state.active_worktree_path = Some(path);
             }
-            if state.metro.is_running() {
-                // Kill current → MetroExited → MetroStart in (already-updated) worktree
-                state.metro_state.pending_restart = true;
-                effects.extend(update(state, Action::MetroStop));
-            } else {
-                // Not running — just start directly in selected worktree
+            if !active_worktree_has_metro(state) {
                 effects.extend(update(state, Action::MetroStart));
             }
         }
@@ -1547,15 +1597,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 pending_template: Box::new(CommandSpec::ShellCommand { command: String::new() }),
             });
         }
-        Action::StartSetAndroidMode => {
-            state.modal_stack.palette_mode = None;
-            state.modal_stack.pending_android_mode = true;
-            state.modal_stack.modal = Some(ModalState::TextInput {
-                prompt: "Android build mode:".to_string(),
-                buffer: state.app_config.android_mode.clone().unwrap_or_default(),
-                pending_template: Box::new(CommandSpec::YarnLint), // sentinel — not actually used
-            });
-        }
         Action::SimulatorUsed(udid) => {
             // Fire-and-forget write to sim history via effect_runner
             effects.push(Effect::RecordSimUsed(udid));
@@ -1602,7 +1643,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // MetroStart (replaces `pending_metro_run`). The stale check
                 // won't re-trigger because the user just declined it.
                 let spec = *run_command;
-                if spec.needs_metro() && !state.metro.is_running() {
+                if spec.needs_metro() && !active_worktree_has_metro(state) {
                     // D-12 + D-13: push to head of slice queue for the originating worktree.
                     if let Some(wt_id) = active_worktree_id(state) {
                         let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
@@ -1627,7 +1668,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // call site when the SyncBeforeMetro modal was constructed.
 
                 // Stop metro if running (no auto-restart — sync must finish first)
-                if state.metro.is_running() {
+                if active_worktree_has_metro(state) {
                     state.metro_state.pending_restart = false;
                     effects.extend(update(state, Action::MetroStop));
                 }
@@ -1673,12 +1714,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(ModalState::SyncBeforeMetro { .. }) = state.modal_stack.modal.take() {
                 // Plan 13-09: active_worktree_path is already set at the
                 // WorktreeSwitchToSelected call site (no pending_switch_path).
-                if state.metro.is_running() {
-                    state.metro_state.pending_restart = true;
-                    effects.extend(update(state, Action::MetroStop));
-                } else {
-                    effects.extend(update(state, Action::MetroStart));
-                }
+                effects.extend(update(state, Action::MetroStart));
             }
         }
 
@@ -1744,8 +1780,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.modal_stack.pending_worktree_removal = Some((wt.id.clone(), wt.path.clone(), wt.branch.clone()));
 
             // Build confirm prompt — mention metro if it will be stopped
-            let metro_note = if state.metro.is_running()
-                && state.metro_state.active_worktree_path.as_ref() == Some(&wt.path)
+            let metro_note = if state
+                .worktrees
+                .get(&wt.id)
+                .map(|slice| slice.metro.is_running())
+                .unwrap_or(false)
             {
                 " (metro will be stopped)"
             } else {

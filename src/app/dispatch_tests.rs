@@ -171,10 +171,7 @@ mod palette_resolution {
                 variant: None,
             }))
         );
-        assert_eq!(
-            handle_key(&state, key('m')),
-            Some(Action::StartSetAndroidMode)
-        );
+        assert_eq!(handle_key(&state, key('m')), Some(Action::ModalCancel));
         assert_eq!(
             handle_key(&state, key_code(KeyCode::Esc)),
             Some(Action::ModalCancel)
@@ -433,8 +430,9 @@ mod modal_dismissal {
         state.modal_stack.modal = Some(ModalState::DevicePicker {
             devices: Vec::new(),
             selected: 0,
-            pending_template: Box::new(CommandSpec::RnRunIos {
+            pending_template: Box::new(CommandSpec::UmpRunIos {
                 device_id: String::new(),
+                variant: None,
             }),
             filter: String::new(),
         });
@@ -728,6 +726,51 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn available_android_avd_boot_waits_for_selected_avd_before_queued_run() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: "avd:Pixel_9a".into(),
+                variant: None,
+            }),
+            boot_android_emulator: true,
+        });
+
+        let effects = update(&mut state, Action::ModalRunVariantConfirm);
+
+        let command = effects.iter().find_map(|effect| match effect {
+            Effect::SpawnTask {
+                spec: CommandSpec::ShellCommand { command },
+                ..
+            } => Some(command.as_str()),
+            _ => None,
+        });
+
+        let command = command.expect("booting an available AVD should spawn a shell command");
+        assert!(
+            command.contains("emulator -avd 'Pixel_9a'"),
+            "boot command should launch the selected AVD, got {command}"
+        );
+        assert!(
+            command.contains("adb -s \"$serial\" emu avd name"),
+            "boot command should wait for the selected AVD serial, got {command}"
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .and_then(|slice| slice.queue.front())
+                == Some(&CommandSpec::UmpRunAndroid {
+                    device_id: "avd:Pixel_9a".into(),
+                    variant: Some(RunVariant::Local),
+                }),
+            "boot flow should queue the final AVD run after the boot command"
+        );
+    }
+
+    #[test]
     fn uppercase_r_uses_selected_worktree_run_history_only() {
         let mut state = base_state();
         seed_two_worktrees(&mut state, "wt-a", "wt-b");
@@ -916,6 +959,46 @@ mod worktrees_loaded {
         assert!(state.worktrees.contains_key(&WorktreeId("wt-A".into())));
         assert!(state.worktrees.contains_key(&WorktreeId("wt-B".into())));
     }
+
+    #[test]
+    fn worktrees_loaded_marks_every_running_metro_worktree() {
+        let mut state = AppState::default();
+
+        #[derive(Debug)]
+        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
+            fn pid(&self) -> u32 { self.pid }
+            fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn port(&self) -> u16 { self.port }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+        }
+
+        state
+            .worktrees
+            .entry(WorktreeId("wt-A".into()))
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: WorktreeId("wt-A".into()),
+                ..Default::default()
+            })
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+        state
+            .worktrees
+            .entry(WorktreeId("wt-B".into()))
+            .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                id: WorktreeId("wt-B".into()),
+                ..Default::default()
+            })
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+
+        let mut worktrees = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
+        let _ = update(&mut state, Action::WorktreesLoaded(worktrees.clone()));
+        worktrees = state.worktree_browser.worktrees;
+
+        assert!(worktrees.iter().all(|wt| wt.metro_status == WorktreeMetroStatus::Running));
+    }
 }
 
 // =========================================================================
@@ -948,8 +1031,7 @@ mod parallelism {
         assert_eq!(count_running, 2, "TASK-02 contract: parallel tasks across worktrees");
     }
 
-    /// COVER-01 / D-13 contract: MetroStart while already running triggers
-    /// the restart path, not a double-spawn.
+    /// COVER-01 / D-13 contract: MetroStart is scoped to the selected worktree.
     ///
     /// This is a unit-level restatement of the integration test in
     /// `tests/metro_single_instance.rs` (COVER-01). If accessing
@@ -957,36 +1039,83 @@ mod parallelism {
     /// a public test-helper type, this test is marked `#[ignore]` and
     /// coverage deferred to COVER-01.
     #[test]
-    fn metro_start_on_a_while_metro_running_on_b_keeps_single_instance() {
+    fn metro_start_on_a_while_metro_running_on_b_spawns_second_instance() {
         let mut state = base_state();
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
         // Register a fake MetroHandle to simulate metro running in wt-B.
         #[derive(Debug)]
-        struct FakeMetroHandle { pid: u32, worktree_id: String }
+        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
         impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
             fn pid(&self) -> u32 { self.pid }
             fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn port(&self) -> u16 { self.port }
             fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
             fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
         }
-        state.metro.register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into() }));
-        assert!(state.metro.is_running(), "precondition: metro running in wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .expect("wt-B slice seeded")
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-B".into(), port: 8081 }));
+        assert!(
+            state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running(),
+            "precondition: metro running in wt-B"
+        );
 
         // Set active worktree to A (index 0) and dispatch MetroStart.
         state.worktree_browser.worktree_table_state.select(Some(0));
         // Skip external detection so the test stays synchronous.
         state.metro_state.skip_external_metro_check = true;
-        let _effects = update(&mut state, Action::MetroStart);
+        let effects = update(&mut state, Action::MetroStart);
 
-        // COVER-01 contract: still only one MetroHandle registered (restart path,
-        // not double-spawn). The handler calls MetroStop first (pending_restart=true)
-        // so metro may be Stopping or about to be restarted — either way is_running()
-        // reflects the single-instance invariant.
-        // Regardless of whether pending_restart or restart-in-progress, no second
-        // SpawnMetro effect should have fired unconditionally.
-        assert!(state.metro_state.pending_restart,
-            "COVER-01: MetroStart-while-running must set pending_restart=true");
+        assert!(
+            !state.metro_state.pending_restart,
+            "starting Metro on another worktree must not stop/restart the existing one"
+        );
+        assert!(
+            state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running(),
+            "existing Metro must stay registered"
+        );
+        assert!(
+            effects.iter().any(|effect| matches!(effect, Effect::SpawnMetro { worktree, .. } if worktree.ends_with("wt-A"))),
+            "selected wt-A should get its own SpawnMetro effect; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn metro_exited_clears_only_matching_worktree_slice() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+
+        #[derive(Debug)]
+        struct FakeMetroHandle { pid: u32, worktree_id: String, port: u16 }
+        impl crate::domain::ports::metro_port::MetroHandle for FakeMetroHandle {
+            fn pid(&self) -> u32 { self.pid }
+            fn worktree_id(&self) -> &str { &self.worktree_id }
+            fn port(&self) -> u16 { self.port }
+            fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> { Ok(()) }
+            fn kill(self: Box<Self>) -> anyhow::Result<()> { Ok(()) }
+        }
+
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9001, worktree_id: "wt-A".into(), port: 8081 }));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .unwrap()
+            .metro
+            .register(Box::new(FakeMetroHandle { pid: 9002, worktree_id: "wt-B".into(), port: 8082 }));
+
+        let _ = update(&mut state, Action::MetroExited("wt-A".into()));
+
+        assert!(!state.worktrees.get(&WorktreeId("wt-A".into())).unwrap().metro.is_running());
+        assert!(state.worktrees.get(&WorktreeId("wt-B".into())).unwrap().metro.is_running());
     }
 }
 

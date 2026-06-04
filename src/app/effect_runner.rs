@@ -11,14 +11,14 @@
 //! - `action_tx` — the canonical Action stream `update()` consumes.
 //! - `handle_tx` — a dedicated channel for `Box<dyn MetroHandle>` since
 //!   `Action` derives `Clone + PartialEq` (which `Box<dyn MetroHandle>` does
-//!   not implement) and the handle must reach the main thread for
-//!   `state.metro.register()`.
+//!   not implement) and the handle must reach the main thread for registration
+//!   in the matching WorktreeSlice.
 //!
 //! Effect coverage map (every variant has a match arm below):
 //!   ScheduleAction(a)                              → action_tx.send(a)
 //!   SpawnTask { task_id, worktree_id, spec, cwd, branch } → adapters.command_runner.spawn(...) + task_handle_tx
 //!   DetectExternalMetro { port }                   → adapters.port_probe.detect_external(port)
-//!   SpawnMetro { worktree }                        → adapters.metro.start(worktree, on_activity)
+//!   SpawnMetro { worktree, port }                  → adapters.metro.start(worktree, port, on_activity)
 //!   MetroHttpPost { url, body }                    → adapters.metro.http_post(url, body)
 //!   KillProcess { pid }                            → adapters.port_probe.kill_process(pid)
 //!   LoadDevices { kind }                           → adapters.devices.list(kind)
@@ -29,14 +29,13 @@
 //!   ListRemoteBranches { repo_root }               → adapters.worktrees.list_remote_branches(repo_root)
 //!   FetchJiraTitles { keys }                       → adapters.jira.as_ref()?.fetch_title(...)
 //!   SaveJiraCache(map)                             → spawn_blocking infra::jira_cache::save_jira_cache  (F-111 deferred)
-//!   SaveAndroidMode(mode)                          → spawn_blocking infra::android_prefs::save_android_mode  (F-111 deferred)
 //!   RecordSimUsed(udid)                            → spawn_blocking infra::sim_history::record_sim_used  (F-111 deferred)
 //!   OpenInMultiplexer { worktree, name, command }  → adapters.multiplexer.as_ref()?.new_window(...)
 //!
-//! G-01 carve-out (whitelisted in `Makefile` arch-lint): the three
-//! persistence variants (SaveJiraCache, SaveAndroidMode, RecordSimUsed) still
+//! G-01 carve-out (whitelisted in `Makefile` arch-lint): the two
+//! persistence variants (SaveJiraCache, RecordSimUsed) still
 //! call `infra::<module>::save_*` directly. F-111 (PersistencePort) is
-//! deferred — when it lands those three lines route through
+//! deferred — when it lands those two lines route through
 //! `adapters.persistence` and the whitelist disappears.
 
 #![allow(dead_code)]
@@ -49,14 +48,18 @@ use crate::domain::metro::MetroHandle;
 use tokio::sync::mpsc::UnboundedSender;
 
 fn forward_metro_activity(
+    worktree_id: &str,
     activity: MetroActivity,
     activity_tx: &UnboundedSender<Action>,
     exited_tx: &UnboundedSender<Action>,
 ) {
     if matches!(&activity, MetroActivity::Exited) {
-        let _ = exited_tx.send(Action::MetroExited);
+        let _ = exited_tx.send(Action::MetroExited(worktree_id.to_string()));
     }
-    let _ = activity_tx.send(Action::MetroActivityUpdate(activity));
+    let _ = activity_tx.send(Action::MetroActivityUpdate {
+        worktree_id: worktree_id.to_string(),
+        activity,
+    });
 }
 
 /// Effect interpreter. Owns the `Adapters` bundle (Plan 13-08) + the action
@@ -142,31 +145,45 @@ impl EffectRunner {
                 });
             }
 
-            Effect::SpawnMetro { worktree } => {
+            Effect::SpawnMetro { worktree, port } => {
                 let metro = self.adapters.metro.clone();
                 let action_tx = self.action_tx.clone();
                 let handle_tx = self.handle_tx.clone();
                 let activity_tx = action_tx.clone();
                 let exited_tx = action_tx.clone();
                 tokio::spawn(async move {
+                    let worktree_id = worktree
+                        .file_name()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
                     // The on_activity callback bridges the callback-style
                     // MetroPort trait to the existing Action channel that
                     // update() consumes. Metro stderr errors are normal activity;
                     // only the adapter's explicit Exited activity clears the
                     // registered handle.
-                    let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> = Box::new(move |act| {
-                        forward_metro_activity(act, &activity_tx, &exited_tx);
-                    });
-                    match metro.start(worktree, on_activity).await {
+                    let on_activity_worktree_id = worktree_id.clone();
+                    let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> =
+                        Box::new(move |act| {
+                            forward_metro_activity(
+                                &on_activity_worktree_id,
+                                act,
+                                &activity_tx,
+                                &exited_tx,
+                            );
+                        });
+                    match metro.start(worktree, port, on_activity).await {
                         Ok(handle) => {
                             // Deliver via the dedicated handle channel — the
-                            // event loop calls state.metro.register() on the
-                            // main thread. AppState is not Send across the
-                            // spawn boundary.
+                            // event loop registers the handle into the
+                            // matching WorktreeSlice on the main thread.
+                            // AppState is not Send across the spawn boundary.
                             let _ = handle_tx.send(handle);
                         }
                         Err(e) => {
-                            let _ = action_tx.send(Action::MetroSpawnFailed(e.to_string()));
+                            let _ = action_tx.send(Action::MetroSpawnFailed {
+                                worktree_id,
+                                message: e.to_string(),
+                            });
                         }
                     }
                 });
@@ -316,15 +333,6 @@ impl EffectRunner {
                 tokio::task::spawn_blocking(move || {
                     if let Err(e) = crate::infra::jira_cache::save_jira_cache(&cache) {
                         tracing::warn!("save_jira_cache failed: {e}");
-                    }
-                });
-            }
-
-            Effect::SaveAndroidMode(mode) => {
-                // F-111 deferred — see SaveJiraCache.
-                tokio::task::spawn_blocking(move || {
-                    if let Err(e) = crate::infra::android_prefs::save_android_mode(&mode) {
-                        tracing::warn!("save_android_mode failed: {e}");
                     }
                 });
             }
@@ -581,7 +589,7 @@ mod tests {
         let (activity_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
         let exited_tx = activity_tx.clone();
 
-        forward_metro_activity(activity, &activity_tx, &exited_tx);
+        forward_metro_activity("wt-a", activity, &activity_tx, &exited_tx);
 
         let mut actions = Vec::new();
         while let Ok(action) = action_rx.try_recv() {
@@ -595,15 +603,16 @@ mod tests {
         let actions = collect_forwarded_actions(MetroActivity::Error("bundle failed".to_string()));
 
         assert!(
-            actions.contains(&Action::MetroActivityUpdate(MetroActivity::Error(
-                "bundle failed".to_string()
-            ))),
+            actions.contains(&Action::MetroActivityUpdate {
+                worktree_id: "wt-a".to_string(),
+                activity: MetroActivity::Error("bundle failed".to_string()),
+            }),
             "expected Metro error output to be forwarded as activity; got {actions:?}"
         );
         assert!(
             !actions
                 .iter()
-                .any(|action| matches!(action, Action::MetroExited)),
+                .any(|action| matches!(action, Action::MetroExited(_))),
             "Metro error output must not be treated as process exit; got {actions:?}"
         );
     }
@@ -615,7 +624,7 @@ mod tests {
         assert!(
             actions
                 .iter()
-                .any(|action| matches!(action, Action::MetroExited)),
+                .any(|action| matches!(action, Action::MetroExited(id) if id == "wt-a")),
             "Metro exit activity must notify the state machine; got {actions:?}"
         );
     }

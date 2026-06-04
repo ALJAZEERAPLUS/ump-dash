@@ -3,6 +3,44 @@
 //! `CommandSpec` describes *what* to run. The infrastructure layer converts it
 //! to an actual process via `to_argv()`. No process spawning happens here.
 
+const ANDROID_AVD_PREFIX: &str = "avd:";
+
+pub fn android_avd_name(device_id: &str) -> Option<&str> {
+    device_id
+        .strip_prefix(ANDROID_AVD_PREFIX)
+        .filter(|name| !name.is_empty())
+}
+
+pub fn android_avd_device_id(avd_name: &str) -> String {
+    format!("{ANDROID_AVD_PREFIX}{avd_name}")
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn android_wait_for_avd_script(avd_name: &str) -> String {
+    let quoted_avd = shell_single_quote(avd_name);
+    format!(
+        "avd={quoted_avd}; i=0; while [ \"$i\" -lt 180 ]; do for serial in $(adb devices | awk 'NR > 1 && $2 == \"device\" && $1 ~ /^emulator-/ {{ print $1 }}'); do name=$(adb -s \"$serial\" emu avd name 2>/dev/null | awk 'NF && $0 != \"OK\" {{ print; exit }}' | tr -d '\\r'); if [ \"$name\" = \"$avd\" ]; then exit 0; fi; done; i=$((i + 1)); sleep 1; done; echo \"[error] could not find running emulator for AVD $avd\" >&2; exit 1"
+    )
+}
+
+pub fn android_boot_avd_command(avd_name: &str) -> String {
+    format!(
+        "emulator -avd {} > /dev/null 2>&1 & {}",
+        shell_single_quote(avd_name),
+        android_wait_for_avd_script(avd_name)
+    )
+}
+
+fn android_run_avd_script(avd_name: &str, yarn_script: &str) -> String {
+    let quoted_avd = shell_single_quote(avd_name);
+    format!(
+        "avd={quoted_avd}; for serial in $(adb devices | awk 'NR > 1 && $2 == \"device\" && $1 ~ /^emulator-/ {{ print $1 }}'); do name=$(adb -s \"$serial\" emu avd name 2>/dev/null | awk 'NF && $0 != \"OK\" {{ print; exit }}' | tr -d '\\r'); if [ \"$name\" = \"$avd\" ]; then exec yarn {yarn_script} --device \"$serial\"; fi; done; echo \"[error] could not find running emulator for AVD $avd\" >&2; exit 1"
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunVariant {
     Local,
@@ -38,8 +76,8 @@ impl RunVariant {
     }
 }
 
-/// All commands that can be dispatched from the git or RN command palettes.
-/// 25 variants total. Pure data — no I/O.
+/// All commands that can be dispatched from the dashboard command palettes.
+/// 22 variants total. Pure data — no I/O.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandSpec {
     // Git commands (6 variants)
@@ -58,11 +96,6 @@ pub enum CommandSpec {
     // Yarn commands (2 variants)
     YarnInstall,
     YarnPodInstall,
-
-    // RN run commands (3 variants)
-    RnRunAndroid { device_id: String, mode: Option<String> },
-    RnRunIos { device_id: String },
-    RnRunIosDevice,                     // i>d: run-ios --device (auto-selects first physical device)
 
     // UMP run commands (2 variants)
     UmpRunAndroid { device_id: String, variant: Option<RunVariant> },
@@ -120,26 +153,13 @@ impl CommandSpec {
             CommandSpec::YarnInstall => vec!["yarn".into(), "install".into()],
             CommandSpec::YarnPodInstall => vec!["yarn".into(), "pod-install".into()],
 
-            CommandSpec::RnRunAndroid { device_id, mode } => {
-                let mut argv = vec!["npx".into(), "react-native".into(), "run-android".into()];
-                if let Some(m) = mode {
-                    argv.push("--mode".into());
-                    argv.push(m.clone());
-                }
-                if !device_id.is_empty() {
-                    argv.push("--device".into());
-                    argv.push(device_id.clone());
-                }
-                argv
-            }
-            CommandSpec::RnRunIos { device_id } => {
-                vec!["yarn".into(), "react-native".into(), "run-ios".into(), "--udid".into(), device_id.clone()]
-            }
-            CommandSpec::RnRunIosDevice => {
-                vec!["yarn".into(), "react-native".into(), "run-ios".into(), "--device".into()]
-            }
             CommandSpec::UmpRunAndroid { device_id, variant } => {
-                let mut argv = vec!["yarn".into(), variant.unwrap_or(RunVariant::Local).android_script().into()];
+                let yarn_script = variant.unwrap_or(RunVariant::Local).android_script();
+                if let Some(avd_name) = android_avd_name(device_id) {
+                    return vec!["sh".into(), "-c".into(), android_run_avd_script(avd_name, yarn_script)];
+                }
+
+                let mut argv = vec!["yarn".into(), yarn_script.into()];
                 if !device_id.is_empty() {
                     argv.push("--device".into());
                     argv.push(device_id.clone());
@@ -191,7 +211,7 @@ impl CommandSpec {
     }
 
     /// Returns false for git-porcelain commands (data-integrity risk on cancellation);
-    /// true for all other commands (yarn, rn, rm, adb, shell).
+    /// true for all other commands (yarn, UMP runs, rm, adb, shell).
     ///
     /// REFACTOR-02: Type-driven cancellability. Git variants are closed by construction —
     /// adding a new `Git*` variant requires explicit opt-in here (compile-error would be
@@ -248,9 +268,6 @@ impl CommandSpec {
             | CommandSpec::YarnJest { .. }
             | CommandSpec::YarnLint
             | CommandSpec::YarnCheckTypes
-            | CommandSpec::RnRunAndroid { .. }
-            | CommandSpec::RnRunIos { .. }
-            | CommandSpec::RnRunIosDevice
             | CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild
@@ -285,10 +302,7 @@ impl CommandSpec {
     /// Returns true for commands that require metro to be running before dispatch.
     pub fn needs_metro(&self) -> bool {
         matches!(self,
-            CommandSpec::RnRunAndroid { .. }
-            | CommandSpec::RnRunIos { .. }
-            | CommandSpec::RnRunIosDevice
-            | CommandSpec::UmpRunAndroid { .. }
+            CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild
         )
@@ -298,9 +312,7 @@ impl CommandSpec {
     /// Only triggers when device_id is empty (not yet selected).
     pub fn needs_device_selection(&self) -> bool {
         matches!(self,
-            CommandSpec::RnRunAndroid { device_id, .. }
-                | CommandSpec::RnRunIos { device_id, .. }
-                | CommandSpec::UmpRunAndroid { device_id, .. }
+            CommandSpec::UmpRunAndroid { device_id, .. }
                 | CommandSpec::UmpRunIos { device_id, .. }
             if device_id.is_empty()
         )
@@ -328,9 +340,6 @@ impl CommandSpec {
             CommandSpec::RmNodeModules => "Remove node_modules",
             CommandSpec::YarnInstall => "yarn install",
             CommandSpec::YarnPodInstall => "yarn pod-install",
-            CommandSpec::RnRunAndroid { .. } => "Run on Android device",
-            CommandSpec::RnRunIos { .. } => "Run on iOS device",
-            CommandSpec::RnRunIosDevice => "Run on iOS device (auto)",
             CommandSpec::UmpRunAndroid { .. } => "Run Android (UMP)",
             CommandSpec::UmpRunIos { .. } => "Run iOS (UMP)",
             CommandSpec::YarnUnitTests => "yarn unit-tests",
@@ -457,6 +466,34 @@ mod tests {
     }
 
     #[test]
+    fn ump_android_run_for_avd_resolves_serial_before_yarn_script() {
+        let argv = CommandSpec::UmpRunAndroid {
+            device_id: "avd:Pixel_9a".into(),
+            variant: Some(RunVariant::Local),
+        }
+        .to_argv();
+
+        assert_eq!(&argv[0], "sh");
+        assert_eq!(&argv[1], "-c");
+        assert!(
+            argv[2].contains("adb devices"),
+            "AVD run should inspect connected adb serials, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("adb -s \"$serial\" emu avd name"),
+            "AVD run should map adb serials back to AVD names, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("Pixel_9a"),
+            "AVD run should preserve the selected AVD name, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("yarn android:local --device \"$serial\""),
+            "AVD run should pass the resolved adb serial to yarn, got {argv:?}"
+        );
+    }
+
+    #[test]
     fn ump_run_variants_require_target_then_run_variant() {
         let android = CommandSpec::UmpRunAndroid {
             device_id: String::new(),
@@ -510,17 +547,14 @@ mod tests {
     }
 
     #[test]
-    fn is_cancellable_rn_run_variants_all_true() {
-        let rn_run_variants = [
-            CommandSpec::RnRunAndroid { device_id: "".into(), mode: None },
-            CommandSpec::RnRunIos { device_id: "".into() },
-            CommandSpec::RnRunIosDevice,
+    fn is_cancellable_run_variants_all_true() {
+        let run_variants = [
             CommandSpec::UmpRunAndroid { device_id: "".into(), variant: Some(RunVariant::Local) },
             CommandSpec::UmpRunIos { device_id: "".into(), variant: Some(RunVariant::Dev) },
             CommandSpec::RnReleaseBuild,
         ];
-        for spec in &rn_run_variants {
-            assert!(spec.is_cancellable(), "rn-run variant {:?} must be cancellable", spec);
+        for spec in &run_variants {
+            assert!(spec.is_cancellable(), "run variant {:?} must be cancellable", spec);
         }
     }
 
@@ -576,9 +610,6 @@ mod tests {
             CommandSpec::YarnJest { filter: "x".into() },
             CommandSpec::YarnLint,
             CommandSpec::YarnCheckTypes,
-            CommandSpec::RnRunAndroid { device_id: "".into(), mode: Some("release".into()) },
-            CommandSpec::RnRunIos { device_id: "iPhone 15".into() },
-            CommandSpec::RnRunIosDevice,
             CommandSpec::UmpRunAndroid { device_id: "emulator-5554".into(), variant: Some(RunVariant::Local) },
             CommandSpec::UmpRunIos { device_id: "ios-udid-1".into(), variant: Some(RunVariant::Prod) },
             CommandSpec::RnReleaseBuild,
@@ -640,9 +671,6 @@ mod tests {
             CommandSpec::RmNodeModules,
             CommandSpec::YarnInstall,
             CommandSpec::YarnPodInstall,
-            CommandSpec::RnRunAndroid { device_id: "".into(), mode: None },
-            CommandSpec::RnRunIos { device_id: "".into() },
-            CommandSpec::RnRunIosDevice,
             CommandSpec::UmpRunAndroid { device_id: "".into(), variant: Some(RunVariant::Local) },
             CommandSpec::UmpRunIos { device_id: "".into(), variant: Some(RunVariant::Dev) },
             CommandSpec::YarnUnitTests,
@@ -672,9 +700,6 @@ mod tests {
                 | CommandSpec::YarnJest { .. }
                 | CommandSpec::YarnLint
                 | CommandSpec::YarnCheckTypes
-                | CommandSpec::RnRunAndroid { .. }
-                | CommandSpec::RnRunIos { .. }
-                | CommandSpec::RnRunIosDevice
                 | CommandSpec::UmpRunAndroid { .. }
                 | CommandSpec::UmpRunIos { .. }
                 | CommandSpec::RnReleaseBuild
@@ -690,6 +715,6 @@ mod tests {
                 CollisionPolicy::BlockNew | CollisionPolicy::CancelPrevious
             ));
         }
-        assert_eq!(variants.len(), 25, "must enumerate all 25 CommandSpec variants");
+        assert_eq!(variants.len(), 22, "must enumerate all 22 CommandSpec variants");
     }
 }

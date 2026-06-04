@@ -17,7 +17,7 @@ One place to see and control everything about your React Native worktrees — wh
 - ✓ JIRA integration via API token to auto-fetch ticket titles from branch names (UMP-XXXX pattern) — v1.0
 - ✓ Git operations per worktree: reset --hard origin, pull, push, rebase, checkout, checkout -b — v1.0
 - ✓ RN commands: clean (android/cocoapods), rm node_modules, yarn install, yarn start --reset-cache, yarn pod-install — v1.0
-- ✓ RN run commands: run-android (with device list), run-ios (device/simulator selection) — v1.0
+- ✓ UMP run commands: Android/iOS package scripts with target and run-type pickers — v1.0
 - ✓ Metro interaction: open debugger (j), reload (r), kill and restart with --reset-cache — v1.0
 - ✓ Testing/quality commands: yarn unit-tests, yarn jest [filter], yarn lint --quiet --fix, yarn check-types — v1.0
 - ✓ Dependency staleness detection with hints, sync-before-run prompting — v1.0
@@ -61,7 +61,7 @@ _(See Current Milestone below — requirements defined in `.planning/REQUIREMENT
 - Refactor phases for each deviation surfaced by the audit
 - Per-worktree task ownership — commands bound to a worktree instead of a global queue
 - Parallel command execution across worktrees (metro stays single-instance globally)
-- Individual command cancellation for yarn/clean/install, run-android/run-ios, and tests (jest/lint/types). Git operations remain non-cancellable
+- Individual command cancellation for yarn/clean/install, UMP Android/iOS runs, and tests (jest/lint/types). Git operations remain non-cancellable
 - UI live indicators: worktree table row shows current task name + elapsed time; Y/P letters split (not merged) and replaced by a 6-frame rotating yellow spinner when the yarn-like or pod-like task is running. Run/test tasks get a similar animated indicator
 
 ### Out of Scope

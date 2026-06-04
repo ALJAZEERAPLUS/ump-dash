@@ -36,7 +36,6 @@ async fn main() -> color_eyre::Result<()> {
         }
     };
     let jira_title_cache = ump_dash::infra::jira_cache::load_jira_cache().unwrap_or_default();
-    let android_mode_persisted = ump_dash::infra::android_prefs::load_android_mode();
     let sim_history = ump_dash::infra::sim_history::load_sim_history();
 
     // Step 5: Construct the Adapters bundle. Concrete `crate::infra::*` types
@@ -71,7 +70,6 @@ async fn main() -> color_eyre::Result<()> {
     let state = build_state(
         config,
         jira_title_cache,
-        android_mode_persisted,
         sim_history,
         jira_port.is_some(),
         multiplexer_port.is_some(),
@@ -97,7 +95,6 @@ async fn main() -> color_eyre::Result<()> {
 fn build_state(
     config: Option<ump_dash::domain::dash_config::DashConfig>,
     jira_title_cache: std::collections::HashMap<String, String>,
-    android_mode_persisted: Option<String>,
     sim_history: Vec<String>,
     jira_available: bool,
     multiplexer_available: bool,
@@ -105,9 +102,6 @@ fn build_state(
     let mut state = AppState::default();
     state.jira.title_cache = jira_title_cache;
     state.app_config.sim_history = sim_history;
-    if let Some(persisted) = android_mode_persisted {
-        state.app_config.android_mode = Some(persisted);
-    }
     state.jira.available = jira_available;
     state.app_config.multiplexer_available = multiplexer_available;
     if let Some(cfg) = config {

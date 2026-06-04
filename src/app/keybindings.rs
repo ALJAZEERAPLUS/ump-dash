@@ -468,13 +468,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: has_last_android_run,
     },
     KeyBinding {
-        key: KeyCode::Char('m'),
-        label: "m", short_desc: "set mode", long_desc: "Set Android build mode",
-        context: BindingContext::Palette(PaletteMode::Android),
-        action: |_| Some(Action::StartSetAndroidMode),
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Esc,
         label: "Esc", short_desc: "cancel", long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Android),
@@ -777,21 +770,21 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         key: KeyCode::Char('R'),
         label: "R", short_desc: "reload", long_desc: "Reload metro (when running) / Refresh list",
         context: BindingContext::WorktreeTable,
-        action: |s| if s.metro.is_running() { Some(Action::MetroSendReload) } else { Some(Action::RefreshWorktrees) },
+        action: |s| if metro_running(s) { Some(Action::MetroSendReload) } else { Some(Action::RefreshWorktrees) },
         visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Char('J'),
         label: "J", short_desc: "debugger", long_desc: "Metro debugger (when running)",
         context: BindingContext::WorktreeTable,
-        action: |s| if s.metro.is_running() { Some(Action::MetroSendDebugger) } else { None },
+        action: |s| if metro_running(s) { Some(Action::MetroSendDebugger) } else { None },
         visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Esc,
         label: "Esc", short_desc: "stop metro", long_desc: "Stop metro (when running)",
         context: BindingContext::WorktreeTable,
-        action: |s| if s.metro.is_running() { Some(Action::MetroStop) } else { None },
+        action: |s| if metro_running(s) { Some(Action::MetroStop) } else { None },
         visible: metro_running,
     },
     KeyBinding {
@@ -1012,7 +1005,14 @@ fn external_metro_kill_action(state: &AppState) -> Option<Action> {
 // ---------------------------------------------------------------------------
 
 fn metro_running(state: &AppState) -> bool {
-    state.metro.is_running()
+    let idx = state.worktree_browser.worktree_table_state.selected().unwrap_or(0);
+    state
+        .worktree_browser
+        .worktrees
+        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
+        .and_then(|wt| state.worktrees.get(&wt.id))
+        .map(|slice| slice.metro.is_running())
+        .unwrap_or(false)
 }
 
 fn command_running(state: &AppState) -> bool {

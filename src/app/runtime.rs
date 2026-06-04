@@ -13,8 +13,45 @@ use super::state::AppState;
 use super::update::update;
 use crate::domain::action::Action;
 use crate::domain::metro::MetroHandle;
+use crate::domain::worktree::WorktreeId;
 use futures::StreamExt;
 use ratatui::crossterm::event::EventStream;
+
+fn metro_worktree_id_from_path(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+fn slice_id_for_metro_worktree_id(state: &AppState, worktree_id: &str) -> WorktreeId {
+    state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+        .map(|wt| wt.id.clone())
+        .or_else(|| {
+            state
+                .worktrees
+                .keys()
+                .find(|id| id.0 == worktree_id)
+                .cloned()
+        })
+        .unwrap_or_else(|| WorktreeId(worktree_id.to_string()))
+}
+
+fn register_metro_handle(state: &mut AppState, handle: Box<dyn MetroHandle>) {
+    let worktree_id = handle.worktree_id().to_string();
+    let slice_id = slice_id_for_metro_worktree_id(state, &worktree_id);
+    let slice = state.worktrees.entry(slice_id.clone()).or_insert_with(|| {
+        crate::domain::worktree_slice::WorktreeSlice {
+            id: slice_id,
+            ..Default::default()
+        }
+    });
+    slice.metro.register(handle);
+}
 
 /// Main application loop. Runs on the tokio runtime.
 /// Renders on every event and on a 250ms tick. Exits when state.should_quit is true.
@@ -36,26 +73,27 @@ pub async fn run(
     // for `Box<dyn MetroHandle>` because Action derives Clone+PartialEq and
     // the trait object does not.
     let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel::<Action>();
-    let (handle_tx, mut handle_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Box<dyn MetroHandle>>();
+    let (handle_tx, mut handle_rx) = tokio::sync::mpsc::unbounded_channel::<Box<dyn MetroHandle>>();
     // Phase 14 / Q2: dedicated channel for delivering freshly-spawned TaskRecord
     // to the main thread. Mirrors handle_tx for Box<dyn MetroHandle>.
-    let (task_handle_tx, mut task_handle_rx) =
-        tokio::sync::mpsc::unbounded_channel::<(
-            crate::domain::worktree::WorktreeId,
-            crate::domain::task::TaskRecord,
-        )>();
+    let (task_handle_tx, mut task_handle_rx) = tokio::sync::mpsc::unbounded_channel::<(
+        crate::domain::worktree::WorktreeId,
+        crate::domain::task::TaskRecord,
+    )>();
 
-    let runner = EffectRunner::new(adapters, action_tx.clone(), handle_tx.clone(), task_handle_tx.clone());
+    let runner = EffectRunner::new(
+        adapters,
+        action_tx.clone(),
+        handle_tx.clone(),
+        task_handle_tx.clone(),
+    );
 
-    // Startup effects: load worktrees + check for external metro.
+    // Startup effects: load worktrees. Metro launches choose an available port
+    // at spawn time, so startup no longer locks on external 8081 ownership.
     runner
-        .run_effects(vec![
-            super::effect::Effect::ListWorktrees {
-                repo_root: state.app_config.repo_root.clone(),
-            },
-            super::effect::Effect::DetectExternalMetro { port: 8081 },
-        ])
+        .run_effects(vec![super::effect::Effect::ListWorktrees {
+            repo_root: state.app_config.repo_root.clone(),
+        }])
         .await;
 
     loop {
@@ -95,7 +133,7 @@ pub async fn run(
                 runner.run_effects(effects).await;
             }
             Some(handle) = handle_rx.recv() => {
-                state.metro.register(handle);
+                register_metro_handle(&mut state, handle);
                 let effects = update(&mut state, Action::RefreshWorktrees);
                 runner.run_effects(effects).await;
             }
@@ -123,7 +161,9 @@ pub async fn run(
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => break,
             }
-            if let Ok(handle) = handle_rx.try_recv() { state.metro.register(handle) }
+            if let Ok(handle) = handle_rx.try_recv() {
+                register_metro_handle(&mut state, handle)
+            }
             if let Ok((wt_id, record)) = task_handle_rx.try_recv() {
                 if let Some(slice) = state.worktrees.get_mut(&wt_id) {
                     slice.task = Some(record);
@@ -138,12 +178,16 @@ pub async fn run(
         }
     }
 
-    // Cleanup: kill metro process group before exiting.
+    // Cleanup: kill metro process groups before exiting.
     // We kill by PGID directly instead of going through the async metro_process_task,
     // because aborting stream_task would race with the kill.
-    if let Some(handle) = state.metro.take_handle() {
+    for handle in state
+        .worktrees
+        .values_mut()
+        .filter_map(|slice| slice.metro.take_handle())
+    {
         let pid = handle.pid();
-        // Kill the entire process group (yarn + node) so port 8081 is freed.
+        // Kill the entire process group (yarn + node) so its port is freed.
         // process_group(0) in spawn sets PGID = child PID, so -PID targets the group.
         let _ = std::process::Command::new("kill")
             .args(["-9", &format!("-{pid}")])
@@ -160,4 +204,72 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::worktree::{Worktree, WorktreeMetroStatus};
+
+    #[derive(Debug)]
+    struct FakeMetroHandle {
+        pid: u32,
+        worktree_id: String,
+        port: u16,
+    }
+
+    impl MetroHandle for FakeMetroHandle {
+        fn pid(&self) -> u32 {
+            self.pid
+        }
+        fn worktree_id(&self) -> &str {
+            &self.worktree_id
+        }
+        fn port(&self) -> u16 {
+            self.port
+        }
+        fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn kill(self: Box<Self>) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn register_metro_handle_resolves_directory_name_to_full_path_slice_id() {
+        let mut state = AppState::default();
+        let wt_id = WorktreeId("/tmp/wt-a".into());
+        state.worktree_browser.worktrees.push(Worktree {
+            id: wt_id.clone(),
+            path: std::path::PathBuf::from("/tmp/wt-a"),
+            branch: "main".into(),
+            head_sha: "0000000".into(),
+            metro_status: WorktreeMetroStatus::Stopped,
+            jira_title: None,
+            stale: false,
+            stale_pods: false,
+            jira_key: None,
+        });
+        state.worktrees.insert(
+            wt_id.clone(),
+            crate::domain::worktree_slice::WorktreeSlice {
+                id: wt_id.clone(),
+                ..Default::default()
+            },
+        );
+
+        register_metro_handle(
+            &mut state,
+            Box::new(FakeMetroHandle {
+                pid: 9001,
+                worktree_id: "wt-a".into(),
+                port: 8081,
+            }),
+        );
+
+        let slice = state.worktrees.get(&wt_id).unwrap();
+        assert!(slice.metro.is_running());
+        assert_eq!(slice.metro.running_port(), Some(8081));
+    }
 }

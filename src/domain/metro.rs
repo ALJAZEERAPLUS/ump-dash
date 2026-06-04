@@ -1,6 +1,6 @@
 // src/domain/metro.rs
 //
-// Metro domain types — single-instance invariant and status tracking.
+// Metro domain types — one worktree's Metro process handle and status.
 //
 // Plan 13-03: `MetroHandle` is now a TRAIT defined in
 // `src/domain/ports/metro_port.rs`. This module re-exports it for callers
@@ -10,9 +10,9 @@
 // `TokioMetroAdapter`) and temporarily inside `src/app.rs` (`InAppMetroHandle`
 // bridge, removed by Plan 13-07).
 //
-// Architectural note: `MetroManager.handle` is `Option<Box<dyn MetroHandle>>`.
-// The single-instance invariant still holds at the type level — you cannot
-// register a second handle without first taking the existing one.
+// Architectural note: `WorktreeMetro` is scoped to one WorktreeSlice. Multiple
+// worktrees can run Metro concurrently because each slice owns its own
+// WorktreeMetro value.
 
 /// Re-export the `MetroHandle` trait from the ports module for convenience.
 /// Callers using `crate::domain::metro::MetroHandle` continue to resolve.
@@ -44,54 +44,61 @@ impl std::fmt::Display for MetroActivity {
 }
 
 /// Current observable state of the metro process as seen by the domain layer.
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum MetroStatus {
     /// No metro instance is running.
     #[default]
     Stopped,
-    /// Metro is running with the given OS pid and the worktree it was started from.
-    Running { pid: u32, worktree_id: String },
+    /// Metro is running with the given OS pid, selected port, and source worktree.
+    Running {
+        pid: u32,
+        worktree_id: String,
+        port: u16,
+    },
     /// Spawn is in flight — transient state between MetroStart and first log line.
     Starting,
     /// Kill + port-free wait is in flight — transient state between MetroStop and port free.
     Stopping,
 }
 
-/// Enforces the single-instance invariant: at most one metro process may run at a time.
+/// Tracks one worktree's Metro process.
 ///
-/// All metro state transitions go through MetroManager methods. The update() function
+/// All metro state transitions go through WorktreeMetro methods. The update() function
 /// in app.rs calls these methods — it never manipulates handles directly.
 #[derive(Debug)]
-pub struct MetroManager {
-    /// Private — callers cannot bypass the single-instance check.
+pub struct WorktreeMetro {
+    /// Private — callers cannot bypass the one-Metro-per-worktree ownership check.
     ///
     /// Owns a `Box<dyn MetroHandle>` trait object so the concrete type
     /// (infra adapter or app-side bridge) stays invisible to the domain.
     handle: Option<Box<dyn MetroHandle>>,
     /// Public read-only status for UI rendering.
     pub status: MetroStatus,
-    /// Most recent activity parsed from metro stdout. None when metro is not running.
+    /// Most recent activity parsed from this worktree's metro stdout.
     pub activity: Option<MetroActivity>,
+    /// Port selected before the process handle arrives. Once running, the
+    /// handle's port is authoritative.
+    reserved_port: Option<u16>,
 }
 
-impl Default for MetroManager {
+impl Default for WorktreeMetro {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MetroManager {
-    /// Create a new manager in the Stopped state.
+impl WorktreeMetro {
+    /// Create a new per-worktree Metro runtime in the Stopped state.
     pub fn new() -> Self {
         Self {
             handle: None,
             status: MetroStatus::Stopped,
             activity: None,
+            reserved_port: None,
         }
     }
 
-    /// True if a metro handle is currently registered (process is running or finishing).
+    /// True if this worktree currently owns a Metro handle.
     pub fn is_running(&self) -> bool {
         self.handle.is_some()
     }
@@ -99,17 +106,31 @@ impl MetroManager {
     /// Register a freshly spawned process handle.
     ///
     /// # Panics
-    /// Panics if called while a handle already exists. Callers MUST call `take_handle()`
-    /// and kill the process before registering a new one.
+    /// Panics if called while this worktree already owns a handle. Callers
+    /// must take and kill the handle before registering a replacement.
     pub fn register(&mut self, handle: Box<dyn MetroHandle>) {
         assert!(
             self.handle.is_none(),
-            "BUG: MetroManager::register() called with an existing handle — kill first"
+            "BUG: WorktreeMetro::register() called with an existing handle — kill first"
         );
         let pid = handle.pid();
         let worktree_id = handle.worktree_id().to_string();
+        let port = handle.port();
         self.handle = Some(handle);
-        self.status = MetroStatus::Running { pid, worktree_id };
+        self.reserved_port = Some(port);
+        self.status = MetroStatus::Running {
+            pid,
+            worktree_id,
+            port,
+        };
+    }
+
+    /// TCP port selected for this worktree's Metro instance.
+    pub fn running_port(&self) -> Option<u16> {
+        self.handle
+            .as_ref()
+            .map(|handle| handle.port())
+            .or(self.reserved_port)
     }
 
     /// Clear the handle after the process has been killed and reaped.
@@ -118,6 +139,7 @@ impl MetroManager {
         self.handle = None;
         self.status = MetroStatus::Stopped;
         self.activity = None;
+        self.reserved_port = None;
     }
 
     /// Send a raw byte sequence to metro's stdin via the background stdin-writer task.
@@ -126,10 +148,17 @@ impl MetroManager {
     /// concrete impl owns the tokio channel.
     #[allow(dead_code)]
     pub fn send_stdin(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
-        if let Some(ref h) = self.handle {
-            h.send_stdin(bytes)?;
+        if let Some(handle) = self.handle.as_ref() {
+            handle.send_stdin(bytes)?;
         }
         Ok(())
+    }
+
+    /// Reserve the selected port and transition to Starting.
+    pub fn reserve_start(&mut self, port: u16) {
+        self.status = MetroStatus::Starting;
+        self.activity = Some(MetroActivity::Starting);
+        self.reserved_port = Some(port);
     }
 
     /// Transition to Starting state (spawn is in flight).
@@ -140,35 +169,50 @@ impl MetroManager {
 
     /// Transition to Stopping state (kill + port-free wait is in flight).
     pub fn set_stopping(&mut self) {
-        self.status = MetroStatus::Stopping;
+        if self.handle.is_none() {
+            self.status = MetroStatus::Stopping;
+        }
+    }
+
+    pub fn record_activity(&mut self, activity: MetroActivity) {
+        self.activity = Some(activity);
+    }
+
+    pub fn activity(&self) -> Option<&MetroActivity> {
+        self.activity.as_ref()
     }
 
     /// Take ownership of the handle for kill operations.
     ///
-    /// Returns None if metro is not running. After this call is_running() returns false,
-    /// so register() can be called again once the kill completes. Callers typically
-    /// follow up with `handle.kill()` on the returned `Box<dyn MetroHandle>`.
+    /// Returns None if no metro is running.
     pub fn take_handle(&mut self) -> Option<Box<dyn MetroHandle>> {
-        self.handle.take()
+        let handle = self.handle.take();
+        if handle.is_some() {
+            self.status = MetroStatus::Stopped;
+            self.activity = None;
+            self.reserved_port = None;
+        }
+        handle
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests — COVER-01 characterization of the single-instance invariant at the
-// MetroManager::register() type boundary (D-09 first layer).
+// Tests — COVER-01 characterization of the one-Metro-per-worktree invariant
+// at the WorktreeMetro::register() type boundary (D-09 first layer).
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Minimal trait-object impl used only to exercise `MetroManager::register /
+    /// Minimal trait-object impl used only to exercise `WorktreeMetro::register /
     /// is_running / take_handle / clear`. The tokio channels that the production
     /// adapter owns are deliberately absent — `send_stdin` / `kill` are no-ops.
     #[derive(Debug)]
     struct DummyHandle {
         pid: u32,
         worktree_id: String,
+        port: u16,
     }
 
     impl MetroHandle for DummyHandle {
@@ -177,6 +221,9 @@ mod tests {
         }
         fn worktree_id(&self) -> &str {
             &self.worktree_id
+        }
+        fn port(&self) -> u16 {
+            self.port
         }
         fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
             Ok(())
@@ -190,40 +237,37 @@ mod tests {
         Box::new(DummyHandle {
             pid,
             worktree_id: format!("wt-{pid}"),
+            port: 8081,
         })
     }
 
     #[test]
-    #[should_panic(expected = "BUG: MetroManager::register() called with an existing handle")]
-    fn register_twice_panics() {
-        // COVER-01 — D-09 (a): the debug-assert on double-register is load-bearing.
-        // Phase 13+ refactors that introduce a second MetroHandle construction path
-        // MUST fail here. (No tokio runtime required post-13-03 — DummyHandle is
-        // synchronous, so the test is now a plain `#[test]`.)
-        let mut mgr = MetroManager::new();
-        mgr.register(dummy_handle(1));
-        mgr.register(dummy_handle(2)); // must panic
+    #[should_panic(expected = "BUG: WorktreeMetro::register() called with an existing handle")]
+    fn register_twice_in_same_worktree_panics() {
+        let mut metro = WorktreeMetro::new();
+        metro.register(dummy_handle(1));
+        metro.register(dummy_handle(2));
     }
 
     #[test]
     fn register_once_then_clear_allows_second_register() {
         // Positive-case safety net — the test above only asserts panic on
         // double-register; this one asserts the legitimate sequence works.
-        let mut mgr = MetroManager::new();
-        mgr.register(dummy_handle(10));
-        assert!(mgr.is_running());
-        mgr.clear();
-        assert!(!mgr.is_running());
-        mgr.register(dummy_handle(11)); // must not panic
-        assert!(mgr.is_running());
+        let mut metro = WorktreeMetro::new();
+        metro.register(dummy_handle(10));
+        assert!(metro.is_running());
+        metro.clear();
+        assert!(!metro.is_running());
+        metro.register(dummy_handle(11)); // must not panic
+        assert!(metro.is_running());
     }
 
     #[test]
     fn new_manager_is_stopped_not_running() {
         // Smallest possible smoke test — no runtime, no handle construction.
-        let mgr = MetroManager::new();
-        assert!(!mgr.is_running());
-        assert!(matches!(mgr.status, MetroStatus::Stopped));
-        assert!(mgr.activity.is_none());
+        let metro = WorktreeMetro::new();
+        assert!(!metro.is_running());
+        assert!(matches!(metro.status, MetroStatus::Stopped));
+        assert!(metro.activity.is_none());
     }
 }

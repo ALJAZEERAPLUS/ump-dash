@@ -14,12 +14,13 @@
 use ump_dash::domain::ports::metro_port::MetroHandle;
 
 /// Minimal `MetroHandle` impl used by integration tests that only need
-/// `MetroManager::register / is_running / take_handle` semantics — NOT for
+/// `WorktreeMetro::register / is_running / take_handle` semantics — NOT for
 /// tests that exercise stdin delivery or kill-path behavior.
 #[derive(Debug)]
 struct FakeMetroHandle {
     pid: u32,
     worktree_id: String,
+    port: u16,
 }
 
 impl MetroHandle for FakeMetroHandle {
@@ -28,6 +29,9 @@ impl MetroHandle for FakeMetroHandle {
     }
     fn worktree_id(&self) -> &str {
         &self.worktree_id
+    }
+    fn port(&self) -> u16 {
+        self.port
     }
     fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
         Ok(())
@@ -38,12 +42,13 @@ impl MetroHandle for FakeMetroHandle {
 }
 
 /// Build a dummy `Box<dyn MetroHandle>` for tests that exercise the
-/// `MetroManager::register` / `is_running` / `take_handle` invariant.
+/// `WorktreeMetro::register` / `is_running` / `take_handle` invariant.
 ///
 /// Synchronous — no tokio runtime required post-13-03.
 pub fn fake_metro_handle(pid: u32, worktree: &str) -> Box<dyn MetroHandle> {
     Box::new(FakeMetroHandle {
         pid,
         worktree_id: worktree.to_string(),
+        port: 8081,
     })
 }
