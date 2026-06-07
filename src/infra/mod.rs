@@ -20,6 +20,7 @@ pub mod config;
 pub mod jira;
 pub mod jira_cache;
 pub mod multiplexer;
+pub mod self_update;
 pub mod sim_history;
 pub mod task_handle;
 pub mod metro;

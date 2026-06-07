@@ -3,7 +3,9 @@
 The release pipeline is driven by `scripts/release.sh` and a changelog entry
 written by the agent. GitHub Actions handles the build + publish once a tag is
 pushed, and uses that version's `CHANGELOG.md` section as the GitHub Release
-description.
+description. The release job also uploads `SHA256SUMS` beside the platform
+tarballs; `ump-dash update` uses that checksum file to verify downloads before
+replacing a local binary.
 
 ## Agent-facing quick reference
 
@@ -36,7 +38,8 @@ When the user says **"release 1.2"** or **"release the next version"**:
    `## [X.Y.Z]` section from `CHANGELOG.md` and passes it to
    `softprops/action-gh-release` as the release description. If the section is
    missing or empty, the release job fails instead of publishing generated
-   notes.
+   notes. The same workflow generates `SHA256SUMS` for every `ump-dash-*.tar.gz`
+   asset and uploads it to the release for the self-updater.
 
 ## Changelog prompt (style guide)
 

@@ -10,6 +10,25 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
+    match parse_cli_args(std::env::args_os().skip(1)) {
+        CliCommand::Tui => {}
+        CliCommand::Update => {
+            if let Err(error) = ump_dash::infra::self_update::run() {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        CliCommand::Version => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        CliCommand::Usage { exit_code } => {
+            eprintln!("{}", usage());
+            std::process::exit(exit_code);
+        }
+    }
+
     // Step 1: Install color-eyre hooks FIRST so ratatui's hook chains after it.
     color_eyre::install()?;
 
@@ -98,6 +117,33 @@ async fn main() -> color_eyre::Result<()> {
     result
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CliCommand {
+    Tui,
+    Update,
+    Version,
+    Usage { exit_code: i32 },
+}
+
+fn parse_cli_args(mut args: impl Iterator<Item = std::ffi::OsString>) -> CliCommand {
+    let Some(first) = args.next() else {
+        return CliCommand::Tui;
+    };
+    if args.next().is_some() {
+        return CliCommand::Usage { exit_code: 2 };
+    }
+
+    match first.to_str() {
+        Some("update") => CliCommand::Update,
+        Some("--version" | "-V") => CliCommand::Version,
+        _ => CliCommand::Usage { exit_code: 2 },
+    }
+}
+
+fn usage() -> &'static str {
+    "Usage: ump-dash [update|--version|-V]\n\nCommands:\n  update      Download and install the latest GitHub Release\n  --version   Print the compiled version"
+}
+
 #[allow(clippy::field_reassign_with_default)]
 fn build_state(
     config: Option<ump_dash::domain::dash_config::DashConfig>,
@@ -120,4 +166,46 @@ fn build_state(
         state.app_config.config = Some(cfg);
     }
     state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn cli_dispatches_no_args_to_tui() {
+        assert_eq!(
+            parse_cli_args(Vec::<OsString>::new().into_iter()),
+            CliCommand::Tui
+        );
+    }
+
+    #[test]
+    fn cli_dispatches_update_and_version_flags() {
+        assert_eq!(
+            parse_cli_args(vec![OsString::from("update")].into_iter()),
+            CliCommand::Update
+        );
+        assert_eq!(
+            parse_cli_args(vec![OsString::from("--version")].into_iter()),
+            CliCommand::Version
+        );
+        assert_eq!(
+            parse_cli_args(vec![OsString::from("-V")].into_iter()),
+            CliCommand::Version
+        );
+    }
+
+    #[test]
+    fn cli_dispatches_unknown_or_extra_args_to_usage() {
+        assert_eq!(
+            parse_cli_args(vec![OsString::from("bogus")].into_iter()),
+            CliCommand::Usage { exit_code: 2 }
+        );
+        assert_eq!(
+            parse_cli_args(vec![OsString::from("update"), OsString::from("--dry-run")].into_iter()),
+            CliCommand::Usage { exit_code: 2 }
+        );
+    }
 }

@@ -49,6 +49,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 
+# Self-update verification and release archive inspection
+sha2 = "0.10"
+semver = "1"
+flate2 = "1"
+tar = "0.4"
+
 # HTTP client for JIRA REST API (Phase 4)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 

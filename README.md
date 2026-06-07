@@ -31,6 +31,26 @@ Optionally copy the binary to a directory on your PATH:
 cp target/release/ump-dash ~/.local/bin/
 ```
 
+Prebuilt GitHub Release binaries can update themselves when the GitHub CLI is
+installed and authenticated:
+
+```bash
+gh auth login
+ump-dash update
+```
+
+`ump-dash update` reads release notes from GitHub Releases, verifies the
+downloaded tarball with the release `SHA256SUMS` asset, and replaces the
+currently running executable path. The replacement keeps the local filename, so
+the command still works if you renamed the binary after installation.
+
+Source checkout builds such as `target/debug/ump-dash` or
+`target/release/ump-dash` are not self-updated. Update those with:
+
+```bash
+git pull && cargo build --release
+```
+
 **macOS Gatekeeper:** If downloading a prebuilt binary from GitHub Releases, macOS may block it. Clear the quarantine flag:
 
 ```bash
@@ -88,6 +108,8 @@ Launch from a directory inside your monorepo, or anywhere if `repo_root` is set 
 
 ```bash
 ump-dash
+ump-dash update
+ump-dash --version
 # or from source:
 cargo run
 ```
