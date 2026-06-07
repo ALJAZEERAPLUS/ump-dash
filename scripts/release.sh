@@ -46,9 +46,8 @@ NEW_TAG="v$NEW_VER"
 git rev-parse "$NEW_TAG" >/dev/null 2>&1 && die "tag $NEW_TAG already exists"
 
 if [[ "$FINALIZE" == "--finalize" ]]; then
-  # Changelog must have the new section.
-  grep -q "^## \[$NEW_VER\]" CHANGELOG.md \
-    || die "CHANGELOG.md is missing '## [$NEW_VER]' section — write release notes first"
+  # Changelog must have the release body that GitHub Actions will publish.
+  scripts/extract-release-notes.sh "$NEW_VER" CHANGELOG.md >/dev/null
 
   # Bump Cargo.toml (only the [package] version line — first 'version =' occurrence).
   awk -v v="$NEW_VER" '

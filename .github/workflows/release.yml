@@ -105,6 +105,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Extract changelog release notes
+        id: release_notes
+        shell: bash
+        run: |
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          scripts/extract-release-notes.sh "${GITHUB_REF_NAME#v}" CHANGELOG.md > "$notes_file"
+          echo "body_path=$notes_file" >> "$GITHUB_OUTPUT"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -114,5 +127,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: ump-dash-*.tar.gz
-          generate_release_notes: true
+          body_path: ${{ steps.release_notes.outputs.body_path }}
           tag_name: ${{ github.ref_name }}

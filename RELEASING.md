@@ -2,7 +2,8 @@
 
 The release pipeline is driven by `scripts/release.sh` and a changelog entry
 written by the agent. GitHub Actions handles the build + publish once a tag is
-pushed.
+pushed, and uses that version's `CHANGELOG.md` section as the GitHub Release
+description.
 
 ## Agent-facing quick reference
 
@@ -27,9 +28,15 @@ When the user says **"release 1.2"** or **"release the next version"**:
    ```
    scripts/release.sh 1.2.0 --finalize
    ```
-   This bumps `Cargo.toml`, updates `Cargo.lock`, commits as
-   `chore(release): v1.2.0`, tags `v1.2.0`, and pushes both. GitHub Actions
-   takes it from there.
+   This verifies the changelog section can be extracted, bumps `Cargo.toml`,
+   updates `Cargo.lock`, commits as `chore(release): v1.2.0`, tags `v1.2.0`,
+   and pushes both. GitHub Actions takes it from there.
+
+5. **GitHub Release body.** The release workflow extracts the matching
+   `## [X.Y.Z]` section from `CHANGELOG.md` and passes it to
+   `softprops/action-gh-release` as the release description. If the section is
+   missing or empty, the release job fails instead of publishing generated
+   notes.
 
 ## Changelog prompt (style guide)
 
