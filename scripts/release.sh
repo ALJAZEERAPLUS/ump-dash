@@ -16,10 +16,17 @@ die() { echo "error: $*" >&2; exit 1; }
 SPEC="$1"
 FINALIZE="${2:-}"
 
-# Must be on main with a clean tree.
+# Must be on main. Prepare requires a clean tree; finalize is intentionally
+# run after editing CHANGELOG.md, so allow only that pending change.
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 [[ "$BRANCH" == "main" ]] || die "must be on main (currently on $BRANCH)"
-[[ -z "$(git status --porcelain)" ]] || die "working tree is dirty — commit or stash first"
+STATUS=$(git status --porcelain)
+if [[ "$FINALIZE" == "--finalize" ]]; then
+  ALLOWED_STATUS=$(git status --porcelain -- CHANGELOG.md)
+  [[ "$STATUS" == "$ALLOWED_STATUS" ]] || die "working tree has non-changelog changes — commit or stash first"
+else
+  [[ -z "$STATUS" ]] || die "working tree is dirty — commit or stash first"
+fi
 
 # Ensure local main is up to date with origin.
 git fetch --tags origin main --quiet
