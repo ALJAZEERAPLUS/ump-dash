@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-06-07
+
+### New
+- **Self-update command** - `ump-dash update` now checks GitHub Releases, prints the changelog notes for newer versions, verifies the downloaded tarball against `SHA256SUMS`, and replaces installed release binaries in place.
+- **Per-worktree Metro** - starting Metro in one worktree no longer blocks or stops Metro in another; each worktree gets its own available port and status display.
+- **Worktree file seeding** - newly-created worktrees can copy gitignored local build inputs such as `.env` and Android keystores, with the seeded paths configurable via `seed_files`.
+
+### Fixed
+- Android AVD runs now resolve stopped AVD names to live emulator serials before invoking run scripts, so targets like `Pixel_9a` launch correctly.
+- Metro launch now reserves the selected port during spawn, avoiding racey port reuse between worktrees.
+
+### Improved
+- GitHub Releases now use the curated `CHANGELOG.md` section as the release body and publish `SHA256SUMS` beside platform tarballs for updater verification.
+- The release finalization script now accepts the documented changelog-draft workflow while still rejecting unrelated dirty files.
+
 ## [1.3.0] - 2026-05-29
 
 ### New
