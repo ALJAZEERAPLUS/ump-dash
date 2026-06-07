@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260607-hza | Use changelog section for the GitHub release description | 2026-06-07 | c6ca701 | [260607-hza-in-the-current-release-process-we-re-gen](./quick/260607-hza-in-the-current-release-process-we-re-gen/) |
 | 260603-pif | Fix Android AVD run targets by resolving Pixel_9a to the adb emulator serial | 2026-06-03 | 37f8746 | [260603-pif-fix-android-run-target-pixel-9a-device-m](./quick/260603-pif-fix-android-run-target-pixel-9a-device-m/) |
 | 260531-awm | Remove Metro port lock, use next available port, and keep Metro scoped per worktree | 2026-05-31 | c7caf62 | [260531-awm-let-s-remove-the-lock-from-metro-now-whe](./quick/260531-awm-let-s-remove-the-lock-from-metro-now-whe/) |
 | 260529-hhm | Move project identity and release flow to ALJAZEERAPLUS/ump-dash, then publish v1.3.0 | 2026-05-29 | dd47972 | [260529-hhm-the-origin-has-changed-now-it-is-github-](./quick/260529-hhm-the-origin-has-changed-now-it-is-github-/) |
@@ -138,7 +139,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-06-03 - Completed quick task 260603-pif: fix Android AVD run target resolution
+Last activity: 2026-06-07 - Completed quick task 260607-hza: use changelog section for GitHub release description
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
