@@ -7,7 +7,7 @@
 # CLAUDE.md: check-types always uses --incremental. This file does NOT invoke
 # check-types; if a future target adds it, use `cargo check --incremental`.
 
-.PHONY: cov cov-html cov-baseline cov-check arch-lint
+.PHONY: cov cov-html cov-baseline cov-check arch-lint arch-report
 
 # Quick HTML report for local dev (output at target/llvm-cov/html/index.html).
 # D-03: HTML is gitignored (not committed).
@@ -37,6 +37,9 @@ cov: cov-baseline cov-html
 # the plan that introduces them. Fail-fast: any grep hit OR missing expected file
 # aborts the target with a nonzero exit code. Guards guarded by `[ ! -f <file> ] ||`
 # are vacuously satisfied until the target file is created by its landing plan.
+arch-report:
+	@./scripts/arch-report.sh
+
 arch-lint:
 	@echo "=== G-01/G-02/G-03: hexagonal import boundaries ==="
 	@# G-01 ACTIVE as of Plan 13-08. The whitelist allows the two F-111
