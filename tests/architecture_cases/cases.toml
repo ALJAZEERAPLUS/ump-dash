@@ -1,0 +1,79 @@
+[[case]]
+id = "positive-ui-imports-infra"
+kind = "positive"
+category = "dependency-boundary"
+severity = "high"
+fixture = "Inject `use crate::infra::config;` into `src/ui/panels.rs`."
+expected_file = "src/ui/panels.rs"
+expected_invariant = "ui must not import infra"
+accepted_aliases = ["ui depends on concrete infra", "rendering imports infrastructure"]
+
+[[case]]
+id = "positive-domain-imports-ratatui"
+kind = "positive"
+category = "dependency-boundary"
+severity = "high"
+fixture = "Inject `use ratatui::style::Color;` into `src/domain/worktree.rs`."
+expected_file = "src/domain/worktree.rs"
+expected_invariant = "domain must not depend on UI libraries"
+accepted_aliases = ["domain imports Ratatui", "domain depends on rendering type"]
+
+[[case]]
+id = "positive-update-spawns-task"
+kind = "positive"
+category = "purity"
+severity = "high"
+fixture = "Inject `tokio::spawn(async {});` into an `Action` arm in `src/app/update.rs`."
+expected_file = "src/app/update.rs"
+expected_invariant = "update() returns effects and does not spawn tasks"
+accepted_aliases = ["reducer performs side effect", "update.rs contains spawn primitive"]
+
+[[case]]
+id = "positive-infra-emits-action"
+kind = "positive"
+category = "dependency-boundary"
+severity = "high"
+fixture = "Inject `use crate::domain::action::Action;` into `src/infra/command_runner.rs`."
+expected_file = "src/infra/command_runner.rs"
+expected_invariant = "infra must not emit app/domain Action directly"
+accepted_aliases = ["infra imports Action", "adapter leaks app event grammar"]
+
+[[case]]
+id = "positive-global-task-field-reintroduced"
+kind = "positive"
+category = "state-locality"
+severity = "high"
+fixture = "Add `pub running_command: Option<crate::domain::command::CommandSpec>,` to `src/app/state.rs`."
+expected_file = "src/app/state.rs"
+expected_invariant = "per-worktree task state must remain in WorktreeSlice"
+accepted_aliases = ["global running command field", "task ownership moved out of worktree slice"]
+
+[[case]]
+id = "negative-main-composes-infra"
+kind = "negative"
+category = "accepted-exception"
+severity = "none"
+fixture = "`src/main.rs` constructs concrete infra adapters and stores them in `Adapters`."
+expected_file = "src/main.rs"
+expected_invariant = "main.rs is the composition root"
+accepted_aliases = ["composition root exception"]
+
+[[case]]
+id = "negative-integration-test-imports-infra"
+kind = "negative"
+category = "accepted-exception"
+severity = "none"
+fixture = "`tests/process_group_cancel.rs` imports `ump_dash::infra::command_runner::TokioCommandRunner`."
+expected_file = "tests/process_group_cancel.rs"
+expected_invariant = "integration tests may import infra for real adapter coverage"
+accepted_aliases = ["test imports infra intentionally"]
+
+[[case]]
+id = "negative-effect-runner-documented-exception"
+kind = "negative"
+category = "accepted-exception"
+severity = "none"
+fixture = "`src/app/effect_runner.rs` uses the documented `jira_cache`, `sim_history`, or `task_handle` whitelist while `make arch-lint` names the exception."
+expected_file = "src/app/effect_runner.rs"
+expected_invariant = "documented temporary exceptions are accepted only while the guard names them"
+accepted_aliases = ["documented whitelist exception"]
