@@ -14,9 +14,9 @@ Use when a module crosses a forbidden layer boundary.
 
 Examples:
 
-- `src/domain/**` imports `crate::infra`, `crate::ui`, Ratatui, `reqwest`, `tokio::process`, or process spawning APIs.
+- `src/domain/**` imports `crate::infra`, `crate::ui`, Ratatui, `reqwest`, concrete process spawning APIs, or concrete adapters.
 - `src/ui/**` imports `crate::infra`.
-- `src/infra/**` imports app-owned `Action` instead of returning domain events or adapter results.
+- `src/infra/**` imports or emits `crate::domain::action::Action` as app event grammar instead of returning domain events or adapter results.
 - `src/app/**` imports concrete infra adapters outside documented exceptions.
 
 ### purity
@@ -98,6 +98,7 @@ Use for advisory deepening opportunities or missing minor coverage. Low findings
 - integration tests under `tests/**` may import infra to verify real adapter behavior.
 - documented temporary exceptions in `src/app/effect_runner.rs` are accepted only when the relevant `make arch-lint` whitelist still names them.
 - infra modules may depend on `crate::domain::ports::*` to implement domain-owned ports.
+- `src/domain/ports/process_port.rs` may name opaque `tokio::process::Child` in a port-owned process handle type, but process spawning remains infra-owned.
 
 ## Required Finding Shape
 
