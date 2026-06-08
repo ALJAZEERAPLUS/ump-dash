@@ -589,8 +589,7 @@ pub fn parse_android_launch_activity(output: &str) -> Option<String> {
         .lines()
         .map(str::trim)
         .filter(|line| line.contains('/'))
-        .filter(|line| !line.is_empty())
-        .next_back()
+        .rfind(|line| !line.is_empty())
         .map(str::to_string)
 }
 
