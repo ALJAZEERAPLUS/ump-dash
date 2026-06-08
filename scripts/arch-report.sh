@@ -68,10 +68,12 @@ rg -n 'crate::infra::' src/app src/ui src/domain 2>/dev/null \
   || true
 
 section "boundary scan: infra importing app Action"
-rg -n 'use crate::(domain::)?action|crate::domain::action::Action' src/infra 2>/dev/null || true
+rg -n 'use crate::(domain::)?action|crate::domain::action::Action' src/infra 2>/dev/null \
+  | rg -v '^[^:]+:[0-9]+:\s*//' \
+  || true
 
-section "purity scan: app side-effect APIs"
-rg -n 'tokio::spawn|spawn_blocking|tokio::process|reqwest|std::process::Command|Command::new' src/app 2>/dev/null || true
+section "purity scan: update reducer side-effect APIs"
+rg -n 'tokio::spawn|spawn_blocking|tokio::process|reqwest|std::process::Command|Command::new' src/app/update.rs 2>/dev/null || true
 
 section "architecture hotspots"
 for file in src/app/update.rs src/app/effect_runner.rs src/app/state.rs src/app/keybindings.rs src/domain/command.rs src/infra/native_cache.rs; do
