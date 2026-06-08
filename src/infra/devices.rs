@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use crate::domain::command::{android_avd_device_id, DeviceInfo};
+use crate::domain::command::{DeviceInfo, android_avd_device_id};
 
 // ---------------------------------------------------------------------------
 // Parsers (pure functions)
@@ -32,17 +32,15 @@ use crate::domain::command::{android_avd_device_id, DeviceInfo};
 pub fn parse_adb_devices(output: &str) -> Vec<DeviceInfo> {
     output
         .lines()
-        .skip(1) // Skip the "List of devices attached" header
-        .filter(|line| !line.is_empty())
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty() && *line != "List of devices attached" && !line.starts_with('*')
+        })
         .filter_map(|line| {
-            // Fields are tab-separated: "<serial>\t<state>[extra]"
-            // With -l flag, extra is space-separated key:value pairs like "model:sdk_gphone64_arm64"
-            let mut parts = line.splitn(2, '\t');
-            let serial = parts.next()?.trim();
-            let rest = parts.next()?.trim();
-
-            // Split on whitespace and take the first token as the state.
-            let mut tokens = rest.split_whitespace();
+            // adb may separate columns with tabs or spaces depending on the
+            // platform/version. Treat any whitespace as a delimiter.
+            let mut tokens = line.split_whitespace();
+            let serial = tokens.next()?;
             let state_token = tokens.next().unwrap_or("");
 
             if state_token != "device" {
@@ -50,12 +48,10 @@ pub fn parse_adb_devices(output: &str) -> Vec<DeviceInfo> {
             }
 
             // Try to extract model name from key:value pairs (adb devices -l format)
-            let model_name = tokens
-                .find(|t| t.starts_with("model:"))
-                .map(|t| {
-                    // Strip "model:" prefix and replace underscores with spaces
-                    t["model:".len()..].replace('_', " ")
-                });
+            let model_name = tokens.find(|t| t.starts_with("model:")).map(|t| {
+                // Strip "model:" prefix and replace underscores with spaces
+                t["model:".len()..].replace('_', " ")
+            });
 
             let name = model_name.unwrap_or_else(|| serial.to_string());
 
@@ -215,7 +211,10 @@ async fn annotate_running_android_emulators(
 ) -> std::collections::HashSet<String> {
     let mut running_avd_ids = std::collections::HashSet::new();
 
-    for device in devices.iter_mut().filter(|device| device.id.starts_with("emulator-")) {
+    for device in devices
+        .iter_mut()
+        .filter(|device| device.id.starts_with("emulator-"))
+    {
         let output = tokio::process::Command::new("adb")
             .args(["-s", &device.id, "emu", "avd", "name"])
             .output()
@@ -335,9 +334,7 @@ impl crate::domain::ports::device_port::DevicePort for AdbXcrunDevices {
         kind: crate::domain::ports::device_port::DeviceKind,
     ) -> anyhow::Result<Vec<DeviceInfo>> {
         match kind {
-            crate::domain::ports::device_port::DeviceKind::Android => {
-                list_android_devices().await
-            }
+            crate::domain::ports::device_port::DeviceKind::Android => list_android_devices().await,
             crate::domain::ports::device_port::DeviceKind::Ios => list_ios_devices().await,
         }
     }
@@ -346,6 +343,31 @@ impl crate::domain::ports::device_port::DevicePort for AdbXcrunDevices {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn android_adb_parser_includes_space_separated_physical_devices() {
+        let devices = parse_adb_devices(
+            r#"
+List of devices attached
+R58MA1XR0XE    device product:a52sxq model:SM_A525F device:a52sxq transport_id:1
+emulator-5554  device product:sdk_gphone64_arm64 model:sdk_gphone64_arm64 device:emu64a transport_id:3
+"#,
+        );
+
+        assert_eq!(
+            devices,
+            vec![
+                DeviceInfo {
+                    id: "R58MA1XR0XE".into(),
+                    name: "SM A525F".into(),
+                },
+                DeviceInfo {
+                    id: "emulator-5554".into(),
+                    name: "sdk gphone64 arm64".into(),
+                },
+            ]
+        );
+    }
 
     #[test]
     fn avd_list_marks_stopped_emulators_as_avd_targets() {
