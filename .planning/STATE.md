@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260608-sg5 | Include physical Android devices in the `a r` run target picker | 2026-06-08 | ad689e9 | [260608-sg5-when-i-press-a-r-and-i-see-the-list-of-a](./quick/260608-sg5-when-i-press-a-r-and-i-see-the-list-of-a/) |
 | 260607-i9b | Add self-update command for GitHub Release binaries | 2026-06-07 | 8100144 | [260607-i9b-self-update-command-design](./quick/260607-i9b-self-update-command-design/) |
 | 260607-hza | Use changelog section for the GitHub release description | 2026-06-07 | c6ca701 | [260607-hza-in-the-current-release-process-we-re-gen](./quick/260607-hza-in-the-current-release-process-we-re-gen/) |
 | 260603-pif | Fix Android AVD run targets by resolving Pixel_9a to the adb emulator serial | 2026-06-03 | 37f8746 | [260603-pif-fix-android-run-target-pixel-9a-device-m](./quick/260603-pif-fix-android-run-target-pixel-9a-device-m/) |
@@ -140,7 +141,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-06-07 - Completed quick task 260607-i9b: add self-update command for GitHub Release binaries
+Last activity: 2026-06-08 - Completed quick task 260608-sg5: include physical Android devices in the a r run target picker
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
