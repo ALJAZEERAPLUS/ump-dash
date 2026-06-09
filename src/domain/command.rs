@@ -34,10 +34,21 @@ pub fn android_boot_avd_command(avd_name: &str) -> String {
     )
 }
 
-fn android_run_avd_script(avd_name: &str, yarn_script: &str) -> String {
+fn android_run_avd_script(avd_name: &str, variant: RunVariant) -> String {
     let quoted_avd = shell_single_quote(avd_name);
+    let run_script = android_run_device_script("\"$serial\"", variant);
     format!(
-        "avd={quoted_avd}; for serial in $(adb devices | awk 'NR > 1 && $2 == \"device\" && $1 ~ /^emulator-/ {{ print $1 }}'); do name=$(adb -s \"$serial\" emu avd name 2>/dev/null | awk 'NF && $0 != \"OK\" {{ print; exit }}' | tr -d '\\r'); if [ \"$name\" = \"$avd\" ]; then exec yarn {yarn_script} --device \"$serial\"; fi; done; echo \"[error] could not find running emulator for AVD $avd\" >&2; exit 1"
+        "avd={quoted_avd}; for serial in $(adb devices | awk 'NR > 1 && $2 == \"device\" && $1 ~ /^emulator-/ {{ print $1 }}'); do name=$(adb -s \"$serial\" emu avd name 2>/dev/null | awk 'NF && $0 != \"OK\" {{ print; exit }}' | tr -d '\\r'); if [ \"$name\" = \"$avd\" ]; then {run_script}; exit $?; fi; done; echo \"[error] could not find running emulator for AVD $avd\" >&2; exit 1"
+    )
+}
+
+fn android_run_device_script(serial_arg: &str, variant: RunVariant) -> String {
+    let gradle_task = variant.android_gradle_task();
+    let apk_path = variant.android_apk_path();
+    let app_id = variant.android_app_id();
+
+    format!(
+        "(cd android && ./gradlew app:{gradle_task} -x lint -PreactNativeDevServerPort=8081) && (adb -s {serial_arg} reverse tcp:8081 tcp:8081 || true) && adb -s {serial_arg} install -r -d {apk_path} && adb -s {serial_arg} shell am start -n {app_id}/com.aljazeera.mobile.MainActivity -a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
     )
 }
 
@@ -56,6 +67,30 @@ impl RunVariant {
             RunVariant::Local => "local",
             RunVariant::Dev => "dev",
             RunVariant::Prod => "prod",
+        }
+    }
+
+    fn android_gradle_task(self) -> &'static str {
+        match self {
+            RunVariant::Local => "assembleLocalDebugOptimized",
+            RunVariant::Dev => "assembleDevDebugOptimized",
+            RunVariant::Prod => "assembleProdDebug",
+        }
+    }
+
+    fn android_apk_path(self) -> &'static str {
+        match self {
+            RunVariant::Local => "android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk",
+            RunVariant::Dev => "android/app/build/outputs/apk/dev/debugOptimized/app-dev-debugOptimized.apk",
+            RunVariant::Prod => "android/app/build/outputs/apk/prod/debug/app-prod-debug.apk",
+        }
+    }
+
+    fn android_app_id(self) -> &'static str {
+        match self {
+            RunVariant::Local => "com.aljazeera.mobile.local",
+            RunVariant::Dev => "com.aljazeera.mobile.dev",
+            RunVariant::Prod => "com.aljazeera.mobile",
         }
     }
 
@@ -154,17 +189,20 @@ impl CommandSpec {
             CommandSpec::YarnPodInstall => vec!["yarn".into(), "pod-install".into()],
 
             CommandSpec::UmpRunAndroid { device_id, variant } => {
-                let yarn_script = variant.unwrap_or(RunVariant::Local).android_script();
+                let variant = variant.unwrap_or(RunVariant::Local);
                 if let Some(avd_name) = android_avd_name(device_id) {
-                    return vec!["sh".into(), "-c".into(), android_run_avd_script(avd_name, yarn_script)];
+                    return vec!["sh".into(), "-c".into(), android_run_avd_script(avd_name, variant)];
                 }
 
-                let mut argv = vec!["yarn".into(), yarn_script.into()];
                 if !device_id.is_empty() {
-                    argv.push("--device".into());
-                    argv.push(device_id.clone());
+                    return vec![
+                        "sh".into(),
+                        "-c".into(),
+                        android_run_device_script(&shell_single_quote(device_id), variant),
+                    ];
                 }
-                argv
+
+                vec!["yarn".into(), variant.android_script().into()]
             }
             CommandSpec::UmpRunIos { device_id, variant } => {
                 let mut argv = vec!["yarn".into(), variant.unwrap_or(RunVariant::Local).ios_script().into()];
@@ -439,22 +477,26 @@ mod tests {
 
     #[test]
     fn ump_run_argv_uses_package_scripts_and_target_flags() {
-        assert_eq!(
-            CommandSpec::UmpRunAndroid {
-                device_id: "emulator-5554".into(),
-                variant: Some(RunVariant::Local),
-            }
-            .to_argv(),
-            vec!["yarn", "android:local", "--device", "emulator-5554"]
-        );
-        assert_eq!(
-            CommandSpec::UmpRunAndroid {
-                device_id: "emulator-5554".into(),
-                variant: Some(RunVariant::Dev),
-            }
-            .to_argv(),
-            vec!["yarn", "android:dev", "--device", "emulator-5554"]
-        );
+        let android_local = CommandSpec::UmpRunAndroid {
+            device_id: "emulator-5554".into(),
+            variant: Some(RunVariant::Local),
+        }
+        .to_argv();
+        assert_eq!(&android_local[0], "sh");
+        assert_eq!(&android_local[1], "-c");
+        assert!(android_local[2].contains("app:assembleLocalDebugOptimized"));
+        assert!(android_local[2].contains("com.aljazeera.mobile.local/com.aljazeera.mobile.MainActivity"));
+
+        let android_dev = CommandSpec::UmpRunAndroid {
+            device_id: "emulator-5554".into(),
+            variant: Some(RunVariant::Dev),
+        }
+        .to_argv();
+        assert_eq!(&android_dev[0], "sh");
+        assert_eq!(&android_dev[1], "-c");
+        assert!(android_dev[2].contains("app:assembleDevDebugOptimized"));
+        assert!(android_dev[2].contains("com.aljazeera.mobile.dev/com.aljazeera.mobile.MainActivity"));
+
         assert_eq!(
             CommandSpec::UmpRunIos {
                 device_id: "ios-udid-1".into(),
@@ -466,7 +508,41 @@ mod tests {
     }
 
     #[test]
-    fn ump_android_run_for_avd_resolves_serial_before_yarn_script() {
+    fn ump_android_run_for_physical_device_installs_known_variant_apk() {
+        let argv = CommandSpec::UmpRunAndroid {
+            device_id: "R58W4019D1V".into(),
+            variant: Some(RunVariant::Local),
+        }
+        .to_argv();
+
+        assert_eq!(&argv[0], "sh");
+        assert_eq!(&argv[1], "-c");
+        let script = &argv[2];
+
+        assert!(
+            script.contains("./gradlew app:assembleLocalDebugOptimized"),
+            "Android local run should assemble the exact Gradle variant, got {argv:?}"
+        );
+        assert!(
+            script.contains("android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk"),
+            "Android local run should install the APK path Gradle actually writes, got {argv:?}"
+        );
+        assert!(
+            script.contains("adb -s 'R58W4019D1V' install -r -d"),
+            "Android local run should install on the selected physical device, got {argv:?}"
+        );
+        assert!(
+            script.contains("com.aljazeera.mobile.local/com.aljazeera.mobile.MainActivity"),
+            "Android local run should launch the local app id, got {argv:?}"
+        );
+        assert!(
+            !script.contains("react-native run-android"),
+            "Android local run should bypass React Native CLI APK path derivation, got {argv:?}"
+        );
+    }
+
+    #[test]
+    fn ump_android_run_for_avd_resolves_serial_before_install_script() {
         let argv = CommandSpec::UmpRunAndroid {
             device_id: "avd:Pixel_9a".into(),
             variant: Some(RunVariant::Local),
@@ -488,8 +564,12 @@ mod tests {
             "AVD run should preserve the selected AVD name, got {argv:?}"
         );
         assert!(
-            argv[2].contains("yarn android:local --device \"$serial\""),
-            "AVD run should pass the resolved adb serial to yarn, got {argv:?}"
+            argv[2].contains("./gradlew app:assembleLocalDebugOptimized"),
+            "AVD run should assemble the exact Gradle variant, got {argv:?}"
+        );
+        assert!(
+            argv[2].contains("adb -s \"$serial\" install -r -d android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk"),
+            "AVD run should install the known APK path on the resolved adb serial, got {argv:?}"
         );
     }
 
