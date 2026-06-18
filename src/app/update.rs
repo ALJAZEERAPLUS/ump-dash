@@ -67,6 +67,23 @@ fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
         .map(|wt| wt.path.clone())
 }
 
+fn selected_worktree_snapshot(state: &AppState) -> Option<crate::domain::worktree::Worktree> {
+    let idx = state
+        .worktree_browser
+        .worktree_table_state
+        .selected()
+        .unwrap_or(0);
+    state
+        .worktree_browser
+        .worktrees
+        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
+        .cloned()
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
 fn active_worktree_snapshot(
     state: &AppState,
 ) -> Option<(crate::domain::worktree::WorktreeId, PathBuf)> {
@@ -2510,15 +2527,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 });
                 return effects;
             }
-            let wt = if !state.worktree_browser.worktrees.is_empty() {
-                let idx = state
-                    .worktree_browser
-                    .worktree_table_state
-                    .selected()
-                    .unwrap_or(0)
-                    .min(state.worktree_browser.worktrees.len() - 1);
-                state.worktree_browser.worktrees[idx].clone()
-            } else {
+            let Some(wt) = selected_worktree_snapshot(state) else {
                 return effects;
             };
             let path = wt.path.clone();
@@ -2545,15 +2554,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 });
                 return effects;
             }
-            let wt = if !state.worktree_browser.worktrees.is_empty() {
-                let idx = state
-                    .worktree_browser
-                    .worktree_table_state
-                    .selected()
-                    .unwrap_or(0)
-                    .min(state.worktree_browser.worktrees.len() - 1);
-                state.worktree_browser.worktrees[idx].clone()
-            } else {
+            let Some(wt) = selected_worktree_snapshot(state) else {
                 return effects;
             };
             let path = wt.path.clone();
@@ -2563,6 +2564,48 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 worktree: path,
                 name,
                 command: shell,
+            });
+        }
+        Action::OpenEditor => {
+            let editor = state.app_config.editor.trim().to_string();
+            if editor.is_empty() {
+                state.error_state = Some(ErrorState {
+                    message: "Cannot open editor: configure the editor setting first".into(),
+                    can_retry: false,
+                });
+                return effects;
+            }
+
+            let Some(wt) = selected_worktree_snapshot(state) else {
+                return effects;
+            };
+
+            if state.app_config.editor_in_terminal {
+                if !state.app_config.multiplexer_available {
+                    state.error_state = Some(ErrorState {
+                        message:
+                            "Cannot open editor: not inside a tmux, zellij, or Ghostty session"
+                                .into(),
+                        can_retry: false,
+                    });
+                    return effects;
+                }
+                effects.push(Effect::OpenInMultiplexer {
+                    worktree: wt.path.clone(),
+                    name: format!("{}-editor", wt.preferred_prefix()),
+                    command: format!("{editor} ."),
+                });
+            } else {
+                let quoted_path = shell_quote(&wt.path.to_string_lossy());
+                effects.push(Effect::OpenExternalEditor {
+                    command: format!("{editor} {quoted_path}"),
+                });
+            }
+        }
+        Action::OpenEditorFailed(message) => {
+            state.error_state = Some(ErrorState {
+                message: format!("Cannot open editor: {message}"),
+                can_retry: false,
             });
         }
 

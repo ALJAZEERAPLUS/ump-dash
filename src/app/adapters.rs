@@ -19,6 +19,7 @@
 
 use crate::domain::ports::command_runner_port::CommandRunnerPort;
 use crate::domain::ports::device_port::DevicePort;
+use crate::domain::ports::external_command_port::ExternalCommandPort;
 use crate::domain::ports::jira_port::JiraPort;
 use crate::domain::ports::metro_port::MetroPort;
 use crate::domain::ports::multiplexer_port::MultiplexerPort;
@@ -38,6 +39,7 @@ pub struct Adapters {
     pub worktrees: Arc<dyn WorktreePort>,
     pub devices: Arc<dyn DevicePort>,
     pub native_cache: Arc<dyn NativeCachePort>,
+    pub external_command: Arc<dyn ExternalCommandPort>,
     /// `None` when the dashboard config does not contain JIRA credentials.
     pub jira: Option<Arc<dyn JiraPort>>,
     /// `None` when the process is not running inside tmux, zellij, or Ghostty.

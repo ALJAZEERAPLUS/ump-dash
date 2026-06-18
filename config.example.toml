@@ -36,6 +36,18 @@ jira_token = "your-api-token-here"
 # Default: "--dangerously-skip-permissions"
 # claude_flags = "--dangerously-skip-permissions"
 
+# Editor opened from the Open palette with o>e.
+# Default: "vim"
+# editor = "vim"
+
+# When true, o>e opens a terminal surface at the selected worktree and runs
+# "<editor> .". When false, ump-dash runs "<editor> <absolute-worktree-path>"
+# as an external command. For GUI Emacs, use:
+# editor = "emacsclient -c -n"
+# editor_in_terminal = false
+# Default: true
+# editor_in_terminal = true
+
 # Automatically accept sync-before-run and sync-before-metro prompts.
 # Possible values: true, false
 # Default: false

@@ -92,6 +92,7 @@ async fn main() -> color_eyre::Result<()> {
         native_cache: Arc::new(ump_dash::infra::native_cache::LocalNativeCache::new(
             native_cache_artifact_root,
         )),
+        external_command: Arc::new(ump_dash::infra::external_command::ShellExternalCommand),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),
     };
@@ -167,6 +168,8 @@ fn build_state(
     state.app_config.multiplexer_available = multiplexer_available;
     if let Some(cfg) = config {
         state.app_config.claude_flags = cfg.claude_flags.clone();
+        state.app_config.editor = cfg.editor.clone();
+        state.app_config.editor_in_terminal = cfg.editor_in_terminal;
         state.jira.project_prefix = cfg.jira_project_prefix.clone();
         if let Some(path) = cfg.repo_root_path() {
             state.app_config.repo_root = path;

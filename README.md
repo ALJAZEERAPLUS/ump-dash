@@ -81,6 +81,8 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 | `jira_project_prefix` | string | `"UMP"` | Any exact branch ticket prefix, e.g. `"PROJ"` | Project key used to extract tickets like `PROJ-1234` from branch names. |
 | `app_title` | string | `"UMP Dash"` | Any string | Title shown in the dashboard header. |
 | `claude_flags` | string | `"--dangerously-skip-permissions"` | Any string | Flags passed when launching Claude Code. |
+| `editor` | string | `"vim"` | Any shell command prefix | Editor command used by `o>e`; the selected worktree target is appended automatically. |
+| `editor_in_terminal` | boolean | `true` | `true`, `false` | When true, open a terminal surface and run `<editor> .`; when false, run `<editor> <absolute worktree path>` as an external command. |
 | `auto_sync` | boolean | `false` | `true`, `false` | Automatically accept sync-before-run and sync-before-metro prompts. |
 | `spinner_style` | string | `"circles"` | `"circles"`, `"braille"`, `"dots"` | Spinner glyph set for live task indicators. |
 | `columns` | array of strings | `["status", "branch", "ticket", "dir", "task", "cache_status", "cache"]` | `"status"`, `"branch"`, `"ticket"`, `"dir"`, `"task"`, `"cache_status"`, `"cache"`, `"android_cache_status"`, `"android_cache"` | Worktree table columns in display order. Omit a value to hide that column. |
@@ -130,7 +132,7 @@ cargo run
 | Esc | Stop metro |
 | y | Open yarn palette |
 | w | Open worktree palette (`c` add, `d` remove, `n` new branch) |
-| o | Open palette (`c` Claude Code, `t` shell tab, `j` Metro debugger) |
+| o | Open palette (`c` Claude Code, `e` editor, `t` shell tab, `j` Metro debugger) |
 | R | Reload metro (when running) |
 | ? | Toggle help overlay |
 | q | Quit |

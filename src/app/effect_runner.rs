@@ -34,6 +34,7 @@
 //!   SaveJiraCache(map)                             → spawn_blocking infra::jira_cache::save_jira_cache  (F-111 deferred)
 //!   RecordSimUsed(udid)                            → spawn_blocking infra::sim_history::record_sim_used  (F-111 deferred)
 //!   OpenInMultiplexer { worktree, name, command }  → adapters.multiplexer.as_ref()?.new_window(...)
+//!   OpenExternalEditor { command }                 → adapters.external_command.run_shell_command(...)
 //!
 //! G-01 carve-out (whitelisted in `Makefile` arch-lint): the two
 //! persistence variants (SaveJiraCache, RecordSimUsed) still
@@ -529,6 +530,15 @@ impl EffectRunner {
                     }
                 });
             }
+            Effect::OpenExternalEditor { command } => {
+                let external_command = self.adapters.external_command.clone();
+                let tx = self.action_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = external_command.run_shell_command(&command) {
+                        let _ = tx.send(Action::OpenEditorFailed(e.to_string()));
+                    }
+                });
+            }
 
             // Plan 14-06 / Plan 15-03: per-task spawn chokepoint (D-10, D-20, Q1, Q2, Q3 + TASK-04, TASK-06).
             //
@@ -771,6 +781,7 @@ mod tests {
     };
     use crate::domain::ports::command_runner_port::{CommandEvent, CommandRunnerPort};
     use crate::domain::ports::device_port::{DeviceKind, DevicePort};
+    use crate::domain::ports::external_command_port::ExternalCommandPort;
     use crate::domain::ports::metro_port::{MetroHandle, MetroPort};
     use crate::domain::ports::native_cache_port::NativeCachePort;
     use crate::domain::ports::port_probe_port::{ExternalProcessInfo, PortProbePort};
@@ -939,6 +950,15 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct NoopExternalCommand;
+
+    impl ExternalCommandPort for NoopExternalCommand {
+        fn run_shell_command(&self, _command: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     enum NativeScript {
         LookupIos(Result<IosSimulatorCacheLookup, String>),
         StoreIos(Result<IosSimulatorCacheHit, String>),
@@ -1074,6 +1094,7 @@ mod tests {
                 worktrees: Arc::new(NoopWorktrees),
                 devices: Arc::new(NoopDevices),
                 native_cache: Arc::new(ScriptedNativeCache::new(script)),
+                external_command: Arc::new(NoopExternalCommand),
                 jira: None,
                 multiplexer: None,
             },

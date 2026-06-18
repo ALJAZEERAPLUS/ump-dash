@@ -823,6 +823,15 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
+        key: KeyCode::Char('e'),
+        label: "e",
+        short_desc: "editor",
+        long_desc: "Open configured editor at worktree",
+        context: BindingContext::Palette(PaletteMode::Open),
+        action: |_| Some(Action::OpenEditor),
+        visible: |_| true,
+    },
+    KeyBinding {
         key: KeyCode::Char('t'),
         label: "t",
         short_desc: "shell tab",

@@ -105,6 +105,8 @@ pub enum Action {
     WorktreeSwitchToSelected, // Enter on worktree — switch metro to selected worktree
     OpenClaudeCode,           // o>c on worktree — open claude in new terminal surface
     OpenShellTab,             // o>t on worktree — open shell in new terminal surface
+    OpenEditor,               // o>e on worktree — open configured editor
+    OpenEditorFailed(String), // background: external editor launch failed
 
     // Phase 5.1: Command queue
     CommandQueuePush(crate::domain::command::CommandSpec), // enqueue without running immediately

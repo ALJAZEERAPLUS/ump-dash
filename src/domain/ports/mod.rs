@@ -9,6 +9,7 @@
 //! 13-05 (command_runner).
 pub mod command_runner_port;
 pub mod device_port;
+pub mod external_command_port;
 pub mod jira_port;
 pub mod metro_port;
 pub mod multiplexer_port;

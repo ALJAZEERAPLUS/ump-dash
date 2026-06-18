@@ -767,12 +767,14 @@ mod palette_resolution {
         state.modal_stack.palette_mode = Some(PaletteMode::Open);
 
         assert_eq!(handle_key(&state, key('c')), Some(Action::OpenClaudeCode));
+        assert_eq!(handle_key(&state, key('e')), Some(Action::OpenEditor));
         assert_eq!(handle_key(&state, key('t')), Some(Action::OpenShellTab));
         assert_eq!(
             handle_key(&state, key('j')),
             Some(Action::MetroSendDebugger)
         );
         assert_eq!(handle_key(&state, key('C')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('E')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('T')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('J')), Some(Action::ModalCancel));
         assert_eq!(
@@ -3232,6 +3234,82 @@ mod claude_tab {
             }
             other => panic!("expected OpenInMultiplexer effect, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn open_editor_terminal_mode_opens_configured_editor_in_multiplexer() {
+        let mut state = base_state();
+        state.app_config.multiplexer_available = true;
+        state.app_config.editor = "vim".into();
+        state.app_config.editor_in_terminal = true;
+        seed_one_worktree_id(&mut state, "ump-dash");
+
+        let effects = update(&mut state, Action::OpenEditor);
+
+        match &effects[..] {
+            [
+                Effect::OpenInMultiplexer {
+                    worktree,
+                    name,
+                    command,
+                },
+            ] => {
+                assert_eq!(worktree, &std::path::PathBuf::from("/tmp/ump-dash"));
+                assert_eq!(name, "main-editor");
+                assert_eq!(command, "vim .");
+            }
+            other => panic!("expected OpenInMultiplexer effect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_editor_terminal_mode_requires_multiplexer() {
+        let mut state = base_state();
+        state.app_config.multiplexer_available = false;
+        state.app_config.editor = "vim".into();
+        state.app_config.editor_in_terminal = true;
+        seed_one_worktree_id(&mut state, "ump-dash");
+
+        let effects = update(&mut state, Action::OpenEditor);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.error_state.as_ref().map(|e| e.message.as_str()),
+            Some("Cannot open editor: not inside a tmux, zellij, or Ghostty session")
+        );
+    }
+
+    #[test]
+    fn open_editor_external_mode_emits_quoted_external_command() {
+        let mut state = base_state();
+        state.app_config.editor = "emacsclient -c -n".into();
+        state.app_config.editor_in_terminal = false;
+        seed_one_worktree_id(&mut state, "ump dash");
+
+        let effects = update(&mut state, Action::OpenEditor);
+
+        match &effects[..] {
+            [Effect::OpenExternalEditor { command }] => {
+                assert_eq!(command, "emacsclient -c -n '/tmp/ump dash'");
+            }
+            other => panic!("expected OpenExternalEditor effect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_editor_empty_config_shows_error() {
+        let mut state = base_state();
+        state.app_config.editor = "   ".into();
+        state.app_config.editor_in_terminal = false;
+        seed_one_worktree_id(&mut state, "ump-dash");
+
+        let effects = update(&mut state, Action::OpenEditor);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.error_state.as_ref().map(|e| e.message.as_str()),
+            Some("Cannot open editor: configure the editor setting first")
+        );
     }
 }
 

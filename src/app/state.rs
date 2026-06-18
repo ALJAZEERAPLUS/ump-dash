@@ -206,6 +206,12 @@ pub struct AppConfigState {
     /// Claude Code launch flags loaded from config (e.g. "--dangerously-skip-permissions").
     pub claude_flags: String,
 
+    /// Editor command prefix used by o>e.
+    pub editor: String,
+
+    /// True when the configured editor should run inside a terminal surface.
+    pub editor_in_terminal: bool,
+
     /// Loaded simulator UDID history (most-recent first). Used by update() to
     /// sort iOS picker entries without crossing the infra boundary.
     pub sim_history: Vec<String>,
@@ -222,6 +228,8 @@ impl Default for AppConfigState {
             config: None,
             repo_root: std::env::current_dir().unwrap_or_default(),
             claude_flags: "--dangerously-skip-permissions".to_string(),
+            editor: "vim".to_string(),
+            editor_in_terminal: true,
             sim_history: Vec::new(),
             multiplexer_available: false,
         }

@@ -17,6 +17,14 @@ fn default_claude_flags() -> String {
     "--dangerously-skip-permissions".to_string()
 }
 
+fn default_editor() -> String {
+    "vim".to_string()
+}
+
+fn default_editor_in_terminal() -> bool {
+    true
+}
+
 fn default_jira_prefix() -> String {
     "UMP".to_string()
 }
@@ -123,6 +131,15 @@ pub struct DashConfig {
     /// "--dangerously-skip-permissions").
     #[serde(default = "default_claude_flags")]
     pub claude_flags: String,
+
+    /// Editor command prefix used by the Open editor action.
+    #[serde(default = "default_editor")]
+    pub editor: String,
+
+    /// When true, editor opens in a terminal surface. When false, editor launches
+    /// as an external command with the absolute worktree path appended.
+    #[serde(default = "default_editor_in_terminal")]
+    pub editor_in_terminal: bool,
 
     /// Absolute path to the React Native monorepo root (supports ~/). If
     /// None, repo_root will remain an empty PathBuf and worktree listing will
@@ -239,6 +256,27 @@ jira_token = "token"
         let config = parse_config(r#"seed_files = [".env.local", "fastlane/.env"]"#);
 
         assert_eq!(config.seed_files, vec![".env.local", "fastlane/.env"]);
+    }
+
+    #[test]
+    fn editor_defaults_to_terminal_vim() {
+        let config = parse_config("");
+
+        assert_eq!(config.editor, "vim");
+        assert!(config.editor_in_terminal);
+    }
+
+    #[test]
+    fn editor_config_overrides_defaults() {
+        let config = parse_config(
+            r#"
+editor = "emacsclient -c -n"
+editor_in_terminal = false
+"#,
+        );
+
+        assert_eq!(config.editor, "emacsclient -c -n");
+        assert!(!config.editor_in_terminal);
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub mod worktrees;
 pub mod command_runner;
 pub mod devices;
 pub mod config;
+pub mod external_command;
 pub mod jira;
 pub mod jira_cache;
 pub mod multiplexer;
