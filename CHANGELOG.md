@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-06-19
+
+### New
+- **Native build cache** - iOS simulator and Android runs can reuse matching local native artifacts, with cache-hit shortcuts routed through the existing device pickers and Metro port handling.
+- **Native cache visibility** - worktree rows can show iOS and Android cache availability and fingerprint columns, and successful native runs populate cache metadata for later reuse.
+- **Configurable editor launch** - `o>e` now opens the configured editor, either inside the terminal surface or as an external command with `editor_in_terminal = false`.
+- **Architecture report command** - `make arch-report` emits boundary evidence, test inventory, and architecture hotspot summaries for review.
+
+### Fixed
+- Android physical devices now appear in the picker, and Android variants install directly to the selected target.
+- Cached iOS launches stay bound to the originating worktree, wait for the matching Metro instance, and clear pending launch state if Metro exits or fails.
+- Command tasks now finish even when child processes keep inherited pipes open.
+- External editor commands no longer run through a login shell, avoiding unwanted shell startup side effects.
+
+### Improved
+- Native cache entries record SHA-256 artifact digests and treat changed `.app` or APK outputs as cache misses instead of stale hits.
+- Cache-hit shortcuts are hidden when the matching artifact belongs to another worktree or an incompatible run/device type.
+- Open/worktree shortcut labels and help rows were cleaned up to match the current keybinding registry.
+
 ## [1.4.0] - 2026-06-07
 
 ### New
