@@ -2614,6 +2614,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::EnterWorktreePalette => {
             state.modal_stack.palette_mode = Some(PaletteMode::Worktree);
         }
+        Action::EnterOpenPalette => {
+            state.modal_stack.palette_mode = Some(PaletteMode::Open);
+        }
         Action::OpenCleanMenu => {
             state.modal_stack.palette_mode = None;
             state.modal_stack.modal = Some(ModalState::CleanToggle {

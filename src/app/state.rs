@@ -58,6 +58,8 @@ pub enum PaletteMode {
     Git,
     /// 'w' — Worktree palette (create, remove, create-with-new-branch)
     Worktree,
+    /// 'o' — Open palette (terminal surfaces and Metro debugger)
+    Open,
 }
 
 // ---------------------------------------------------------------------------

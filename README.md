@@ -126,11 +126,11 @@ cargo run
 | Key | Action |
 |-----|--------|
 | j / k or arrows | Navigate worktree list |
-| Enter | Start metro / run on device |
+| Enter | Use selected worktree for Metro |
 | Esc | Stop metro |
 | y | Open yarn palette |
-| w | Open worktree palette |
-| c | Open Claude Code |
+| w | Open worktree palette (`c` add, `d` remove, `n` new branch) |
+| o | Open palette (`c` Claude Code, `t` shell tab, `j` Metro debugger) |
 | R | Reload metro (when running) |
 | ? | Toggle help overlay |
 | q | Quit |

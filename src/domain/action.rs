@@ -31,7 +31,7 @@ pub enum Action {
         worktree_id: crate::domain::worktree::WorktreeId,
     },
     MetroStop,
-    MetroSendDebugger, // J when worktree table focused (metro running) or j in metro palette — HTTP POST /open-debugger
+    MetroSendDebugger, // o>j when metro is running — HTTP POST /open-debugger
     MetroSendReload, // R when worktree table focused (metro running) or R in metro palette — HTTP POST /reload
 
     // Metro background events (not user-triggered — sent by background tasks)
@@ -103,8 +103,8 @@ pub enum Action {
 
     // Phase 5: Worktree switching and Claude Code
     WorktreeSwitchToSelected, // Enter on worktree — switch metro to selected worktree
-    OpenClaudeCode,           // C on worktree — open claude in new terminal surface
-    OpenShellTab,             // T on worktree — open shell in new terminal surface
+    OpenClaudeCode,           // o>c on worktree — open claude in new terminal surface
+    OpenShellTab,             // o>t on worktree — open shell in new terminal surface
 
     // Phase 5.1: Command queue
     CommandQueuePush(crate::domain::command::CommandSpec), // enqueue without running immediately
@@ -115,6 +115,7 @@ pub enum Action {
     EnterIosPalette,      // 'i' when WorktreeTable focused
     EnterYarnPalette,     // 'y' when WorktreeTable focused
     EnterWorktreePalette, // 'w' when WorktreeTable focused
+    EnterOpenPalette,     // 'o' when WorktreeTable focused
     // EnterGitPalette already exists
 
     // Phase 5.1: Clean toggle actions

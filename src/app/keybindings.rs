@@ -777,8 +777,8 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     },
     // ==== Palette: Worktree ====
     KeyBinding {
-        key: KeyCode::Char('w'),
-        label: "w",
+        key: KeyCode::Char('c'),
+        label: "c",
         short_desc: "add worktree",
         long_desc: "Add new worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
@@ -795,8 +795,8 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
-        key: KeyCode::Char('b'),
-        label: "b",
+        key: KeyCode::Char('n'),
+        label: "n",
         short_desc: "new branch worktree",
         long_desc: "New branch + worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
@@ -809,6 +809,49 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         short_desc: "cancel",
         long_desc: "Close palette",
         context: BindingContext::Palette(PaletteMode::Worktree),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
+    // ==== Palette: Open ====
+    KeyBinding {
+        key: KeyCode::Char('c'),
+        label: "c",
+        short_desc: "claude",
+        long_desc: "Open Claude Code (tmux/zellij/Ghostty)",
+        context: BindingContext::Palette(PaletteMode::Open),
+        action: |_| Some(Action::OpenClaudeCode),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('t'),
+        label: "t",
+        short_desc: "shell tab",
+        long_desc: "Open shell tab at worktree",
+        context: BindingContext::Palette(PaletteMode::Open),
+        action: |_| Some(Action::OpenShellTab),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('j'),
+        label: "j",
+        short_desc: "debugger",
+        long_desc: "Metro debugger (when running)",
+        context: BindingContext::Palette(PaletteMode::Open),
+        action: |s| {
+            if metro_running(s) {
+                Some(Action::MetroSendDebugger)
+            } else {
+                Some(Action::ModalCancel)
+            }
+        },
+        visible: metro_running,
+    },
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Close palette",
+        context: BindingContext::Palette(PaletteMode::Open),
         action: |_| Some(Action::ModalCancel),
         visible: |_| true,
     },
@@ -952,6 +995,15 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
+        key: KeyCode::Char('o'),
+        label: "o",
+        short_desc: "open",
+        long_desc: "Open submenu",
+        context: BindingContext::WorktreeTable,
+        action: |_| Some(Action::EnterOpenPalette),
+        visible: |_| true,
+    },
+    KeyBinding {
         key: KeyCode::Char('R'),
         label: "R",
         short_desc: "reload",
@@ -962,21 +1014,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
                 Some(Action::MetroSendReload)
             } else {
                 Some(Action::RefreshWorktrees)
-            }
-        },
-        visible: metro_running,
-    },
-    KeyBinding {
-        key: KeyCode::Char('J'),
-        label: "J",
-        short_desc: "debugger",
-        long_desc: "Metro debugger (when running)",
-        context: BindingContext::WorktreeTable,
-        action: |s| {
-            if metro_running(s) {
-                Some(Action::MetroSendDebugger)
-            } else {
-                None
             }
         },
         visible: metro_running,
@@ -997,24 +1034,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: metro_running,
     },
     KeyBinding {
-        key: KeyCode::Char('C'),
-        label: "C",
-        short_desc: "claude",
-        long_desc: "Open Claude Code (tmux/zellij/Ghostty)",
-        context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::OpenClaudeCode),
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('T'),
-        label: "T",
-        short_desc: "shell tab",
-        long_desc: "Open shell tab at worktree",
-        context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::OpenShellTab),
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Char('f'),
         label: "f",
         short_desc: "fullscreen",
@@ -1024,19 +1043,10 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| false,
     },
     KeyBinding {
-        key: KeyCode::Char('!'),
-        label: "!",
-        short_desc: "shell",
-        long_desc: "Run shell command in worktree",
-        context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::StartShellCommand),
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Enter,
         label: "Enter",
-        short_desc: "switch",
-        long_desc: "Switch metro to worktree",
+        short_desc: "metro",
+        long_desc: "Use selected worktree for Metro",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSwitchToSelected),
         visible: |_| true,
@@ -1475,6 +1485,7 @@ fn section_for_context(ctx: &BindingContext) -> &'static str {
         BindingContext::Palette(PaletteMode::Yarn) => "Yarn  (y>)",
         BindingContext::Palette(PaletteMode::Git) => "Git  (g>)",
         BindingContext::Palette(PaletteMode::Worktree) => "Worktree  (w>)",
+        BindingContext::Palette(PaletteMode::Open) => "Open  (o>)",
         BindingContext::Modal(_) => "Modal",
         BindingContext::Overlay(_) => "Overlay",
         BindingContext::Fullscreen => "Fullscreen",
@@ -1505,6 +1516,7 @@ mod tests {
             PaletteMode::Yarn,
             PaletteMode::Git,
             PaletteMode::Worktree,
+            PaletteMode::Open,
         ] {
             let has_esc = KEYBINDINGS.iter().any(|kb| {
                 matches!(kb.context, BindingContext::Palette(ref p) if std::mem::discriminant(p) == std::mem::discriminant(&palette))

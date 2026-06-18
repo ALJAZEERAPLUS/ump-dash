@@ -17,6 +17,7 @@
 //! return value is typically bound to `_`.
 
 use super::effect::Effect;
+use super::keybindings::{footer_hints_for, help_overlay_rows};
 use super::*;
 use crate::domain::action::Action;
 use crate::domain::command::{CleanOptions, CommandSpec, ModalState, RunVariant};
@@ -717,12 +718,14 @@ mod palette_resolution {
         let mut state = base_state();
         state.modal_stack.palette_mode = Some(PaletteMode::Worktree);
 
-        assert_eq!(handle_key(&state, key('w')), Some(Action::WorktreeAdd));
+        assert_eq!(handle_key(&state, key('c')), Some(Action::WorktreeAdd));
         assert_eq!(handle_key(&state, key('d')), Some(Action::WorktreeRemove));
         assert_eq!(
-            handle_key(&state, key('b')),
+            handle_key(&state, key('n')),
             Some(Action::WorktreeAddNewBranch)
         );
+        assert_eq!(handle_key(&state, key('w')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('b')), Some(Action::ModalCancel));
 
         assert_eq!(
             handle_key(&state, key_code(KeyCode::Esc)),
@@ -733,6 +736,74 @@ mod palette_resolution {
             Some(Action::ModalCancel),
             "worktree palette unrecognized-key fallback regression-guard"
         );
+    }
+
+    #[test]
+    fn worktree_table_footer_uses_open_menu_and_metro_labels() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        register_ready_metro(&mut state, "wt-1", 8081);
+
+        let hints = footer_hints_for(&state);
+
+        assert!(hints.contains(&("o", "open")));
+        assert!(hints.contains(&("Enter", "metro")));
+        assert!(!hints.contains(&("!", "shell")));
+        assert!(!hints.contains(&("C", "claude")));
+        assert!(!hints.contains(&("T", "shell tab")));
+        assert!(!hints.contains(&("J", "debugger")));
+        assert_eq!(handle_key(&state, key('!')), None);
+        assert_eq!(handle_key(&state, key('C')), None);
+        assert_eq!(handle_key(&state, key('T')), None);
+        assert_eq!(handle_key(&state, key('J')), None);
+        assert_eq!(handle_key(&state, key('o')), Some(Action::EnterOpenPalette));
+    }
+
+    #[test]
+    fn open_palette_resolves_lowercase_keys() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        register_ready_metro(&mut state, "wt-1", 8081);
+        state.modal_stack.palette_mode = Some(PaletteMode::Open);
+
+        assert_eq!(handle_key(&state, key('c')), Some(Action::OpenClaudeCode));
+        assert_eq!(handle_key(&state, key('t')), Some(Action::OpenShellTab));
+        assert_eq!(
+            handle_key(&state, key('j')),
+            Some(Action::MetroSendDebugger)
+        );
+        assert_eq!(handle_key(&state, key('C')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('T')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('J')), Some(Action::ModalCancel));
+        assert_eq!(
+            handle_key(&state, key_code(KeyCode::Esc)),
+            Some(Action::ModalCancel)
+        );
+    }
+
+    #[test]
+    fn help_rows_reflect_open_and_worktree_shortcuts() {
+        let rows = help_overlay_rows();
+
+        assert!(rows.iter().any(|row| {
+            row.section == "Worktree Table" && row.label == "o" && row.desc == "Open submenu"
+        }));
+        assert!(rows.iter().any(|row| {
+            row.section == "Worktree Table"
+                && row.label == "Enter"
+                && row.desc == "Use selected worktree for Metro"
+        }));
+        assert!(rows.iter().any(|row| {
+            row.section == "Worktree  (w>)" && row.label == "c" && row.desc == "Add new worktree"
+        }));
+        assert!(rows.iter().any(|row| {
+            row.section == "Worktree  (w>)"
+                && row.label == "n"
+                && row.desc == "New branch + worktree"
+        }));
+        assert!(!rows.iter().any(|row| {
+            row.section == "Worktree Table" && matches!(row.label, "!" | "C" | "T" | "J")
+        }));
     }
 
     /// Covers the phase-description's "palette x" item (Research A2): Yarn
