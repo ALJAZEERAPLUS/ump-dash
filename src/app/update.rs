@@ -82,6 +82,15 @@ fn active_worktree_snapshot(
     Some((wt.id.clone(), wt.path.clone()))
 }
 
+fn worktree_snapshot_for_id(state: &AppState, worktree_id: &WorktreeId) -> Option<PathBuf> {
+    state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| &wt.id == worktree_id)
+        .map(|wt| wt.path.clone())
+}
+
 fn queue_ios_cache_lookup_for_worktree(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
@@ -95,7 +104,12 @@ fn queue_ios_cache_lookup_for_worktree(
             id: worktree_id.clone(),
             ..Default::default()
         });
-    slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Checking;
+    if matches!(
+        slice.ios_simulator_cache,
+        crate::domain::native_cache::IosSimulatorCacheState::Unknown
+    ) {
+        slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Checking;
+    }
     effects.push(Effect::LookupIosSimulatorCache {
         worktree_id,
         worktree_path,
@@ -128,7 +142,12 @@ fn queue_android_cache_lookup_for_worktree(
             id: worktree_id.clone(),
             ..Default::default()
         });
-    slice.android_cache = crate::domain::native_cache::AndroidCacheState::Checking;
+    if matches!(
+        slice.android_cache,
+        crate::domain::native_cache::AndroidCacheState::Unknown
+    ) {
+        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Checking;
+    }
     effects.push(Effect::LookupAndroidCache {
         worktree_id,
         worktree_path,
@@ -237,6 +256,11 @@ fn slice_id_for_metro_worktree_id(state: &AppState, worktree_id: &str) -> Option
 }
 
 fn active_metro_slice_id(state: &AppState) -> WorktreeId {
+    if let Some(path) = state.metro_state.active_worktree_path.as_ref() {
+        let metro_worktree_id = metro_worktree_id_from_path(path);
+        return slice_id_for_metro_worktree_id(state, &metro_worktree_id)
+            .unwrap_or(WorktreeId(metro_worktree_id));
+    }
     active_worktree_id(state).unwrap_or_else(|| WorktreeId(active_metro_worktree_id(state)))
 }
 
@@ -246,6 +270,24 @@ fn active_worktree_has_metro(state: &AppState) -> bool {
         .worktrees
         .get(&id)
         .map(|slice| slice.metro.is_running())
+        .unwrap_or(false)
+}
+
+fn worktree_has_metro_or_reserved(state: &AppState, worktree_id: &WorktreeId) -> bool {
+    state
+        .worktrees
+        .get(worktree_id)
+        .map(|slice| slice.metro.is_running() || slice.metro.running_port().is_some())
+        .unwrap_or(false)
+}
+
+fn worktree_yarn_stale(state: &AppState, worktree_id: &WorktreeId) -> bool {
+    state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| &wt.id == worktree_id)
+        .map(|wt| wt.stale)
         .unwrap_or(false)
 }
 
@@ -266,6 +308,73 @@ fn next_available_reserved_metro_port(state: &AppState) -> u16 {
     }
 }
 
+fn start_metro_for_worktree(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    worktree_id: WorktreeId,
+) {
+    if worktree_has_metro_or_reserved(state, &worktree_id) {
+        return;
+    }
+    let Some(worktree_path) = worktree_snapshot_for_id(state, &worktree_id) else {
+        tracing::warn!(
+            "start_metro_for_worktree: unknown worktree {:?}, dropping start request",
+            worktree_id
+        );
+        return;
+    };
+
+    let port = next_available_reserved_metro_port(state);
+    let slice = state
+        .worktrees
+        .entry(worktree_id.clone())
+        .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+            id: worktree_id.clone(),
+            ..Default::default()
+        });
+    slice.metro.reserve_start(port);
+    effects.push(Effect::SpawnMetro {
+        worktree: worktree_path,
+        port,
+    });
+}
+
+fn ensure_metro_for_worktree(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    worktree_id: WorktreeId,
+) {
+    if worktree_has_metro_or_reserved(state, &worktree_id) {
+        return;
+    }
+
+    let deps = DependencyState::new(worktree_yarn_stale(state, &worktree_id), false, false);
+    let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
+    if sequence.is_empty() {
+        start_metro_for_worktree(state, effects, worktree_id);
+        return;
+    }
+
+    let first = sequence.remove(0);
+    let slice = state
+        .worktrees
+        .entry(worktree_id.clone())
+        .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+            id: worktree_id.clone(),
+            ..Default::default()
+        });
+    for cmd in sequence {
+        slice.queue.push_back(cmd);
+    }
+    slice.post_drain = Some(Box::new(Action::MetroStartForWorktree {
+        worktree_id: worktree_id.clone(),
+    }));
+
+    if let Some(eff) = dispatch_command_for_worktree(state, &worktree_id, first) {
+        effects.push(eff);
+    }
+}
+
 /// Directly dispatches a command without going through the pre-processing pipeline.
 /// Used by ModalConfirm to run confirmed destructive commands, and internally after
 /// text-input and device-picker modals complete.
@@ -283,18 +392,32 @@ fn next_available_reserved_metro_port(state: &AppState) -> u16 {
 ///   push `[cancelled by new dispatch]`, then fall through to normal
 ///   dispatch with the new task_id.
 fn dispatch_command(state: &mut AppState, spec: CommandSpec) -> Option<Effect> {
-    let wt = if !state.worktree_browser.worktrees.is_empty() {
-        let idx = state
-            .worktree_browser
-            .worktree_table_state
-            .selected()
-            .unwrap_or(0);
-        let idx = idx.min(state.worktree_browser.worktrees.len() - 1);
-        state.worktree_browser.worktrees[idx].clone()
-    } else {
+    let Some(wt_id) = active_worktree_id(state) else {
         // No worktrees loaded yet — can't dispatch; log to a fallback message (no per-worktree key)
         tracing::warn!(
             "dispatch_command: no worktree selected, dropping command {:?}",
+            spec.label()
+        );
+        return None;
+    };
+    dispatch_command_for_worktree(state, &wt_id, spec)
+}
+
+fn dispatch_command_for_worktree(
+    state: &mut AppState,
+    worktree_id: &WorktreeId,
+    spec: CommandSpec,
+) -> Option<Effect> {
+    let Some(wt) = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| &wt.id == worktree_id)
+        .cloned()
+    else {
+        tracing::warn!(
+            "dispatch_command_for_worktree: unknown worktree {:?}, dropping command {:?}",
+            worktree_id,
             spec.label()
         );
         return None;
@@ -406,7 +529,7 @@ fn command_with_run_variant(spec: CommandSpec, variant: RunVariant) -> CommandSp
     }
 }
 
-fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec) {
+fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec, cache_launch_supported: bool) {
     let Some(wt_id) = active_worktree_id(state) else {
         return;
     };
@@ -423,21 +546,203 @@ fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec) {
             device_id,
             variant: Some(variant),
         } => {
+            let cache_launch_supported = cache_launch_supported
+                || slice.last_android_run.as_ref().is_some_and(|config| {
+                    config.device_id == *device_id
+                        && config.variant == *variant
+                        && config.cache_launch_supported
+                });
             slice.last_android_run = Some(LastRunConfig {
                 device_id: device_id.clone(),
                 variant: *variant,
+                cache_launch_supported,
             });
         }
         CommandSpec::UmpRunIos {
             device_id,
             variant: Some(variant),
         } => {
+            let cache_launch_supported = cache_launch_supported
+                || slice.last_ios_run.as_ref().is_some_and(|config| {
+                    config.device_id == *device_id
+                        && config.variant == *variant
+                        && config.cache_launch_supported
+                });
             slice.last_ios_run = Some(LastRunConfig {
                 device_id: device_id.clone(),
                 variant: *variant,
+                cache_launch_supported,
             });
         }
         _ => {}
+    }
+}
+
+fn ios_device_supports_cached_launch(device: &crate::domain::command::DeviceInfo) -> bool {
+    device.name.ends_with(" (Booted)")
+        || device.name.ends_with(" (Shutdown)")
+        || device.name.ends_with(" (Creating)")
+        || device.name.ends_with(" (Booting)")
+        || device.name.ends_with(" (Shutting Down)")
+        || device.name.ends_with(" (Unknown)")
+}
+
+fn selected_ios_cache_hit_for_variant(
+    state: &AppState,
+    variant: RunVariant,
+) -> Option<crate::domain::native_cache::IosSimulatorCacheHit> {
+    let id = active_worktree_id(state)?;
+    let selected_cache = &state.worktrees.get(&id)?.ios_simulator_cache;
+    if let Some(hit) = selected_cache.hit() {
+        return (hit.metadata.variant == variant.label()).then(|| hit.clone());
+    }
+
+    let crate::domain::native_cache::IosSimulatorCacheState::Miss { fingerprint } = selected_cache
+    else {
+        return None;
+    };
+
+    state
+        .worktrees
+        .values()
+        .filter_map(|slice| slice.ios_simulator_cache.hit())
+        .find(|hit| {
+            hit.metadata.fingerprint == *fingerprint && hit.metadata.variant == variant.label()
+        })
+        .cloned()
+}
+
+fn selected_android_cache_hit_for_variant(
+    state: &AppState,
+    variant: RunVariant,
+) -> Option<crate::domain::native_cache::AndroidCacheHit> {
+    let id = active_worktree_id(state)?;
+    let selected_cache = &state.worktrees.get(&id)?.android_cache;
+    if let Some(hit) = selected_cache.hit() {
+        return android_cache_variant_matches(&hit.metadata.variant, variant).then(|| hit.clone());
+    }
+
+    let crate::domain::native_cache::AndroidCacheState::Miss { fingerprint } = selected_cache
+    else {
+        return None;
+    };
+
+    state
+        .worktrees
+        .values()
+        .filter_map(|slice| slice.android_cache.hit())
+        .find(|hit| {
+            hit.metadata.fingerprint == *fingerprint
+                && android_cache_variant_matches(&hit.metadata.variant, variant)
+        })
+        .cloned()
+}
+
+fn android_cache_variant_matches(metadata_variant: &str, variant: RunVariant) -> bool {
+    metadata_variant == variant.label()
+        || matches!(
+            (variant, metadata_variant),
+            (RunVariant::Local, "localDebugOptimized")
+                | (RunVariant::Dev, "devDebugOptimized")
+                | (RunVariant::Prod, "prodDebug")
+        )
+}
+
+fn ios_cache_hit_variant(
+    cache_hit: &crate::domain::native_cache::IosSimulatorCacheHit,
+) -> RunVariant {
+    RunVariant::ALL
+        .iter()
+        .copied()
+        .find(|variant| cache_hit.metadata.variant == variant.label())
+        .unwrap_or(RunVariant::Local)
+}
+
+fn android_cache_hit_variant(
+    cache_hit: &crate::domain::native_cache::AndroidCacheHit,
+) -> RunVariant {
+    RunVariant::ALL
+        .iter()
+        .copied()
+        .find(|variant| android_cache_variant_matches(&cache_hit.metadata.variant, *variant))
+        .unwrap_or(RunVariant::Local)
+}
+
+fn cached_variants_for_run_picker(
+    state: &AppState,
+    spec: &CommandSpec,
+    cache_launch_supported: bool,
+) -> [bool; 3] {
+    if !cache_launch_supported {
+        return [false; 3];
+    }
+
+    let mut cached = [false; 3];
+    for (idx, variant) in RunVariant::ALL.iter().enumerate() {
+        cached[idx] = match spec {
+            CommandSpec::UmpRunIos { .. } => {
+                selected_ios_cache_hit_for_variant(state, *variant).is_some()
+            }
+            CommandSpec::UmpRunAndroid { .. } => {
+                selected_android_cache_hit_for_variant(state, *variant).is_some()
+            }
+            _ => false,
+        };
+    }
+    cached
+}
+
+fn try_begin_cached_run_for_spec(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    spec: &CommandSpec,
+    cache_launch_supported: bool,
+) -> bool {
+    if !cache_launch_supported {
+        return false;
+    }
+    let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) else {
+        return false;
+    };
+
+    match spec {
+        CommandSpec::UmpRunIos {
+            device_id,
+            variant: Some(variant),
+        } => {
+            if let Some(cache_hit) = selected_ios_cache_hit_for_variant(state, *variant) {
+                begin_cached_ios_launch(
+                    state,
+                    effects,
+                    worktree_id,
+                    worktree_path,
+                    device_id.clone(),
+                    cache_hit,
+                );
+                true
+            } else {
+                false
+            }
+        }
+        CommandSpec::UmpRunAndroid {
+            device_id,
+            variant: Some(variant),
+        } => {
+            if let Some(cache_hit) = selected_android_cache_hit_for_variant(state, *variant) {
+                begin_cached_android_launch(
+                    state,
+                    effects,
+                    worktree_id,
+                    worktree_path,
+                    device_id.clone(),
+                    cache_hit,
+                );
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
@@ -446,19 +751,31 @@ fn open_run_variant_picker_or_dispatch(
     effects: &mut Vec<Effect>,
     spec: CommandSpec,
     boot_android_emulator: bool,
+    cache_launch_supported: bool,
 ) {
     if spec.needs_run_variant_selection() {
+        let cached_variants = cached_variants_for_run_picker(state, &spec, cache_launch_supported);
+        let selected = cached_variants
+            .iter()
+            .position(|cached| *cached)
+            .unwrap_or(0);
         state.modal_stack.modal = Some(ModalState::RunVariantPicker {
-            selected: 0,
+            selected,
             pending_template: Box::new(spec),
             boot_android_emulator,
+            cache_launch_supported,
+            cached_variants,
         });
         return;
     }
 
-    if let Some(eff) = dispatch_command(state, spec) {
-        effects.push(eff);
-    }
+    effects.extend(update(
+        state,
+        Action::CommandRunWithCache {
+            spec,
+            cache_launch_supported,
+        },
+    ));
 }
 
 fn cached_ios_launch_request(
@@ -471,6 +788,10 @@ fn cached_ios_launch_request(
         app_path: cache_hit.artifact_path.clone(),
         bundle_id: cache_hit.metadata.bundle_id.clone(),
         metro_port,
+        fingerprint: cache_hit.metadata.fingerprint.clone(),
+        variant: ios_cache_hit_variant(cache_hit),
+        artifact_digest_algorithm: cache_hit.metadata.artifact_digest_algorithm.clone(),
+        artifact_digest: cache_hit.metadata.artifact_digest.clone(),
     }
 }
 
@@ -484,6 +805,10 @@ fn cached_android_launch_request(
         apk_path: cache_hit.artifact_path.clone(),
         application_id: cache_hit.metadata.application_id.clone(),
         metro_port,
+        fingerprint: cache_hit.metadata.fingerprint.clone(),
+        variant: android_cache_hit_variant(cache_hit),
+        artifact_digest_algorithm: cache_hit.metadata.artifact_digest_algorithm.clone(),
+        artifact_digest: cache_hit.metadata.artifact_digest.clone(),
     }
 }
 
@@ -491,7 +816,7 @@ fn begin_cached_ios_launch(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
     worktree_id: WorktreeId,
-    worktree_path: PathBuf,
+    _worktree_path: PathBuf,
     device_id: String,
     cache_hit: crate::domain::native_cache::IosSimulatorCacheHit,
 ) {
@@ -499,7 +824,7 @@ fn begin_cached_ios_launch(
         device_id.clone(),
     )));
 
-    let (launch_port, should_start_metro) = {
+    let launch_port = {
         let slice = state
             .worktrees
             .entry(worktree_id.clone())
@@ -507,10 +832,7 @@ fn begin_cached_ios_launch(
                 id: worktree_id.clone(),
                 ..Default::default()
             });
-        let launch_port = slice.metro.process_port();
-        let has_running_or_reserved_metro =
-            slice.metro.is_running() || slice.metro.running_port().is_some();
-        (launch_port, !has_running_or_reserved_metro)
+        slice.metro.process_port()
     };
 
     if let Some(port) = launch_port {
@@ -535,30 +857,18 @@ fn begin_cached_ios_launch(
                 cache_hit,
             });
     }
-    if should_start_metro {
-        let port = next_available_reserved_metro_port(state);
-        state
-            .worktrees
-            .get_mut(&worktree_id)
-            .expect("cached iOS launch slice should exist")
-            .metro
-            .reserve_start(port);
-        effects.push(Effect::SpawnMetro {
-            worktree: worktree_path,
-            port,
-        });
-    }
+    effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
 }
 
 fn begin_cached_android_launch(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
     worktree_id: WorktreeId,
-    worktree_path: PathBuf,
+    _worktree_path: PathBuf,
     device_id: String,
     cache_hit: crate::domain::native_cache::AndroidCacheHit,
 ) {
-    let (launch_port, should_start_metro) = {
+    let launch_port = {
         let slice = state
             .worktrees
             .entry(worktree_id.clone())
@@ -566,10 +876,7 @@ fn begin_cached_android_launch(
                 id: worktree_id.clone(),
                 ..Default::default()
             });
-        let launch_port = slice.metro.process_port();
-        let has_running_or_reserved_metro =
-            slice.metro.is_running() || slice.metro.running_port().is_some();
-        (launch_port, !has_running_or_reserved_metro)
+        slice.metro.process_port()
     };
 
     if let Some(port) = launch_port {
@@ -594,19 +901,7 @@ fn begin_cached_android_launch(
                 cache_hit,
             });
     }
-    if should_start_metro {
-        let port = next_available_reserved_metro_port(state);
-        state
-            .worktrees
-            .get_mut(&worktree_id)
-            .expect("cached Android launch slice should exist")
-            .metro
-            .reserve_start(port);
-        effects.push(Effect::SpawnMetro {
-            worktree: worktree_path,
-            port,
-        });
-    }
+    effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
 }
 
 /// TEA update function — the ONLY place AppState is mutated.
@@ -662,28 +957,28 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         // --- Metro control actions ---
         Action::MetroStart => {
             state.modal_stack.palette_mode = None;
-            if active_worktree_has_metro(state) {
+            let Some(worktree_id) = active_worktree_id(state) else {
                 return effects;
-            }
+            };
             state.metro_state.skip_external_metro_check = false;
-            effects.extend(update(state, Action::MetroStartConfirmed));
+            effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
+        }
+
+        Action::MetroStartForWorktree { worktree_id } => {
+            state.modal_stack.palette_mode = None;
+            ensure_metro_for_worktree(state, &mut effects, worktree_id);
         }
 
         Action::MetroStartConfirmed => {
-            let worktree_path = active_metro_worktree_path(state);
-            let slice_id = active_metro_slice_id(state);
-            let port = next_available_reserved_metro_port(state);
-            let slice = state.worktrees.entry(slice_id.clone()).or_insert_with(|| {
-                crate::domain::worktree_slice::WorktreeSlice {
-                    id: slice_id,
-                    ..Default::default()
-                }
-            });
-            slice.metro.reserve_start(port);
-            effects.push(Effect::SpawnMetro {
-                worktree: worktree_path,
-                port,
-            });
+            let worktree_id = active_metro_slice_id(state);
+            effects.extend(update(
+                state,
+                Action::MetroStartConfirmedForWorktree { worktree_id },
+            ));
+        }
+
+        Action::MetroStartConfirmedForWorktree { worktree_id } => {
+            start_metro_for_worktree(state, &mut effects, worktree_id);
         }
 
         Action::MetroStop => {
@@ -777,7 +1072,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // active_worktree_path is already updated synchronously at the
                 // worktree-switch call site (Plan 13-09 — no pending_switch_path).
                 state.metro_state.skip_external_metro_check = true;
-                effects.extend(update(state, Action::MetroStart));
+                let worktree_id = active_metro_slice_id(state);
+                effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
             }
             // Refresh worktree list so metro status (green bg) updates immediately
             effects.extend(update(state, Action::RefreshWorktrees));
@@ -866,10 +1162,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 if let Some(ref id) = candidate_id
                     && let Some(slice) = state.worktrees.get_mut(id)
                     && let Some(spec) = slice.queue.pop_front()
+                    && let Some(effect) = dispatch_command_for_worktree(state, id, spec)
                 {
-                    // Re-enter update() to allocate a fresh TaskId via dispatch_command.
-                    // CommandRun is the canonical entry point.
-                    effects.extend(update(state, Action::CommandRun(spec)));
+                    effects.push(effect);
                 }
 
                 if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id) {
@@ -1071,10 +1366,22 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Command dispatch ---
+        Action::CommandRunWithCache {
+            spec,
+            cache_launch_supported,
+        } => {
+            state.modal_stack.palette_mode = None;
+            remember_ump_run_config(state, &spec, cache_launch_supported);
+            if try_begin_cached_run_for_spec(state, &mut effects, &spec, cache_launch_supported) {
+                return effects;
+            }
+            effects.extend(update(state, Action::CommandRun(spec)));
+        }
+
         Action::CommandRun(spec) => {
             // Clear palette mode whenever a command is dispatched
             state.modal_stack.palette_mode = None;
-            remember_ump_run_config(state, &spec);
+            remember_ump_run_config(state, &spec, false);
 
             // Get selected worktree (needed for all branches)
             let wt_branch = if !state.worktree_browser.worktrees.is_empty() {
@@ -1112,6 +1419,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         selected: 0,
                         pending_template: Box::new(spec),
                         boot_android_emulator: false,
+                        cache_launch_supported: false,
+                        cached_variants: [false; 3],
                     });
                     return effects;
                 }
@@ -1200,8 +1509,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         }
                     });
                     slice.queue.push_front(spec);
+                    effects.extend(update(
+                        state,
+                        Action::MetroStartForWorktree { worktree_id: wt_id },
+                    ));
                 }
-                effects.extend(update(state, Action::MetroStart));
                 return effects;
             }
 
@@ -1380,27 +1692,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // approach: peek/pop in one borrow, then dispatch in a fresh borrow.
             enum SliceDrainResult {
                 /// Head spec needs to be dispatched.
-                Dispatch(crate::domain::command::CommandSpec),
+                Dispatch(WorktreeId, crate::domain::command::CommandSpec),
                 /// Head spec needs metro — push back and start metro.
-                NeedsMetro(Option<PathBuf>),
+                NeedsMetro(WorktreeId),
                 /// Queue is empty — consume post_drain.
                 PostDrain(Box<Action>),
                 /// Queue is empty, no post_drain.
                 Empty,
             }
 
-            let target_metro_path = target_id.as_ref().and_then(|id| {
-                state
-                    .worktree_browser
-                    .worktrees
-                    .iter()
-                    .find(|wt| &wt.id == id)
-                    .map(|wt| wt.path.clone())
-            });
             let target_has_metro = target_id
                 .as_ref()
-                .and_then(|id| state.worktrees.get(id))
-                .map(|slice| slice.metro.is_running())
+                .map(|id| worktree_has_metro_or_reserved(state, id))
                 .unwrap_or_else(|| active_worktree_has_metro(state));
 
             let slice_drain = if let Some(ref id) = target_id
@@ -1410,9 +1713,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     if next_spec.needs_metro() && !target_has_metro {
                         // D-13: metro stays metro-special. Push back to head of slice.
                         slice.queue.push_front(next_spec.clone());
-                        SliceDrainResult::NeedsMetro(target_metro_path)
+                        SliceDrainResult::NeedsMetro(id.clone())
                     } else {
-                        SliceDrainResult::Dispatch(next_spec)
+                        SliceDrainResult::Dispatch(id.clone(), next_spec)
                     }
                 } else if let Some(post) = slice.post_drain.take() {
                     // D-14: per-slice post_drain consumed on empty queue.
@@ -1425,16 +1728,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             };
 
             match slice_drain {
-                SliceDrainResult::Dispatch(spec) => {
-                    if let Some(eff) = dispatch_command(state, spec) {
+                SliceDrainResult::Dispatch(worktree_id, spec) => {
+                    if let Some(eff) = dispatch_command_for_worktree(state, &worktree_id, spec) {
                         effects.push(eff);
                     }
                 }
-                SliceDrainResult::NeedsMetro(path) => {
-                    if let Some(path) = path {
-                        state.metro_state.active_worktree_path = Some(path);
-                    }
-                    effects.extend(update(state, Action::MetroStart));
+                SliceDrainResult::NeedsMetro(worktree_id) => {
+                    effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
                 }
                 SliceDrainResult::PostDrain(post) => {
                     effects.extend(update(state, *post));
@@ -1816,16 +2116,33 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. })
                     {
                         let real_spec = command_with_device(*pending_template, device_id);
-                        open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
+                        open_run_variant_picker_or_dispatch(
+                            state,
+                            &mut effects,
+                            real_spec,
+                            true,
+                            false,
+                        );
                         return effects;
                     }
 
+                    let cache_launch_supported = match pending_template.as_ref() {
+                        CommandSpec::UmpRunAndroid { .. } => true,
+                        CommandSpec::UmpRunIos { .. } => ios_device_supports_cached_launch(device),
+                        _ => false,
+                    };
                     let real_spec = command_with_device(*pending_template, device_id.clone());
                     // Record iOS simulator usage for sort-by-recent
-                    if is_ios {
+                    if is_ios && cache_launch_supported {
                         effects.push(Effect::ScheduleAction(Action::SimulatorUsed(device_id)));
                     }
-                    open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
+                    open_run_variant_picker_or_dispatch(
+                        state,
+                        &mut effects,
+                        real_spec,
+                        false,
+                        cache_launch_supported,
+                    );
                 }
             }
         }
@@ -1857,6 +2174,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 selected,
                 pending_template,
                 boot_android_emulator,
+                cache_launch_supported,
+                ..
             }) = state.modal_stack.modal.take()
             {
                 let variant = RunVariant::ALL[selected.min(RunVariant::ALL.len() - 1)];
@@ -1866,7 +2185,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     && let CommandSpec::UmpRunAndroid { device_id, .. } = &real_spec
                     && let Some(avd_name) = android_avd_name(device_id)
                 {
-                    remember_ump_run_config(state, &real_spec);
+                    remember_ump_run_config(state, &real_spec, cache_launch_supported);
                     let boot = CommandSpec::ShellCommand {
                         command: android_boot_avd_command(avd_name),
                     };
@@ -1885,7 +2204,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     return effects;
                 }
 
-                effects.extend(update(state, Action::CommandRun(real_spec)));
+                effects.extend(update(
+                    state,
+                    Action::CommandRunWithCache {
+                        spec: real_spec,
+                        cache_launch_supported,
+                    },
+                ));
             }
         }
 
@@ -2029,16 +2354,25 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                     &mut effects,
                                     real_spec,
                                     true,
+                                    false,
                                 );
                                 return effects;
                             }
                         } else {
+                            let cache_launch_supported = match &spec {
+                                CommandSpec::UmpRunAndroid { .. } => true,
+                                CommandSpec::UmpRunIos { .. } => {
+                                    ios_device_supports_cached_launch(&devices[0])
+                                }
+                                _ => false,
+                            };
                             let real_spec = command_with_device(spec, devices[0].id.clone());
                             open_run_variant_picker_or_dispatch(
                                 state,
                                 &mut effects,
                                 real_spec,
                                 false,
+                                cache_launch_supported,
                             );
                         }
                     }
@@ -2086,6 +2420,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .worktrees
                 .get(selected_idx)
                 .map(|wt| wt.path.clone());
+            let target_id = state
+                .worktree_browser
+                .worktrees
+                .get(selected_idx)
+                .map(|wt| wt.id.clone());
 
             // Stale dependency check — metro only needs yarn, not pods
             if let Some(wt) = state.worktree_browser.worktrees.get(selected_idx)
@@ -2100,33 +2439,38 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     // Plan 13-09 (F-204 site 10a): auto-sync fast path uses
                     // Recipe::SyncThenStartMetro. Set active_worktree_path
                     // synchronously (replaces pending_switch_path).
+                    let Some(wt_id) = target_id.clone() else {
+                        return effects;
+                    };
                     if let Some(path) = target_path {
                         state.metro_state.active_worktree_path = Some(path);
                     }
                     let deps = DependencyState::new(true, false, false);
                     let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
                     if sequence.is_empty() {
-                        effects.extend(update(state, Action::MetroStart));
+                        effects.extend(update(
+                            state,
+                            Action::MetroStartForWorktree { worktree_id: wt_id },
+                        ));
                         return effects;
                     }
                     let first = sequence.remove(0);
 
                     // D-12 + D-14: push to slice queue; set per-slice post_drain to MetroStart.
-                    let resolved_id = active_worktree_id(state);
-                    if let Some(ref wt_id) = resolved_id {
-                        let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
-                            crate::domain::worktree_slice::WorktreeSlice {
-                                id: wt_id.clone(),
-                                ..Default::default()
-                            }
-                        });
-                        for cmd in sequence {
-                            slice.queue.push_back(cmd);
+                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+                        crate::domain::worktree_slice::WorktreeSlice {
+                            id: wt_id.clone(),
+                            ..Default::default()
                         }
-                        slice.post_drain = Some(Box::new(Action::MetroStart));
+                    });
+                    for cmd in sequence {
+                        slice.queue.push_back(cmd);
                     }
+                    slice.post_drain = Some(Box::new(Action::MetroStartForWorktree {
+                        worktree_id: wt_id.clone(),
+                    }));
 
-                    if let Some(eff) = dispatch_command(state, first) {
+                    if let Some(eff) = dispatch_command_for_worktree(state, &wt_id, first) {
                         effects.push(eff);
                     }
                     return effects;
@@ -2149,8 +2493,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(path) = target_path {
                 state.metro_state.active_worktree_path = Some(path);
             }
-            if !active_worktree_has_metro(state) {
-                effects.extend(update(state, Action::MetroStart));
+            if let Some(worktree_id) = target_id
+                && !worktree_has_metro_or_reserved(state, &worktree_id)
+            {
+                effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
             }
         }
 
@@ -2361,6 +2707,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             result,
         } => match result {
             Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
+                let hit = *hit;
                 let fingerprint = hit.metadata.fingerprint.clone();
                 for (id, slice) in state.worktrees.iter_mut() {
                     let same_fingerprint_miss = matches!(
@@ -2371,7 +2718,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     );
                     if id == &worktree_id || same_fingerprint_miss {
                         slice.ios_simulator_cache =
-                            crate::domain::native_cache::IosSimulatorCacheState::Hit(hit.clone());
+                            crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
+                                hit.clone(),
+                            ));
                     }
                 }
             }
@@ -2393,6 +2742,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             result,
         } => match result {
             Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
+                let hit = *hit;
                 let fingerprint = hit.metadata.fingerprint.clone();
                 for (id, slice) in state.worktrees.iter_mut() {
                     let same_fingerprint_miss = matches!(
@@ -2402,8 +2752,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         } if miss_fingerprint == &fingerprint
                     );
                     if id == &worktree_id || same_fingerprint_miss {
-                        slice.android_cache =
-                            crate::domain::native_cache::AndroidCacheState::Hit(hit.clone());
+                        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Hit(
+                            Box::new(hit.clone()),
+                        );
                     }
                 }
             }
@@ -2481,6 +2832,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             worktree_id,
             result,
         } => {
+            let mut fallback_spec = None;
             if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                 match result {
                     crate::domain::native_cache::CachedIosLaunchResult::Success(lines) => {
@@ -2496,17 +2848,41 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             .output
                             .push_back(format!("[cached-ios error] {message}"));
                     }
+                    crate::domain::native_cache::CachedIosLaunchResult::InvalidArtifact {
+                        message,
+                        device_id,
+                        variant,
+                    } => {
+                        slice
+                            .output
+                            .push_back(format!("[cached-ios stale] {message}"));
+                        slice.ios_simulator_cache =
+                            crate::domain::native_cache::IosSimulatorCacheState::Error(
+                                message.clone(),
+                            );
+                        fallback_spec = Some(CommandSpec::UmpRunIos {
+                            device_id,
+                            variant: Some(variant),
+                        });
+                    }
                 }
                 while slice.output.len() > MAX_COMMAND_LINES {
                     slice.output.pop_front();
                 }
                 slice.output_scroll = 0;
             }
+            if let Some(spec) = fallback_spec {
+                remember_ump_run_config(state, &spec, false);
+                if let Some(effect) = dispatch_command_for_worktree(state, &worktree_id, spec) {
+                    effects.push(effect);
+                }
+            }
         }
         Action::CachedAndroidLaunchFinished {
             worktree_id,
             result,
         } => {
+            let mut fallback_spec = None;
             if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                 match result {
                     crate::domain::native_cache::CachedAndroidLaunchResult::Success(lines) => {
@@ -2522,11 +2898,32 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             .output
                             .push_back(format!("[cached-android error] {message}"));
                     }
+                    crate::domain::native_cache::CachedAndroidLaunchResult::InvalidArtifact {
+                        message,
+                        device_id,
+                        variant,
+                    } => {
+                        slice
+                            .output
+                            .push_back(format!("[cached-android stale] {message}"));
+                        slice.android_cache =
+                            crate::domain::native_cache::AndroidCacheState::Error(message.clone());
+                        fallback_spec = Some(CommandSpec::UmpRunAndroid {
+                            device_id,
+                            variant: Some(variant),
+                        });
+                    }
                 }
                 while slice.output.len() > MAX_COMMAND_LINES {
                     slice.output.pop_front();
                 }
                 slice.output_scroll = 0;
+            }
+            if let Some(spec) = fallback_spec {
+                remember_ump_run_config(state, &spec, false);
+                if let Some(effect) = dispatch_command_for_worktree(state, &worktree_id, spec) {
+                    effects.push(effect);
+                }
             }
         }
         Action::SyncBeforeRunAccept => {
@@ -2588,8 +2985,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             }
                         });
                         slice.queue.push_front(spec);
+                        effects.extend(update(
+                            state,
+                            Action::MetroStartForWorktree { worktree_id: wt_id },
+                        ));
                     }
-                    effects.extend(update(state, Action::MetroStart));
                 } else if let Some(eff) = dispatch_command(state, spec) {
                     effects.push(eff);
                 }
@@ -2602,6 +3002,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 needs_pods,
             }) = state.modal_stack.modal.take()
             {
+                let worktree_id = active_metro_slice_id(state);
                 // Plan 13-09: pending_switch_path deleted. The active_worktree_path
                 // was already updated synchronously at the WorktreeSwitchToSelected
                 // call site when the SyncBeforeMetro modal was constructed.
@@ -2622,28 +3023,33 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 if sequence.is_empty() {
                     // No sync needed — start metro directly.
-                    effects.extend(update(state, Action::MetroStart));
+                    effects.extend(update(
+                        state,
+                        Action::MetroStartForWorktree {
+                            worktree_id: worktree_id.clone(),
+                        },
+                    ));
                     return effects;
                 }
 
                 let first = sequence.remove(0);
 
                 // D-12 + D-14: push to slice queue; set per-slice post_drain to MetroStart.
-                let resolved_id = active_worktree_id(state);
-                if let Some(ref wt_id) = resolved_id {
-                    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
-                        crate::domain::worktree_slice::WorktreeSlice {
-                            id: wt_id.clone(),
-                            ..Default::default()
-                        }
+                let slice = state
+                    .worktrees
+                    .entry(worktree_id.clone())
+                    .or_insert_with(|| crate::domain::worktree_slice::WorktreeSlice {
+                        id: worktree_id.clone(),
+                        ..Default::default()
                     });
-                    for cmd in sequence {
-                        slice.queue.push_back(cmd);
-                    }
-                    slice.post_drain = Some(Box::new(Action::MetroStart));
+                for cmd in sequence {
+                    slice.queue.push_back(cmd);
                 }
+                slice.post_drain = Some(Box::new(Action::MetroStartForWorktree {
+                    worktree_id: worktree_id.clone(),
+                }));
 
-                if let Some(eff) = dispatch_command(state, first) {
+                if let Some(eff) = dispatch_command_for_worktree(state, &worktree_id, first) {
                     effects.push(eff);
                 }
             }
@@ -2653,7 +3059,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(ModalState::SyncBeforeMetro { .. }) = state.modal_stack.modal.take() {
                 // Plan 13-09: active_worktree_path is already set at the
                 // WorktreeSwitchToSelected call site (no pending_switch_path).
-                effects.extend(update(state, Action::MetroStart));
+                let worktree_id = active_metro_slice_id(state);
+                effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
             }
         }
 
@@ -2955,6 +3362,10 @@ mod tests {
                 created_at: "2026-06-01T00:00:00Z".into(),
                 source_worktree: "wt-a".into(),
                 artifact_kind: "app-bundle".into(),
+                storage_mode: "copy".into(),
+                source_artifact_path: PathBuf::from("/tmp/wt-a/app.app"),
+                artifact_digest_algorithm: "sha256".into(),
+                artifact_digest: "digest".into(),
             },
             artifact_path: PathBuf::from("/tmp/cached.app"),
         }

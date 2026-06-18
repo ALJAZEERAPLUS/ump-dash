@@ -4,9 +4,9 @@
 // preferences loading. The library crate (`ump_dash`) is now infra-free at the
 // boundary `ump_dash::app::run(terminal, adapters, state)`.
 
-use ump_dash::app::{run, Adapters, AppState};
-use ump_dash::domain::ports::jira_port::JiraPort;
 use std::sync::Arc;
+use ump_dash::app::{Adapters, AppState, run};
+use ump_dash::domain::ports::jira_port::JiraPort;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -59,15 +59,16 @@ async fn main() -> color_eyre::Result<()> {
 
     // Step 5: Construct the Adapters bundle. Concrete `crate::infra::*` types
     // are referenced ONLY here — `src/app/` stays infra-free (G-01).
-    let jira_port: Option<Arc<dyn JiraPort>> = config.as_ref().and_then(|cfg| {
-        match ump_dash::infra::jira::HttpJiraClient::new(cfg) {
-            Ok(client) => Some(Arc::new(client) as Arc<dyn JiraPort>),
-            Err(e) => {
-                tracing::warn!("JIRA client init failed: {e}");
-                None
-            }
-        }
-    });
+    let jira_port: Option<Arc<dyn JiraPort>> =
+        config.as_ref().and_then(
+            |cfg| match ump_dash::infra::jira::HttpJiraClient::new(cfg) {
+                Ok(client) => Some(Arc::new(client) as Arc<dyn JiraPort>),
+                Err(e) => {
+                    tracing::warn!("JIRA client init failed: {e}");
+                    None
+                }
+            },
+        );
     let multiplexer_port = ump_dash::infra::multiplexer::detect_multiplexer().map(Arc::from);
 
     // Worktree seed-file list comes from config; fall back to the domain default
@@ -76,14 +77,21 @@ async fn main() -> color_eyre::Result<()> {
         .as_ref()
         .map(|cfg| cfg.seed_files.clone())
         .unwrap_or_else(ump_dash::domain::dash_config::default_seed_files);
+    let native_cache_artifact_root = config
+        .as_ref()
+        .and_then(|cfg| cfg.native_cache_artifact_root_path());
 
     let adapters = Adapters {
         command_runner: Arc::new(ump_dash::infra::command_runner::TokioCommandRunner),
         metro: Arc::new(ump_dash::infra::metro::TokioMetroAdapter::new()),
         port_probe: Arc::new(ump_dash::infra::port::LsofPortProbe),
-        worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter::new(seed_files)),
+        worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter::new(
+            seed_files,
+        )),
         devices: Arc::new(ump_dash::infra::devices::AdbXcrunDevices),
-        native_cache: Arc::new(ump_dash::infra::native_cache::LocalNativeCache),
+        native_cache: Arc::new(ump_dash::infra::native_cache::LocalNativeCache::new(
+            native_cache_artifact_root,
+        )),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),
     };
@@ -101,7 +109,6 @@ async fn main() -> color_eyre::Result<()> {
         jira_port.is_some(),
         multiplexer_port.is_some(),
     );
-
 
     // Step 7: Initialize terminal (raw mode + alternate screen) and hand off.
     let terminal = ratatui::init();

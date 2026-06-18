@@ -84,6 +84,13 @@ The file is stored with `0600` permissions because it contains JIRA credentials.
 | `auto_sync` | boolean | `false` | `true`, `false` | Automatically accept sync-before-run and sync-before-metro prompts. |
 | `spinner_style` | string | `"circles"` | `"circles"`, `"braille"`, `"dots"` | Spinner glyph set for live task indicators. |
 | `columns` | array of strings | `["status", "branch", "ticket", "dir", "task", "cache_status", "cache"]` | `"status"`, `"branch"`, `"ticket"`, `"dir"`, `"task"`, `"cache_status"`, `"cache"`, `"android_cache_status"`, `"android_cache"` | Worktree table columns in display order. Omit a value to hide that column. |
+| `native_cache_artifact_root` | string | — | Any path string; supports `~/` | Optional root for copied native cache artifacts. Omit to keep metadata only and reference the original build output path. |
+
+When `native_cache_artifact_root` is set, native cache entries copy the built
+`.app` or APK under that root. When it is omitted, entries keep metadata and
+reference the original build output path. Both modes record a SHA-256 artifact
+digest; if the referenced or copied artifact changes, the entry is not reused as
+the same cache hit.
 
 ### Invalid config values
 

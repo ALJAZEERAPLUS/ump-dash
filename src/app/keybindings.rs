@@ -563,15 +563,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: has_last_android_run,
     },
     KeyBinding {
-        key: KeyCode::Char('c'),
-        label: "c",
-        short_desc: "cached",
-        long_desc: "Install cached Android build",
-        context: BindingContext::Palette(PaletteMode::Android),
-        action: cached_android_run,
-        visible: has_cached_android_hit,
-    },
-    KeyBinding {
         key: KeyCode::Esc,
         label: "Esc",
         short_desc: "cancel",
@@ -612,15 +603,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         context: BindingContext::Palette(PaletteMode::Ios),
         action: repeat_last_ios_run,
         visible: has_last_ios_run,
-    },
-    KeyBinding {
-        key: KeyCode::Char('c'),
-        label: "c",
-        short_desc: "cached",
-        long_desc: "Install cached iOS simulator build",
-        context: BindingContext::Palette(PaletteMode::Ios),
-        action: cached_ios_run,
-        visible: has_cached_ios_hit,
     },
     KeyBinding {
         key: KeyCode::Esc,
@@ -1405,44 +1387,6 @@ fn last_ios_run(state: &AppState) -> Option<&LastRunConfig> {
     active_last_run_config(state, |slice| slice.last_ios_run.as_ref())
 }
 
-fn cached_ios_hit(state: &AppState) -> Option<&crate::domain::native_cache::IosSimulatorCacheHit> {
-    let id = active_worktree_id(state)?;
-    let selected_cache = &state.worktrees.get(&id)?.ios_simulator_cache;
-    if let Some(hit) = selected_cache.hit() {
-        return Some(hit);
-    }
-
-    let crate::domain::native_cache::IosSimulatorCacheState::Miss { fingerprint } = selected_cache
-    else {
-        return None;
-    };
-
-    state
-        .worktrees
-        .values()
-        .filter_map(|slice| slice.ios_simulator_cache.hit())
-        .find(|hit| hit.metadata.fingerprint == *fingerprint)
-}
-
-fn cached_android_hit(state: &AppState) -> Option<&crate::domain::native_cache::AndroidCacheHit> {
-    let id = active_worktree_id(state)?;
-    let selected_cache = &state.worktrees.get(&id)?.android_cache;
-    if let Some(hit) = selected_cache.hit() {
-        return Some(hit);
-    }
-
-    let crate::domain::native_cache::AndroidCacheState::Miss { fingerprint } = selected_cache
-    else {
-        return None;
-    };
-
-    state
-        .worktrees
-        .values()
-        .filter_map(|slice| slice.android_cache.hit())
-        .find(|hit| hit.metadata.fingerprint == *fingerprint)
-}
-
 fn has_last_android_run(state: &AppState) -> bool {
     last_android_run(state).is_some()
 }
@@ -1451,47 +1395,27 @@ fn has_last_ios_run(state: &AppState) -> bool {
     last_ios_run(state).is_some()
 }
 
-fn has_cached_ios_hit(state: &AppState) -> bool {
-    cached_ios_hit(state).is_some()
-}
-
-fn has_cached_android_hit(state: &AppState) -> bool {
-    cached_android_hit(state).is_some()
-}
-
 fn repeat_last_android_run(state: &AppState) -> Option<Action> {
     Some(
-        last_android_run(state).map_or(Action::ModalCancel, |config| {
-            Action::CommandRun(CommandSpec::UmpRunAndroid {
+        last_android_run(state).map_or(Action::ModalCancel, |config| Action::CommandRunWithCache {
+            spec: CommandSpec::UmpRunAndroid {
                 device_id: config.device_id.clone(),
                 variant: Some(config.variant),
-            })
+            },
+            cache_launch_supported: config.cache_launch_supported,
         }),
     )
 }
 
 fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
-    Some(last_ios_run(state).map_or(Action::ModalCancel, |config| {
-        Action::CommandRun(CommandSpec::UmpRunIos {
-            device_id: config.device_id.clone(),
-            variant: Some(config.variant),
-        })
-    }))
-}
-
-fn cached_ios_run(state: &AppState) -> Option<Action> {
     Some(
-        cached_ios_hit(state)
-            .cloned()
-            .map_or(Action::ModalCancel, Action::CachedIosRun),
-    )
-}
-
-fn cached_android_run(state: &AppState) -> Option<Action> {
-    Some(
-        cached_android_hit(state)
-            .cloned()
-            .map_or(Action::ModalCancel, Action::CachedAndroidRun),
+        last_ios_run(state).map_or(Action::ModalCancel, |config| Action::CommandRunWithCache {
+            spec: CommandSpec::UmpRunIos {
+                device_id: config.device_id.clone(),
+                variant: Some(config.variant),
+            },
+            cache_launch_supported: config.cache_launch_supported,
+        }),
     )
 }
 

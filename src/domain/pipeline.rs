@@ -58,8 +58,8 @@ pub enum Recipe {
     /// Front-load yarn/pod sync steps if stale, then run the given command.
     /// iOS-only for pods per F-204 rule.
     SyncThenRun(CommandSpec),
-    /// Front-load yarn/pod sync steps if stale, then start metro.
-    /// Pods included when stale regardless of target (metro is platform-agnostic).
+    /// Front-load yarn if stale, then start metro.
+    /// Native pods are handled by native run/build recipes, not Metro.
     SyncThenStartMetro,
     /// `RnReleaseBuild` followed by `AdbInstallApk`.
     ReleaseBuildAndInstall,
@@ -86,7 +86,11 @@ impl DependencyState {
     /// The data projection from `AppState` is small but repeated — this keeps
     /// the call-site noise low. Pure data — no I/O, callable from tests.
     pub fn new(stale_yarn: bool, stale_pods: bool, is_ios_target: bool) -> Self {
-        Self { stale_yarn, stale_pods, is_ios_target }
+        Self {
+            stale_yarn,
+            stale_pods,
+            is_ios_target,
+        }
     }
 }
 
@@ -131,9 +135,6 @@ impl Recipe {
                 let mut v = Vec::new();
                 if deps.stale_yarn {
                     v.push(CommandSpec::YarnInstall);
-                }
-                if deps.stale_pods {
-                    v.push(CommandSpec::YarnPodInstall);
                 }
                 v // dispatcher follows with MetroStart
             }
@@ -185,10 +186,7 @@ mod tests {
 
     #[test]
     fn test_sequence_preserves_order() {
-        let recipe = Recipe::Sequence(vec![
-            CommandSpec::GitFetch,
-            CommandSpec::GitResetHard,
-        ]);
+        let recipe = Recipe::Sequence(vec![CommandSpec::GitFetch, CommandSpec::GitResetHard]);
         assert_eq!(
             recipe.expand(&fresh_deps()),
             vec![CommandSpec::GitFetch, CommandSpec::GitResetHard]
@@ -231,7 +229,11 @@ mod tests {
         };
         assert_eq!(
             Recipe::SyncThenRun(run_cmd.clone()).expand(&stale_deps_ios()),
-            vec![CommandSpec::YarnInstall, CommandSpec::YarnPodInstall, run_cmd]
+            vec![
+                CommandSpec::YarnInstall,
+                CommandSpec::YarnPodInstall,
+                run_cmd
+            ]
         );
     }
 
@@ -258,11 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_then_start_metro_stale_adds_both() {
-        // Metro start path: pods always included when stale, regardless of target.
+    fn test_sync_then_start_metro_stale_adds_only_yarn() {
+        // Metro start path only needs JS dependencies. Native pods are handled
+        // by native run/build recipes, not by Metro itself.
         assert_eq!(
             Recipe::SyncThenStartMetro.expand(&stale_deps_android()),
-            vec![CommandSpec::YarnInstall, CommandSpec::YarnPodInstall]
+            vec![CommandSpec::YarnInstall]
         );
     }
 
@@ -318,11 +321,17 @@ mod tests {
 
     #[test]
     fn test_prerequisites_yarn_install_no_prereq() {
-        assert_eq!(CommandSpec::YarnInstall.prerequisites(), Vec::<Prerequisite>::new());
+        assert_eq!(
+            CommandSpec::YarnInstall.prerequisites(),
+            Vec::<Prerequisite>::new()
+        );
     }
 
     #[test]
     fn test_prerequisites_git_fetch_no_prereq() {
-        assert_eq!(CommandSpec::GitFetch.prerequisites(), Vec::<Prerequisite>::new());
+        assert_eq!(
+            CommandSpec::GitFetch.prerequisites(),
+            Vec::<Prerequisite>::new()
+        );
     }
 }

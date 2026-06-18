@@ -90,11 +90,37 @@ impl ProcessPort for TokioProcessClient {
         worktree_path: PathBuf,
         port: u16,
     ) -> anyhow::Result<SpawnedMetroProcess> {
-        let port_reservation = reserve_next_available_metro_port(port)?;
-        let port = port_reservation.port();
-        let mut cmd = tokio::process::Command::new(metro_spawn_program());
-        cmd.args(metro_spawn_args_for_port(port))
-            .current_dir(worktree_path)
+        let requested_port = port;
+        tracing::info!(
+            worktree = %worktree_path.display(),
+            requested_port = requested_port,
+            "[metro-start] reserving Metro port"
+        );
+        let port_reservation = reserve_next_available_metro_port(requested_port).map_err(|e| {
+            let message = e.to_string();
+            tracing::warn!(
+                worktree = %worktree_path.display(),
+                requested_port = requested_port,
+                error = %message,
+                "[metro-start] Metro port reservation failed"
+            );
+            anyhow::anyhow!("failed to reserve Metro port from {requested_port}: {message}")
+        })?;
+        let selected_port = port_reservation.port();
+        let program = metro_spawn_program();
+        let args = metro_spawn_args_for_port(selected_port);
+        let command = format!("{program} {}", args.join(" "));
+        tracing::info!(
+            worktree = %worktree_path.display(),
+            requested_port = requested_port,
+            selected_port = selected_port,
+            command = %command,
+            "[metro-start] spawning Metro process"
+        );
+
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(&args)
+            .current_dir(&worktree_path)
             // CRITICAL: process_group(0) puts yarn + all Node children in their own
             // process group. kill() on the Child will send SIGKILL to the whole group,
             // ensuring the Node subprocess that holds port 8081 is also killed.
@@ -107,9 +133,33 @@ impl ProcessPort for TokioProcessClient {
             .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::piped());
 
+        let child = cmd.spawn().map_err(|e| {
+            let message = e.to_string();
+            tracing::warn!(
+                worktree = %worktree_path.display(),
+                requested_port = requested_port,
+                selected_port = selected_port,
+                command = %command,
+                error = %message,
+                "[metro-start] Metro process spawn failed"
+            );
+            anyhow::anyhow!(
+                "failed to spawn Metro command `{command}` in {}: {message}",
+                worktree_path.display()
+            )
+        })?;
+        let pid = child.id().unwrap_or(0);
+        tracing::info!(
+            worktree = %worktree_path.display(),
+            requested_port = requested_port,
+            selected_port = selected_port,
+            pid = pid,
+            "[metro-start] Metro process spawned"
+        );
+
         Ok(SpawnedMetroProcess {
-            child: cmd.spawn()?,
-            port,
+            child,
+            port: selected_port,
             port_reservation: Box::new(port_reservation),
         })
     }

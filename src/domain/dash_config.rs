@@ -29,6 +29,15 @@ fn default_spinner_style() -> String {
     "circles".to_string()
 }
 
+fn expand_home(path: &str) -> std::path::PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        std::path::PathBuf::from(home).join(rest)
+    } else {
+        std::path::PathBuf::from(path)
+    }
+}
+
 pub const DEFAULT_WORKTREE_COLUMNS: [WorktreeTableColumn; 7] = [
     WorktreeTableColumn::Status,
     WorktreeTableColumn::Branch,
@@ -149,6 +158,11 @@ pub struct DashConfig {
     )]
     pub columns: Vec<WorktreeTableColumn>,
 
+    /// Optional root for copied native cache artifacts. When omitted, the native
+    /// cache stores metadata only and references the original build output path.
+    #[serde(default)]
+    pub native_cache_artifact_root: Option<String>,
+
     /// Gitignored local files copied into each newly-created worktree so it
     /// builds — the repo's `.gitignore` excludes them, so git can't carry them
     /// across. Paths are relative to the repo root. Defaults to `.env` plus the
@@ -161,14 +175,15 @@ impl DashConfig {
     /// Resolves `repo_root` to a `PathBuf`, expanding `~/` to the home
     /// directory. Returns `None` when `repo_root` is not set in config.
     pub fn repo_root_path(&self) -> Option<std::path::PathBuf> {
-        self.repo_root.as_ref().map(|s| {
-            if let Some(rest) = s.strip_prefix("~/") {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                std::path::PathBuf::from(home).join(rest)
-            } else {
-                std::path::PathBuf::from(s)
-            }
-        })
+        self.repo_root.as_ref().map(|s| expand_home(s))
+    }
+
+    /// Resolves `native_cache_artifact_root`, expanding `~/` to the home
+    /// directory. `None` means reference-mode native cache storage.
+    pub fn native_cache_artifact_root_path(&self) -> Option<std::path::PathBuf> {
+        self.native_cache_artifact_root
+            .as_ref()
+            .map(|s| expand_home(s))
     }
 }
 
@@ -224,6 +239,25 @@ jira_token = "token"
         let config = parse_config(r#"seed_files = [".env.local", "fastlane/.env"]"#);
 
         assert_eq!(config.seed_files, vec![".env.local", "fastlane/.env"]);
+    }
+
+    #[test]
+    fn native_cache_artifact_root_defaults_to_none() {
+        let config = parse_config("");
+
+        assert_eq!(config.native_cache_artifact_root, None);
+        assert_eq!(config.native_cache_artifact_root_path(), None);
+    }
+
+    #[test]
+    fn native_cache_artifact_root_expands_home() {
+        let config = parse_config(r#"native_cache_artifact_root = "~/ump-native-cache""#);
+
+        let expected = std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join("ump-native-cache");
+        assert_eq!(config.native_cache_artifact_root_path(), Some(expected));
     }
 
     #[test]

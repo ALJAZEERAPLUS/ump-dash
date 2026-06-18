@@ -1,43 +1,61 @@
 //! Modal overlay renderers. Each modal type uses Clear + centered_rect pattern.
 //! render_modal() is the single dispatch point called from view().
 
+use crate::domain::command::ModalState;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
-    Frame,
 };
-use crate::domain::command::ModalState;
 
 /// Dispatch to the correct modal renderer based on the current ModalState.
 pub fn render_modal(f: &mut Frame, modal: &ModalState) {
     match modal {
         ModalState::Confirm { prompt, .. } => render_confirm_modal(f, prompt),
         ModalState::TextInput { prompt, buffer, .. } => render_text_input_modal(f, prompt, buffer),
-        ModalState::DevicePicker { devices, selected, filter, .. } => {
-            render_device_picker_modal(f, devices, *selected, filter)
-        }
-        ModalState::RunVariantPicker { selected, .. } => {
-            render_run_variant_picker_modal(f, *selected)
-        }
+        ModalState::DevicePicker {
+            devices,
+            selected,
+            filter,
+            ..
+        } => render_device_picker_modal(f, devices, *selected, filter),
+        ModalState::RunVariantPicker {
+            selected,
+            cached_variants,
+            ..
+        } => render_run_variant_picker_modal(f, *selected, cached_variants),
         ModalState::CleanToggle { options } => render_clean_modal(f, options),
-        ModalState::SyncBeforeRun { run_command, needs_yarn, needs_pods } => {
-            render_sync_prompt(f, run_command, *needs_yarn, *needs_pods)
-        }
-        ModalState::SyncBeforeMetro { needs_yarn, needs_pods } => {
-            render_sync_before_metro(f, *needs_yarn, *needs_pods)
-        }
+        ModalState::SyncBeforeRun {
+            run_command,
+            needs_yarn,
+            needs_pods,
+        } => render_sync_prompt(f, run_command, *needs_yarn, *needs_pods),
+        ModalState::SyncBeforeMetro {
+            needs_yarn,
+            needs_pods,
+        } => render_sync_before_metro(f, *needs_yarn, *needs_pods),
         ModalState::ExternalMetroConflict { pid, working_dir } => {
             render_external_metro_modal(f, *pid, working_dir)
         }
-        ModalState::BranchPicker { branches, selected, filter } => {
-            render_branch_picker_modal(f, branches, *selected, filter)
-        }
+        ModalState::BranchPicker {
+            branches,
+            selected,
+            filter,
+        } => render_branch_picker_modal(f, branches, *selected, filter),
     }
 }
 
-fn render_run_variant_picker_modal(f: &mut Frame, selected: usize) {
+fn run_variant_picker_label(variant: crate::domain::command::RunVariant, cached: bool) -> String {
+    if cached {
+        format!("{} (cached)", variant.label())
+    } else {
+        variant.label().to_string()
+    }
+}
+
+fn render_run_variant_picker_modal(f: &mut Frame, selected: usize, cached_variants: &[bool; 3]) {
     let area = centered_rect(f.area(), 40, 35, 28, 6);
     let block = Block::default()
         .title(" Select Run Type ")
@@ -46,7 +64,13 @@ fn render_run_variant_picker_modal(f: &mut Frame, selected: usize) {
 
     let items: Vec<ListItem> = crate::domain::command::RunVariant::ALL
         .iter()
-        .map(|variant| ListItem::new(Line::from(variant.label())))
+        .enumerate()
+        .map(|(idx, variant)| {
+            ListItem::new(Line::from(run_variant_picker_label(
+                *variant,
+                cached_variants[idx],
+            )))
+        })
         .collect();
 
     let list = List::new(items)
@@ -60,7 +84,9 @@ fn render_run_variant_picker_modal(f: &mut Frame, selected: usize) {
         .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
 
     let mut ls = ListState::default();
-    ls.select(Some(selected.min(crate::domain::command::RunVariant::ALL.len() - 1)));
+    ls.select(Some(
+        selected.min(crate::domain::command::RunVariant::ALL.len() - 1),
+    ));
 
     f.render_widget(Clear, area);
     f.render_stateful_widget(list, area, &mut ls);
@@ -74,7 +100,12 @@ fn render_confirm_modal(f: &mut Frame, prompt: &str) {
         Line::from(Span::raw(prompt)),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Y]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" confirm    "),
             Span::styled("[N/Esc]", Style::default().fg(Color::Red)),
             Span::raw(" cancel"),
@@ -102,7 +133,12 @@ fn render_text_input_modal(f: &mut Frame, prompt: &str, buffer: &str) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Enter]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" submit    "),
             Span::styled("[Esc]", Style::default().fg(Color::Red)),
             Span::raw(" cancel"),
@@ -132,7 +168,10 @@ fn render_device_picker_modal(
         devices.iter().collect()
     } else {
         let lower = filter.to_lowercase();
-        devices.iter().filter(|d| d.name.to_lowercase().contains(&lower)).collect()
+        devices
+            .iter()
+            .filter(|d| d.name.to_lowercase().contains(&lower))
+            .collect()
     };
 
     // Title shows filter text when active
@@ -204,14 +243,32 @@ fn render_clean_modal(f: &mut Frame, options: &crate::domain::command::CleanOpti
     let checkbox = |checked: bool| if checked { "[x]" } else { "[ ]" };
 
     let text = vec![
-        Line::from(Span::styled(" Clean Options ", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Clean Options ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
-        Line::from(format!("  n  {} node_modules (rm -rf)", checkbox(options.node_modules))),
-        Line::from(format!("  p  {} CocoaPods (react-native clean)", checkbox(options.pods))),
-        Line::from(format!("  a  {} Android (react-native clean)", checkbox(options.android))),
-        Line::from(format!("  i  {} Sync after clean (yarn + pods)", checkbox(options.sync_after))),
+        Line::from(format!(
+            "  n  {} node_modules (rm -rf)",
+            checkbox(options.node_modules)
+        )),
+        Line::from(format!(
+            "  p  {} CocoaPods (react-native clean)",
+            checkbox(options.pods)
+        )),
+        Line::from(format!(
+            "  a  {} Android (react-native clean)",
+            checkbox(options.android)
+        )),
+        Line::from(format!(
+            "  i  {} Sync after clean (yarn + pods)",
+            checkbox(options.sync_after)
+        )),
         Line::from(""),
-        Line::from(Span::styled("  x/Enter = confirm  Esc = cancel", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            "  x/Enter = confirm  Esc = cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
     ];
 
     let block = Block::default()
@@ -241,12 +298,22 @@ fn render_sync_prompt(
     };
 
     let text = vec![
-        Line::from(Span::styled(" Stale Dependencies ", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Stale Dependencies ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  Worktree is stale. Sync before running?"),
-        Line::from(format!("  Will run: {} -> {}", sync_desc, run_command.label())),
+        Line::from(format!(
+            "  Will run: {} -> {}",
+            sync_desc,
+            run_command.label()
+        )),
         Line::from(""),
-        Line::from(Span::styled("  Y = sync first  N = skip  Esc = cancel", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            "  Y = sync first  N = skip  Esc = cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
     ];
 
     let block = Block::default()
@@ -270,12 +337,18 @@ fn render_sync_before_metro(f: &mut Frame, needs_yarn: bool, needs_pods: bool) {
     };
 
     let text = vec![
-        Line::from(Span::styled(" Stale Dependencies ", Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Stale Dependencies ",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  Worktree is stale. Sync before starting metro?"),
         Line::from(format!("  Will run: {} -> start metro", sync_desc)),
         Line::from(""),
-        Line::from(Span::styled("  Y = sync first  N = skip  Esc = cancel", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            "  Y = sync first  N = skip  Esc = cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
     ];
 
     let block = Block::default()
@@ -303,7 +376,12 @@ fn render_external_metro_modal(f: &mut Frame, pid: u32, working_dir: &str) {
         Line::from(format!("  Directory: {working_dir}")),
         Line::from(""),
         Line::from(vec![
-            Span::styled("[Y]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "[Y]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Kill it    "),
             Span::styled("[N/Esc]", Style::default().fg(Color::Red)),
             Span::raw(" Cancel"),
@@ -320,12 +398,7 @@ fn render_external_metro_modal(f: &mut Frame, pid: u32, working_dir: &str) {
 }
 
 /// Renders a branch picker modal with filterable list. Used by w>B new-branch worktree flow.
-fn render_branch_picker_modal(
-    f: &mut Frame,
-    branches: &[String],
-    selected: usize,
-    filter: &str,
-) {
+fn render_branch_picker_modal(f: &mut Frame, branches: &[String], selected: usize, filter: &str) {
     let area = centered_rect(f.area(), 60, 60, 40, 7);
 
     // Apply filter (case-insensitive substring match)
@@ -333,7 +406,10 @@ fn render_branch_picker_modal(
         branches.iter().collect()
     } else {
         let lower = filter.to_lowercase();
-        branches.iter().filter(|b| b.to_lowercase().contains(&lower)).collect()
+        branches
+            .iter()
+            .filter(|b| b.to_lowercase().contains(&lower))
+            .collect()
     };
 
     // Title shows filter text when active
@@ -405,4 +481,19 @@ fn centered_rect(area: Rect, percent_x: u16, percent_y: u16, min_w: u16, min_h: 
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::command::RunVariant;
+
+    #[test]
+    fn run_variant_picker_label_marks_cached_variants_only() {
+        assert_eq!(
+            run_variant_picker_label(RunVariant::Local, true),
+            "local (cached)"
+        );
+        assert_eq!(run_variant_picker_label(RunVariant::Dev, false), "dev");
+    }
 }

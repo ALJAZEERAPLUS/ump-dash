@@ -566,6 +566,10 @@ mod tests {
                 created_at: "2026-06-01T00:00:00Z".into(),
                 source_worktree: "/tmp/wt".into(),
                 artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
+                storage_mode: "copy".into(),
+                source_artifact_path: "/tmp/wt/build/app.app".into(),
+                artifact_digest_algorithm: "sha256".into(),
+                artifact_digest: "digest".into(),
             },
             artifact_path: "/tmp/cached.app".into(),
         }
@@ -581,6 +585,10 @@ mod tests {
                 created_at: "2026-06-04T00:00:00Z".into(),
                 source_worktree: "/tmp/wt".into(),
                 artifact_kind: ANDROID_APK_ARTIFACT_KIND.into(),
+                storage_mode: "copy".into(),
+                source_artifact_path: "/tmp/wt/build/app.apk".into(),
+                artifact_digest_algorithm: "sha256".into(),
+                artifact_digest: "digest".into(),
             },
             artifact_path: "/tmp/cached.apk".into(),
         }
@@ -589,7 +597,9 @@ mod tests {
     #[test]
     fn cache_column_label_shows_short_fingerprint_for_hits() {
         let slice = WorktreeSlice {
-            ios_simulator_cache: IosSimulatorCacheState::Hit(cache_hit("abcdef1234567890")),
+            ios_simulator_cache: IosSimulatorCacheState::Hit(Box::new(cache_hit(
+                "abcdef1234567890",
+            ))),
             ..Default::default()
         };
 
@@ -622,7 +632,9 @@ mod tests {
     #[test]
     fn cache_status_column_label_shows_availability_light_only_for_hits() {
         let hit = WorktreeSlice {
-            ios_simulator_cache: IosSimulatorCacheState::Hit(cache_hit("abcdef1234567890")),
+            ios_simulator_cache: IosSimulatorCacheState::Hit(Box::new(cache_hit(
+                "abcdef1234567890",
+            ))),
             ..Default::default()
         };
         let miss = WorktreeSlice {
@@ -650,7 +662,7 @@ mod tests {
     #[test]
     fn android_cache_column_label_shows_fingerprint_and_compact_statuses() {
         let hit = WorktreeSlice {
-            android_cache: AndroidCacheState::Hit(android_cache_hit("abcdef1234567890")),
+            android_cache: AndroidCacheState::Hit(Box::new(android_cache_hit("abcdef1234567890"))),
             ..Default::default()
         };
         let miss = WorktreeSlice {
@@ -678,7 +690,7 @@ mod tests {
     #[test]
     fn android_cache_status_column_label_shows_availability_light_only_for_hits() {
         let hit = WorktreeSlice {
-            android_cache: AndroidCacheState::Hit(android_cache_hit("abcdef1234567890")),
+            android_cache: AndroidCacheState::Hit(Box::new(android_cache_hit("abcdef1234567890"))),
             ..Default::default()
         };
         let miss = WorktreeSlice {

@@ -65,11 +65,9 @@ jira_token = "your-api-token-here"
 # Default: ["status", "branch", "ticket", "dir", "task", "cache_status", "cache"]
 # columns = ["status", "branch", "ticket", "dir", "task", "android_cache_status", "android_cache"]
 
-# Invalid config behavior:
-# - Malformed TOML, missing required fields, wrong types, unknown column names,
-#   or duplicate column names make ump-dash ignore the whole config for that
-#   launch and log a warning.
-# - Unknown keys are ignored.
-# - Unknown spinner_style strings fall back to "circles".
-# - Unknown auth_mode strings use Cloud-style Basic Auth unless exactly
-#   "datacenter".
+# Native build cache artifact storage.
+# Omit this setting to keep metadata only and reference the original .app/APK
+# output path. Set it to copy cached artifacts under a stable local root.
+# In both modes, ump-dash records a SHA-256 digest and treats changed artifacts
+# as cache misses instead of reusing stale outputs.
+# native_cache_artifact_root = "~/Library/Caches/ump-dash/native-artifacts"

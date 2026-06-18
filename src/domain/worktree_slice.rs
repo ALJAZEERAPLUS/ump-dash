@@ -30,6 +30,7 @@ use std::collections::VecDeque;
 pub struct LastRunConfig {
     pub device_id: String,
     pub variant: RunVariant,
+    pub cache_launch_supported: bool,
 }
 
 /// Per-worktree state. One slice per `WorktreeId` lives in

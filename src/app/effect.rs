@@ -210,6 +210,10 @@ mod tests {
                 app_path: PathBuf::from("build/app.app"),
                 bundle_id: "com.aljazeera.test".into(),
                 metro_port: 8081,
+                fingerprint: "fingerprint".into(),
+                variant: crate::domain::command::RunVariant::Local,
+                artifact_digest_algorithm: "sha256".into(),
+                artifact_digest: "digest".into(),
             },
         };
         let _ = Effect::LookupAndroidCache {
@@ -230,6 +234,10 @@ mod tests {
                 apk_path: PathBuf::from("build/app.apk"),
                 application_id: "com.aljazeera.test".into(),
                 metro_port: 8081,
+                fingerprint: "fingerprint".into(),
+                variant: crate::domain::command::RunVariant::Local,
+                artifact_digest_algorithm: "sha256".into(),
+                artifact_digest: "digest".into(),
             },
         };
         let _ = Effect::ListWorktrees {

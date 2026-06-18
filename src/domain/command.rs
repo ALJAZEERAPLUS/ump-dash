@@ -80,8 +80,12 @@ impl RunVariant {
 
     fn android_apk_path(self) -> &'static str {
         match self {
-            RunVariant::Local => "android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk",
-            RunVariant::Dev => "android/app/build/outputs/apk/dev/debugOptimized/app-dev-debugOptimized.apk",
+            RunVariant::Local => {
+                "android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk"
+            }
+            RunVariant::Dev => {
+                "android/app/build/outputs/apk/dev/debugOptimized/app-dev-debugOptimized.apk"
+            }
             RunVariant::Prod => "android/app/build/outputs/apk/prod/debug/app-prod-debug.apk",
         }
     }
@@ -119,9 +123,15 @@ pub enum CommandSpec {
     GitResetHard,
     GitPull,
     GitPush,
-    GitRebase { target: String },
-    GitCheckout { branch: String },
-    GitCheckoutNew { branch: String },
+    GitRebase {
+        target: String,
+    },
+    GitCheckout {
+        branch: String,
+    },
+    GitCheckoutNew {
+        branch: String,
+    },
 
     // React Native clean commands (3 variants)
     RnCleanAndroid,
@@ -133,21 +143,31 @@ pub enum CommandSpec {
     YarnPodInstall,
 
     // UMP run commands (2 variants)
-    UmpRunAndroid { device_id: String, variant: Option<RunVariant> },
-    UmpRunIos { device_id: String, variant: Option<RunVariant> },
+    UmpRunAndroid {
+        device_id: String,
+        variant: Option<RunVariant>,
+    },
+    UmpRunIos {
+        device_id: String,
+        variant: Option<RunVariant>,
+    },
 
     // Test/quality commands (4 variants)
     YarnUnitTests,
-    YarnJest { filter: String },
+    YarnJest {
+        filter: String,
+    },
     YarnLint,
     YarnCheckTypes,
 
     // Phase 05.1 additions (5 variants)
-    GitFetch,                           // g>f: git fetch --all --tags
-    GitResetHardFetch,                  // g>X: fetch first, then reset to origin/<branch>
-    RnReleaseBuild,                     // a>r: gradlew assembleRelease
-    AdbInstallApk,                      // a>r continued: adb install of built APK
-    ShellCommand { command: String },   // !: run arbitrary shell command in worktree dir
+    GitFetch,          // g>f: git fetch --all --tags
+    GitResetHardFetch, // g>X: fetch first, then reset to origin/<branch>
+    RnReleaseBuild,    // a>r: gradlew assembleRelease
+    AdbInstallApk,     // a>r continued: adb install of built APK
+    ShellCommand {
+        command: String,
+    }, // !: run arbitrary shell command in worktree dir
 }
 
 /// Per-variant policy applied when a new task dispatch matches a running task
@@ -174,15 +194,35 @@ impl CommandSpec {
     /// The first element is the program; the rest are arguments.
     pub fn to_argv(&self) -> Vec<String> {
         match self {
-            CommandSpec::GitResetHard => vec!["git".into(), "reset".into(), "--hard".into(), "HEAD".into()],
+            CommandSpec::GitResetHard => {
+                vec!["git".into(), "reset".into(), "--hard".into(), "HEAD".into()]
+            }
             CommandSpec::GitPull => vec!["git".into(), "pull".into()],
             CommandSpec::GitPush => vec!["git".into(), "push".into()],
-            CommandSpec::GitRebase { target } => vec!["git".into(), "rebase".into(), target.clone()],
-            CommandSpec::GitCheckout { branch } => vec!["git".into(), "checkout".into(), branch.clone()],
-            CommandSpec::GitCheckoutNew { branch } => vec!["git".into(), "checkout".into(), "-b".into(), branch.clone()],
+            CommandSpec::GitRebase { target } => {
+                vec!["git".into(), "rebase".into(), target.clone()]
+            }
+            CommandSpec::GitCheckout { branch } => {
+                vec!["git".into(), "checkout".into(), branch.clone()]
+            }
+            CommandSpec::GitCheckoutNew { branch } => {
+                vec!["git".into(), "checkout".into(), "-b".into(), branch.clone()]
+            }
 
-            CommandSpec::RnCleanAndroid => vec!["npx".into(), "react-native".into(), "clean".into(), "--include".into(), "android".into()],
-            CommandSpec::RnCleanCocoapods => vec!["npx".into(), "react-native".into(), "clean".into(), "--include".into(), "cocoapods".into()],
+            CommandSpec::RnCleanAndroid => vec![
+                "npx".into(),
+                "react-native".into(),
+                "clean".into(),
+                "--include".into(),
+                "android".into(),
+            ],
+            CommandSpec::RnCleanCocoapods => vec![
+                "npx".into(),
+                "react-native".into(),
+                "clean".into(),
+                "--include".into(),
+                "cocoapods".into(),
+            ],
             CommandSpec::RmNodeModules => vec!["rm".into(), "-rf".into(), "node_modules".into()],
 
             CommandSpec::YarnInstall => vec!["yarn".into(), "install".into()],
@@ -191,7 +231,11 @@ impl CommandSpec {
             CommandSpec::UmpRunAndroid { device_id, variant } => {
                 let variant = variant.unwrap_or(RunVariant::Local);
                 if let Some(avd_name) = android_avd_name(device_id) {
-                    return vec!["sh".into(), "-c".into(), android_run_avd_script(avd_name, variant)];
+                    return vec![
+                        "sh".into(),
+                        "-c".into(),
+                        android_run_avd_script(avd_name, variant),
+                    ];
                 }
 
                 if !device_id.is_empty() {
@@ -205,7 +249,10 @@ impl CommandSpec {
                 vec!["yarn".into(), variant.android_script().into()]
             }
             CommandSpec::UmpRunIos { device_id, variant } => {
-                let mut argv = vec!["yarn".into(), variant.unwrap_or(RunVariant::Local).ios_script().into()];
+                let mut argv = vec![
+                    "yarn".into(),
+                    variant.unwrap_or(RunVariant::Local).ios_script().into(),
+                ];
                 if !device_id.is_empty() {
                     argv.push("--udid".into());
                     argv.push(device_id.clone());
@@ -215,24 +262,51 @@ impl CommandSpec {
 
             CommandSpec::YarnUnitTests => vec!["yarn".into(), "unit-tests".into()],
             CommandSpec::YarnJest { filter } => vec!["yarn".into(), "jest".into(), filter.clone()],
-            CommandSpec::YarnLint => vec!["yarn".into(), "lint".into(), "--quiet".into(), "--fix".into()],
-            CommandSpec::YarnCheckTypes => vec!["yarn".into(), "check-types".into(), "--incremental".into()],
+            CommandSpec::YarnLint => vec![
+                "yarn".into(),
+                "lint".into(),
+                "--quiet".into(),
+                "--fix".into(),
+            ],
+            CommandSpec::YarnCheckTypes => {
+                vec!["yarn".into(), "check-types".into(), "--incremental".into()]
+            }
 
-            CommandSpec::GitFetch => vec!["git".into(), "fetch".into(), "--all".into(), "--tags".into()],
+            CommandSpec::GitFetch => vec![
+                "git".into(),
+                "fetch".into(),
+                "--all".into(),
+                "--tags".into(),
+            ],
             CommandSpec::GitResetHardFetch => {
                 // Two-step operation handled by command_runner — fetch then reset.
                 // to_argv returns the fetch step; the runner handles chaining.
-                vec!["git".into(), "fetch".into(), "--all".into(), "--tags".into()]
-            },
+                vec![
+                    "git".into(),
+                    "fetch".into(),
+                    "--all".into(),
+                    "--tags".into(),
+                ]
+            }
             CommandSpec::RnReleaseBuild => {
-                vec!["./android/gradlew".into(), "-p".into(), "android".into(), "assembleRelease".into()]
-            },
+                vec![
+                    "./android/gradlew".into(),
+                    "-p".into(),
+                    "android".into(),
+                    "assembleRelease".into(),
+                ]
+            }
             CommandSpec::AdbInstallApk => {
-                vec!["adb".into(), "install".into(), "-r".into(), "android/app/build/outputs/apk/release/app-release.apk".into()]
-            },
+                vec![
+                    "adb".into(),
+                    "install".into(),
+                    "-r".into(),
+                    "android/app/build/outputs/apk/release/app-release.apk".into(),
+                ]
+            }
             CommandSpec::ShellCommand { command } => {
                 vec!["sh".into(), "-c".into(), command.clone()]
-            },
+            }
         }
     }
 
@@ -286,8 +360,7 @@ impl CommandSpec {
         match self {
             // Idempotent installs — running again while one is in progress
             // produces the same result.
-            CommandSpec::YarnInstall
-            | CommandSpec::YarnPodInstall => CollisionPolicy::BlockNew,
+            CommandSpec::YarnInstall | CommandSpec::YarnPodInstall => CollisionPolicy::BlockNew,
 
             // Non-cancellable git porcelain (Q-4): cancel-previous is
             // impossible for variants where `is_cancellable() == false`, so
@@ -339,10 +412,11 @@ impl CommandSpec {
 
     /// Returns true for commands that require metro to be running before dispatch.
     pub fn needs_metro(&self) -> bool {
-        matches!(self,
+        matches!(
+            self,
             CommandSpec::UmpRunAndroid { .. }
-            | CommandSpec::UmpRunIos { .. }
-            | CommandSpec::RnReleaseBuild
+                | CommandSpec::UmpRunIos { .. }
+                | CommandSpec::RnReleaseBuild
         )
     }
 
@@ -433,11 +507,11 @@ pub enum ModalState {
         selected: usize,
         pending_template: Box<CommandSpec>,
         boot_android_emulator: bool,
+        cache_launch_supported: bool,
+        cached_variants: [bool; 3],
     },
     /// Clean submenu with toggleable options. User checks items then confirms.
-    CleanToggle {
-        options: CleanOptions,
-    },
+    CleanToggle { options: CleanOptions },
     /// Sync-before-run prompt shown when stale worktree is about to run an app command.
     SyncBeforeRun {
         run_command: Box<CommandSpec>,
@@ -445,15 +519,9 @@ pub enum ModalState {
         needs_pods: bool,
     },
     /// Sync-before-metro prompt shown when stale worktree is about to start metro via Enter.
-    SyncBeforeMetro {
-        needs_yarn: bool,
-        needs_pods: bool,
-    },
+    SyncBeforeMetro { needs_yarn: bool, needs_pods: bool },
     /// External metro conflict — another process occupies port 8081.
-    ExternalMetroConflict {
-        pid: u32,
-        working_dir: String,
-    },
+    ExternalMetroConflict { pid: u32, working_dir: String },
     /// Branch picker for "create worktree with new branch" flow.
     BranchPicker {
         branches: Vec<String>,
@@ -485,7 +553,10 @@ mod tests {
         assert_eq!(&android_local[0], "sh");
         assert_eq!(&android_local[1], "-c");
         assert!(android_local[2].contains("app:assembleLocalDebugOptimized"));
-        assert!(android_local[2].contains("com.aljazeera.mobile.local/com.aljazeera.mobile.MainActivity"));
+        assert!(
+            android_local[2]
+                .contains("com.aljazeera.mobile.local/com.aljazeera.mobile.MainActivity")
+        );
 
         let android_dev = CommandSpec::UmpRunAndroid {
             device_id: "emulator-5554".into(),
@@ -495,7 +566,9 @@ mod tests {
         assert_eq!(&android_dev[0], "sh");
         assert_eq!(&android_dev[1], "-c");
         assert!(android_dev[2].contains("app:assembleDevDebugOptimized"));
-        assert!(android_dev[2].contains("com.aljazeera.mobile.dev/com.aljazeera.mobile.MainActivity"));
+        assert!(
+            android_dev[2].contains("com.aljazeera.mobile.dev/com.aljazeera.mobile.MainActivity")
+        );
 
         assert_eq!(
             CommandSpec::UmpRunIos {
@@ -524,7 +597,9 @@ mod tests {
             "Android local run should assemble the exact Gradle variant, got {argv:?}"
         );
         assert!(
-            script.contains("android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk"),
+            script.contains(
+                "android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk"
+            ),
             "Android local run should install the APK path Gradle actually writes, got {argv:?}"
         );
         assert!(
@@ -601,13 +676,23 @@ mod tests {
             CommandSpec::GitResetHardFetch,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase { target: "main".into() },
-            CommandSpec::GitCheckout { branch: "main".into() },
-            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::GitRebase {
+                target: "main".into(),
+            },
+            CommandSpec::GitCheckout {
+                branch: "main".into(),
+            },
+            CommandSpec::GitCheckoutNew {
+                branch: "main".into(),
+            },
             CommandSpec::GitFetch,
         ];
         for spec in &git_variants {
-            assert!(!spec.is_cancellable(), "git variant {:?} must NOT be cancellable", spec);
+            assert!(
+                !spec.is_cancellable(),
+                "git variant {:?} must NOT be cancellable",
+                spec
+            );
         }
     }
 
@@ -622,19 +707,33 @@ mod tests {
             CommandSpec::YarnLint,
         ];
         for spec in &yarn_variants {
-            assert!(spec.is_cancellable(), "yarn variant {:?} must be cancellable", spec);
+            assert!(
+                spec.is_cancellable(),
+                "yarn variant {:?} must be cancellable",
+                spec
+            );
         }
     }
 
     #[test]
     fn is_cancellable_run_variants_all_true() {
         let run_variants = [
-            CommandSpec::UmpRunAndroid { device_id: "".into(), variant: Some(RunVariant::Local) },
-            CommandSpec::UmpRunIos { device_id: "".into(), variant: Some(RunVariant::Dev) },
+            CommandSpec::UmpRunAndroid {
+                device_id: "".into(),
+                variant: Some(RunVariant::Local),
+            },
+            CommandSpec::UmpRunIos {
+                device_id: "".into(),
+                variant: Some(RunVariant::Dev),
+            },
             CommandSpec::RnReleaseBuild,
         ];
         for spec in &run_variants {
-            assert!(spec.is_cancellable(), "run variant {:?} must be cancellable", spec);
+            assert!(
+                spec.is_cancellable(),
+                "run variant {:?} must be cancellable",
+                spec
+            );
         }
     }
 
@@ -646,7 +745,11 @@ mod tests {
             CommandSpec::RmNodeModules,
         ];
         for spec in &clean_variants {
-            assert!(spec.is_cancellable(), "clean variant {:?} must be cancellable", spec);
+            assert!(
+                spec.is_cancellable(),
+                "clean variant {:?} must be cancellable",
+                spec
+            );
         }
     }
 
@@ -658,7 +761,9 @@ mod tests {
 
     #[test]
     fn is_cancellable_shell_true() {
-        let spec = CommandSpec::ShellCommand { command: "echo hi".into() };
+        let spec = CommandSpec::ShellCommand {
+            command: "echo hi".into(),
+        };
         assert!(spec.is_cancellable(), "shell command must be cancellable");
     }
 
@@ -669,10 +774,7 @@ mod tests {
 
     #[test]
     fn collision_policy_idempotent_installs_block_new() {
-        let installs = [
-            CommandSpec::YarnInstall,
-            CommandSpec::YarnPodInstall,
-        ];
+        let installs = [CommandSpec::YarnInstall, CommandSpec::YarnPodInstall];
         for spec in &installs {
             assert_eq!(
                 spec.collision_policy(),
@@ -690,11 +792,19 @@ mod tests {
             CommandSpec::YarnJest { filter: "x".into() },
             CommandSpec::YarnLint,
             CommandSpec::YarnCheckTypes,
-            CommandSpec::UmpRunAndroid { device_id: "emulator-5554".into(), variant: Some(RunVariant::Local) },
-            CommandSpec::UmpRunIos { device_id: "ios-udid-1".into(), variant: Some(RunVariant::Prod) },
+            CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: Some(RunVariant::Local),
+            },
+            CommandSpec::UmpRunIos {
+                device_id: "ios-udid-1".into(),
+                variant: Some(RunVariant::Prod),
+            },
             CommandSpec::RnReleaseBuild,
             CommandSpec::AdbInstallApk,
-            CommandSpec::ShellCommand { command: "ls".into() },
+            CommandSpec::ShellCommand {
+                command: "ls".into(),
+            },
             CommandSpec::RnCleanAndroid,
             CommandSpec::RnCleanCocoapods,
             CommandSpec::RmNodeModules,
@@ -716,9 +826,15 @@ mod tests {
             CommandSpec::GitResetHardFetch,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase { target: "main".into() },
-            CommandSpec::GitCheckout { branch: "main".into() },
-            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::GitRebase {
+                target: "main".into(),
+            },
+            CommandSpec::GitCheckout {
+                branch: "main".into(),
+            },
+            CommandSpec::GitCheckoutNew {
+                branch: "main".into(),
+            },
             CommandSpec::GitFetch,
         ];
         for spec in &git_variants {
@@ -743,16 +859,28 @@ mod tests {
             CommandSpec::GitResetHard,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase { target: "main".into() },
-            CommandSpec::GitCheckout { branch: "main".into() },
-            CommandSpec::GitCheckoutNew { branch: "main".into() },
+            CommandSpec::GitRebase {
+                target: "main".into(),
+            },
+            CommandSpec::GitCheckout {
+                branch: "main".into(),
+            },
+            CommandSpec::GitCheckoutNew {
+                branch: "main".into(),
+            },
             CommandSpec::RnCleanAndroid,
             CommandSpec::RnCleanCocoapods,
             CommandSpec::RmNodeModules,
             CommandSpec::YarnInstall,
             CommandSpec::YarnPodInstall,
-            CommandSpec::UmpRunAndroid { device_id: "".into(), variant: Some(RunVariant::Local) },
-            CommandSpec::UmpRunIos { device_id: "".into(), variant: Some(RunVariant::Dev) },
+            CommandSpec::UmpRunAndroid {
+                device_id: "".into(),
+                variant: Some(RunVariant::Local),
+            },
+            CommandSpec::UmpRunIos {
+                device_id: "".into(),
+                variant: Some(RunVariant::Dev),
+            },
             CommandSpec::YarnUnitTests,
             CommandSpec::YarnJest { filter: "".into() },
             CommandSpec::YarnLint,
@@ -795,6 +923,10 @@ mod tests {
                 CollisionPolicy::BlockNew | CollisionPolicy::CancelPrevious
             ));
         }
-        assert_eq!(variants.len(), 22, "must enumerate all 22 CommandSpec variants");
+        assert_eq!(
+            variants.len(),
+            22,
+            "must enumerate all 22 CommandSpec variants"
+        );
     }
 }

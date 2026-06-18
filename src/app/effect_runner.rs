@@ -264,7 +264,9 @@ impl EffectRunner {
                     let result = native_cache
                         .store_ios_simulator(request)
                         .await
-                        .map(crate::domain::native_cache::IosSimulatorCacheLookup::Hit)
+                        .map(|hit| {
+                            crate::domain::native_cache::IosSimulatorCacheLookup::Hit(Box::new(hit))
+                        })
                         .map_err(|e| e.to_string());
                     let _ = tx.send(Action::IosSimulatorCacheLookupFinished {
                         worktree_id,
@@ -301,7 +303,9 @@ impl EffectRunner {
                     let result = native_cache
                         .store_android(request)
                         .await
-                        .map(crate::domain::native_cache::AndroidCacheLookup::Hit)
+                        .map(|hit| {
+                            crate::domain::native_cache::AndroidCacheLookup::Hit(Box::new(hit))
+                        })
                         .map_err(|e| e.to_string());
                     let _ = tx.send(Action::AndroidCacheLookupFinished {
                         worktree_id,
@@ -317,14 +321,30 @@ impl EffectRunner {
                 let native_cache = self.adapters.native_cache.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
+                    let fallback_device_id = request.simulator_udid.clone();
+                    let fallback_variant = request.variant;
                     let result = match native_cache.install_and_launch_ios_simulator(request).await
                     {
                         Ok(lines) => {
                             crate::domain::native_cache::CachedIosLaunchResult::Success(lines)
                         }
-                        Err(e) => crate::domain::native_cache::CachedIosLaunchResult::Failure(
-                            e.to_string(),
-                        ),
+                        Err(e) => {
+                            if e.downcast_ref::<
+                                crate::domain::native_cache::CachedArtifactValidationError,
+                            >()
+                            .is_some()
+                            {
+                                crate::domain::native_cache::CachedIosLaunchResult::InvalidArtifact {
+                                    message: e.to_string(),
+                                    device_id: fallback_device_id,
+                                    variant: fallback_variant,
+                                }
+                            } else {
+                                crate::domain::native_cache::CachedIosLaunchResult::Failure(
+                                    e.to_string(),
+                                )
+                            }
+                        }
                     };
                     let _ = tx.send(Action::CachedIosLaunchFinished {
                         worktree_id,
@@ -340,13 +360,29 @@ impl EffectRunner {
                 let native_cache = self.adapters.native_cache.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
+                    let fallback_device_id = request.device_id.clone();
+                    let fallback_variant = request.variant;
                     let result = match native_cache.install_and_launch_android(request).await {
                         Ok(lines) => {
                             crate::domain::native_cache::CachedAndroidLaunchResult::Success(lines)
                         }
-                        Err(e) => crate::domain::native_cache::CachedAndroidLaunchResult::Failure(
-                            e.to_string(),
-                        ),
+                        Err(e) => {
+                            if e.downcast_ref::<
+                                crate::domain::native_cache::CachedArtifactValidationError,
+                            >()
+                            .is_some()
+                            {
+                                crate::domain::native_cache::CachedAndroidLaunchResult::InvalidArtifact {
+                                    message: e.to_string(),
+                                    device_id: fallback_device_id,
+                                    variant: fallback_variant,
+                                }
+                            } else {
+                                crate::domain::native_cache::CachedAndroidLaunchResult::Failure(
+                                    e.to_string(),
+                                )
+                            }
+                        }
                     };
                     let _ = tx.send(Action::CachedAndroidLaunchFinished {
                         worktree_id,
@@ -725,6 +761,25 @@ impl EffectRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::adapters::Adapters;
+    use crate::domain::command::{CommandSpec, DeviceInfo};
+    use crate::domain::native_cache::{
+        AndroidCacheHit, AndroidCacheLookup, AndroidCacheStoreRequest, CachedAndroidLaunchRequest,
+        CachedAndroidLaunchResult, CachedIosLaunchRequest, CachedIosLaunchResult,
+        IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
+        IosSimulatorCacheLookup, IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest,
+    };
+    use crate::domain::ports::command_runner_port::{CommandEvent, CommandRunnerPort};
+    use crate::domain::ports::device_port::{DeviceKind, DevicePort};
+    use crate::domain::ports::metro_port::{MetroHandle, MetroPort};
+    use crate::domain::ports::native_cache_port::NativeCachePort;
+    use crate::domain::ports::port_probe_port::{ExternalProcessInfo, PortProbePort};
+    use crate::domain::ports::worktree_port::WorktreePort;
+    use crate::domain::worktree::{Worktree, WorktreeId};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::sync::mpsc::UnboundedReceiver;
 
     fn collect_forwarded_actions(activity: MetroActivity) -> Vec<Action> {
         let (activity_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -767,6 +822,469 @@ mod tests {
                 .iter()
                 .any(|action| matches!(action, Action::MetroExited(id) if id == "wt-a")),
             "Metro exit activity must notify the state machine; got {actions:?}"
+        );
+    }
+
+    #[derive(Debug)]
+    struct NoopCommandRunner;
+
+    impl CommandRunnerPort for NoopCommandRunner {
+        fn spawn(
+            &self,
+            _spec: CommandSpec,
+            _cwd: PathBuf,
+            _branch: String,
+        ) -> UnboundedReceiver<CommandEvent> {
+            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            rx
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopMetroHandle;
+
+    impl MetroHandle for NoopMetroHandle {
+        fn pid(&self) -> u32 {
+            0
+        }
+
+        fn worktree_id(&self) -> &str {
+            "noop"
+        }
+
+        fn port(&self) -> u16 {
+            0
+        }
+
+        fn send_stdin(&self, _bytes: Vec<u8>) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn kill(self: Box<Self>) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct NoopMetro;
+
+    #[async_trait::async_trait]
+    impl MetroPort for NoopMetro {
+        async fn start(
+            &self,
+            _worktree: PathBuf,
+            _port: u16,
+            _on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
+        ) -> anyhow::Result<Box<dyn MetroHandle>> {
+            Ok(Box::new(NoopMetroHandle))
+        }
+
+        async fn http_post(&self, _path: &str, _body: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct NoopProbe;
+
+    #[async_trait::async_trait]
+    impl PortProbePort for NoopProbe {
+        fn port_is_free(&self, _port: u16) -> bool {
+            true
+        }
+
+        async fn detect_external(&self, _port: u16) -> Option<ExternalProcessInfo> {
+            None
+        }
+
+        async fn kill_process(&self, _pid: u32) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct NoopWorktrees;
+
+    #[async_trait::async_trait]
+    impl WorktreePort for NoopWorktrees {
+        async fn list(&self, _repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
+            Ok(Vec::new())
+        }
+
+        async fn remove(&self, _repo_root: &Path, _worktree_path: &Path) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn add(&self, _repo_root: &Path, _branch_name: &str) -> anyhow::Result<PathBuf> {
+            Ok(PathBuf::from("/tmp/noop"))
+        }
+
+        async fn add_new_branch(
+            &self,
+            _repo_root: &Path,
+            _new_branch: &str,
+            _base_branch: &str,
+        ) -> anyhow::Result<PathBuf> {
+            Ok(PathBuf::from("/tmp/noop"))
+        }
+
+        async fn list_remote_branches(&self, _repo_root: &Path) -> anyhow::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct NoopDevices;
+
+    #[async_trait::async_trait]
+    impl DevicePort for NoopDevices {
+        async fn list(&self, _kind: DeviceKind) -> anyhow::Result<Vec<DeviceInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    enum NativeScript {
+        LookupIos(Result<IosSimulatorCacheLookup, String>),
+        StoreIos(Result<IosSimulatorCacheHit, String>),
+        LaunchIos(Result<Vec<String>, String>),
+        LaunchIosValidationError(String),
+        LookupAndroid(Result<AndroidCacheLookup, String>),
+        StoreAndroid(Result<AndroidCacheHit, String>),
+        LaunchAndroid(Result<Vec<String>, String>),
+        LaunchAndroidValidationError(String),
+    }
+
+    struct ScriptedNativeCache {
+        script: Mutex<Option<NativeScript>>,
+    }
+
+    impl ScriptedNativeCache {
+        fn new(script: NativeScript) -> Self {
+            Self {
+                script: Mutex::new(Some(script)),
+            }
+        }
+
+        fn take(&self) -> NativeScript {
+            self.script
+                .lock()
+                .unwrap()
+                .take()
+                .expect("native cache fake should be called once")
+        }
+    }
+
+    fn scripted_result<T>(result: Result<T, String>) -> anyhow::Result<T> {
+        result.map_err(|message| anyhow::anyhow!(message))
+    }
+
+    #[async_trait::async_trait]
+    impl NativeCachePort for ScriptedNativeCache {
+        async fn lookup_ios_simulator(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> anyhow::Result<IosSimulatorCacheLookup> {
+            let NativeScript::LookupIos(result) = self.take() else {
+                panic!("expected LookupIos script");
+            };
+            scripted_result(result)
+        }
+
+        async fn store_ios_simulator(
+            &self,
+            _request: IosSimulatorCacheStoreRequest,
+        ) -> anyhow::Result<IosSimulatorCacheHit> {
+            let NativeScript::StoreIos(result) = self.take() else {
+                panic!("expected StoreIos script");
+            };
+            scripted_result(result)
+        }
+
+        async fn lookup_android(
+            &self,
+            _worktree_path: PathBuf,
+        ) -> anyhow::Result<AndroidCacheLookup> {
+            let NativeScript::LookupAndroid(result) = self.take() else {
+                panic!("expected LookupAndroid script");
+            };
+            scripted_result(result)
+        }
+
+        async fn store_android(
+            &self,
+            _request: AndroidCacheStoreRequest,
+        ) -> anyhow::Result<AndroidCacheHit> {
+            let NativeScript::StoreAndroid(result) = self.take() else {
+                panic!("expected StoreAndroid script");
+            };
+            scripted_result(result)
+        }
+
+        async fn install_and_launch_ios_simulator(
+            &self,
+            _request: CachedIosLaunchRequest,
+        ) -> anyhow::Result<Vec<String>> {
+            match self.take() {
+                NativeScript::LaunchIos(result) => scripted_result(result),
+                NativeScript::LaunchIosValidationError(message) => Err(
+                    crate::domain::native_cache::CachedArtifactValidationError { message }.into(),
+                ),
+                _ => panic!("expected LaunchIos script"),
+            }
+        }
+
+        async fn install_and_launch_android(
+            &self,
+            _request: CachedAndroidLaunchRequest,
+        ) -> anyhow::Result<Vec<String>> {
+            match self.take() {
+                NativeScript::LaunchAndroid(result) => scripted_result(result),
+                NativeScript::LaunchAndroidValidationError(message) => Err(
+                    crate::domain::native_cache::CachedArtifactValidationError { message }.into(),
+                ),
+                _ => panic!("expected LaunchAndroid script"),
+            }
+        }
+    }
+
+    fn ios_hit() -> IosSimulatorCacheHit {
+        IosSimulatorCacheHit {
+            metadata: IosSimulatorCacheMetadata {
+                platform: IOS_SIMULATOR_PLATFORM.into(),
+                fingerprint: "ios-fp".into(),
+                bundle_id: "com.aljazeera.test".into(),
+                variant: "Debug".into(),
+                created_at: "1".into(),
+                source_worktree: "wt-a".into(),
+                artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
+                storage_mode: "copy".into(),
+                source_artifact_path: PathBuf::from("/tmp/wt-a/app.app"),
+                artifact_digest_algorithm: "sha256".into(),
+                artifact_digest: "digest".into(),
+            },
+            artifact_path: PathBuf::from("/tmp/app"),
+        }
+    }
+
+    fn runner_with_script(script: NativeScript) -> (EffectRunner, UnboundedReceiver<Action>) {
+        let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (handle_tx, _handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (task_handle_tx, _task_handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let runner = EffectRunner::new(
+            Adapters {
+                command_runner: Arc::new(NoopCommandRunner),
+                metro: Arc::new(NoopMetro),
+                port_probe: Arc::new(NoopProbe),
+                worktrees: Arc::new(NoopWorktrees),
+                devices: Arc::new(NoopDevices),
+                native_cache: Arc::new(ScriptedNativeCache::new(script)),
+                jira: None,
+                multiplexer: None,
+            },
+            action_tx,
+            handle_tx,
+            task_handle_tx,
+        );
+        (runner, action_rx)
+    }
+
+    async fn receive_action(action_rx: &mut UnboundedReceiver<Action>) -> Action {
+        tokio::time::timeout(Duration::from_secs(1), action_rx.recv())
+            .await
+            .expect("native cache effect should send an action")
+            .expect("action channel should stay open")
+    }
+
+    #[tokio::test]
+    async fn native_cache_lookup_effects_map_success_and_failure() {
+        let worktree_id = WorktreeId("wt-a".into());
+        let (runner, mut action_rx) =
+            runner_with_script(NativeScript::LookupIos(Ok(IosSimulatorCacheLookup::Miss {
+                fingerprint: "ios-fp".into(),
+            })));
+        runner
+            .run_effects(vec![Effect::LookupIosSimulatorCache {
+                worktree_id: worktree_id.clone(),
+                worktree_path: PathBuf::from("/tmp/wt-a"),
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(IosSimulatorCacheLookup::Miss {
+                    fingerprint: "ios-fp".into(),
+                }),
+            }
+        );
+
+        let (runner, mut action_rx) =
+            runner_with_script(NativeScript::LookupAndroid(Err("lookup failed".into())));
+        runner
+            .run_effects(vec![Effect::LookupAndroidCache {
+                worktree_id: worktree_id.clone(),
+                worktree_path: PathBuf::from("/tmp/wt-a"),
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::AndroidCacheLookupFinished {
+                worktree_id,
+                result: Err("lookup failed".into()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn native_cache_store_effects_map_success_and_failure() {
+        let worktree_id = WorktreeId("wt-a".into());
+        let hit = ios_hit();
+        let (runner, mut action_rx) = runner_with_script(NativeScript::StoreIos(Ok(hit.clone())));
+        runner
+            .run_effects(vec![Effect::StoreIosSimulatorCache {
+                worktree_id: worktree_id.clone(),
+                request: IosSimulatorCacheStoreRequest {
+                    worktree_path: PathBuf::from("/tmp/wt-a"),
+                    variant: "Debug".into(),
+                },
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: worktree_id.clone(),
+                result: Ok(IosSimulatorCacheLookup::Hit(Box::new(hit))),
+            }
+        );
+
+        let (runner, mut action_rx) =
+            runner_with_script(NativeScript::StoreAndroid(Err("store failed".into())));
+        runner
+            .run_effects(vec![Effect::StoreAndroidCache {
+                worktree_id: worktree_id.clone(),
+                request: AndroidCacheStoreRequest {
+                    worktree_path: PathBuf::from("/tmp/wt-a"),
+                    variant: "localDebugOptimized".into(),
+                },
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::AndroidCacheLookupFinished {
+                worktree_id,
+                result: Err("store failed".into()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn native_cache_launch_effects_map_success_and_failure() {
+        let worktree_id = WorktreeId("wt-a".into());
+        let (runner, mut action_rx) =
+            runner_with_script(NativeScript::LaunchIos(Ok(vec!["launched".into()])));
+        runner
+            .run_effects(vec![Effect::InstallAndLaunchCachedIosSimulator {
+                worktree_id: worktree_id.clone(),
+                request: CachedIosLaunchRequest {
+                    simulator_udid: "SIM-1".into(),
+                    app_path: PathBuf::from("/tmp/app"),
+                    bundle_id: "com.aljazeera.test".into(),
+                    metro_port: 8081,
+                    fingerprint: "fingerprint".into(),
+                    variant: crate::domain::command::RunVariant::Local,
+                    artifact_digest_algorithm: "sha256".into(),
+                    artifact_digest: "digest".into(),
+                },
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::CachedIosLaunchFinished {
+                worktree_id: worktree_id.clone(),
+                result: CachedIosLaunchResult::Success(vec!["launched".into()]),
+            }
+        );
+
+        let (runner, mut action_rx) =
+            runner_with_script(NativeScript::LaunchAndroid(Err("launch failed".into())));
+        runner
+            .run_effects(vec![Effect::InstallAndLaunchCachedAndroid {
+                worktree_id: worktree_id.clone(),
+                request: CachedAndroidLaunchRequest {
+                    device_id: "emulator-5554".into(),
+                    apk_path: PathBuf::from("/tmp/app.apk"),
+                    application_id: "com.aljazeera.test".into(),
+                    metro_port: 8081,
+                    fingerprint: "fingerprint".into(),
+                    variant: crate::domain::command::RunVariant::Prod,
+                    artifact_digest_algorithm: "sha256".into(),
+                    artifact_digest: "digest".into(),
+                },
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::CachedAndroidLaunchFinished {
+                worktree_id: worktree_id.clone(),
+                result: CachedAndroidLaunchResult::Failure("launch failed".into()),
+            }
+        );
+
+        let (runner, mut action_rx) = runner_with_script(
+            NativeScript::LaunchAndroidValidationError("cached APK digest mismatch".into()),
+        );
+        runner
+            .run_effects(vec![Effect::InstallAndLaunchCachedAndroid {
+                worktree_id: worktree_id.clone(),
+                request: CachedAndroidLaunchRequest {
+                    device_id: "emulator-5554".into(),
+                    apk_path: PathBuf::from("/tmp/app.apk"),
+                    application_id: "com.aljazeera.test".into(),
+                    metro_port: 8081,
+                    fingerprint: "fingerprint".into(),
+                    variant: crate::domain::command::RunVariant::Dev,
+                    artifact_digest_algorithm: "sha256".into(),
+                    artifact_digest: "digest".into(),
+                },
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::CachedAndroidLaunchFinished {
+                worktree_id,
+                result: CachedAndroidLaunchResult::InvalidArtifact {
+                    message: "cached APK digest mismatch".into(),
+                    device_id: "emulator-5554".into(),
+                    variant: crate::domain::command::RunVariant::Dev,
+                },
+            }
+        );
+
+        let worktree_id = WorktreeId("wt-a".into());
+        let (runner, mut action_rx) = runner_with_script(NativeScript::LaunchIosValidationError(
+            "cached .app digest mismatch".into(),
+        ));
+        runner
+            .run_effects(vec![Effect::InstallAndLaunchCachedIosSimulator {
+                worktree_id: worktree_id.clone(),
+                request: CachedIosLaunchRequest {
+                    simulator_udid: "SIM-1".into(),
+                    app_path: PathBuf::from("/tmp/app"),
+                    bundle_id: "com.aljazeera.test".into(),
+                    metro_port: 8081,
+                    fingerprint: "fingerprint".into(),
+                    variant: crate::domain::command::RunVariant::Local,
+                    artifact_digest_algorithm: "sha256".into(),
+                    artifact_digest: "digest".into(),
+                },
+            }])
+            .await;
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::CachedIosLaunchFinished {
+                worktree_id,
+                result: CachedIosLaunchResult::InvalidArtifact {
+                    message: "cached .app digest mismatch".into(),
+                    device_id: "SIM-1".into(),
+                    variant: crate::domain::command::RunVariant::Local,
+                },
+            }
         );
     }
 }

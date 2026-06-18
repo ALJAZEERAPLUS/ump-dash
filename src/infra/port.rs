@@ -4,13 +4,28 @@
 // bind means no process currently holds the port. This is the correct approach for
 // verifying that metro's port 8081 is free after a kill (research pattern 3).
 
-/// Returns true if no process is currently bound to `port` on 127.0.0.1.
+/// Returns true if no process is currently bound to `port` on localhost.
 ///
-/// Uses `TcpListener::bind` as the probe — bind succeeds only when the address is free.
-/// Call this in a retry loop after killing metro; the port may briefly remain in
-/// TIME_WAIT even after SIGKILL (research pitfall 3).
+/// Metro may listen on IPv6 wildcard (`[::]`) while IPv4 localhost and IPv6
+/// loopback bind probes still succeed on macOS, so probe the wildcard address
+/// too. Call this in a retry loop after killing metro; the port may briefly
+/// remain in TIME_WAIT even after SIGKILL (research pitfall 3).
 pub fn port_is_free(port: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    let ipv4_free = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok();
+    let ipv6_loopback_free =
+        match std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)) {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => true,
+            Err(_) => false,
+        };
+    let ipv6_wildcard_free =
+        match std::net::TcpListener::bind((std::net::Ipv6Addr::UNSPECIFIED, port)) {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => true,
+            Err(_) => false,
+        };
+
+    ipv4_free && ipv6_loopback_free && ipv6_wildcard_free
 }
 
 /// Information about an external (non-dashboard) process occupying a port.
@@ -92,5 +107,25 @@ impl crate::domain::ports::port_probe_port::PortProbePort for LsofPortProbe {
 
     async fn kill_process(&self, pid: u32) -> anyhow::Result<()> {
         kill_process(pid).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv6Addr, TcpListener};
+
+    #[test]
+    fn port_is_not_free_when_ipv6_listener_owns_port() {
+        let listener = TcpListener::bind((Ipv6Addr::UNSPECIFIED, 0))
+            .expect("test should bind an ephemeral IPv6 port");
+        let port = listener
+            .local_addr()
+            .expect("test listener should have a local address")
+            .port();
+
+        assert!(
+            !super::port_is_free(port),
+            "port_is_free must treat IPv6 listeners as occupied"
+        );
     }
 }

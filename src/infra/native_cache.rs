@@ -1,20 +1,43 @@
 use crate::domain::command::{android_avd_name, android_boot_avd_command};
 use crate::domain::native_cache::{
-    ANDROID_APK_ARTIFACT_KIND, ANDROID_PLATFORM, AndroidCacheHit, AndroidCacheLookup,
-    AndroidCacheMetadata, AndroidCacheStoreRequest, CachedAndroidLaunchRequest,
-    CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit,
-    IosSimulatorCacheLookup, IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest,
-    android_native_fingerprint, ios_native_fingerprint,
+    ANDROID_APK_ARTIFACT_KIND, ANDROID_FINGERPRINT_FILES, ANDROID_PLATFORM, AndroidCacheHit,
+    AndroidCacheLookup, AndroidCacheMetadata, AndroidCacheStoreRequest, CachedAndroidLaunchRequest,
+    CachedArtifactValidationError, CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND,
+    IOS_FINGERPRINT_FILES, IOS_SIMULATOR_PLATFORM, IosSimulatorCacheHit, IosSimulatorCacheLookup,
+    IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest, NativeFingerprintInput,
+    native_fingerprint_from_inputs,
 };
 use crate::domain::ports::native_cache_port::NativeCachePort;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command as TokioCommand;
 
+const STORAGE_MODE_COPY: &str = "copy";
+const STORAGE_MODE_REFERENCE: &str = "reference";
+const ARTIFACT_DIGEST_ALGORITHM: &str = "sha256";
+
 #[derive(Debug, Default)]
-pub struct LocalNativeCache;
+pub struct LocalNativeCache {
+    artifact_root: Option<PathBuf>,
+}
+
+impl LocalNativeCache {
+    pub fn new(artifact_root: Option<PathBuf>) -> Self {
+        Self { artifact_root }
+    }
+
+    fn root(&self) -> PathBuf {
+        self.artifact_root.clone().unwrap_or_else(native_cache_root)
+    }
+
+    fn stores_copied_artifacts(&self) -> bool {
+        self.artifact_root.is_some()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SimctlLaunchCommand {
@@ -55,6 +78,29 @@ fn created_at_string() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs().to_string())
         .unwrap_or_else(|_| "0".into())
+}
+
+fn native_fingerprint(worktree_path: &Path, files: &[&str]) -> anyhow::Result<String> {
+    let mut inputs = Vec::with_capacity(files.len());
+    for rel in files {
+        let path = worktree_path.join(rel);
+        match std::fs::read(&path) {
+            Ok(bytes) => inputs.push(NativeFingerprintInput::present(*rel, bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                inputs.push(NativeFingerprintInput::missing(*rel));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(native_fingerprint_from_inputs(&inputs))
+}
+
+pub fn ios_native_fingerprint(worktree_path: &Path) -> anyhow::Result<String> {
+    native_fingerprint(worktree_path, IOS_FINGERPRINT_FILES)
+}
+
+pub fn android_native_fingerprint(worktree_path: &Path) -> anyhow::Result<String> {
+    native_fingerprint(worktree_path, ANDROID_FINGERPRINT_FILES)
 }
 
 fn ios_project_app_names(worktree_path: &Path) -> Vec<String> {
@@ -282,6 +328,61 @@ fn find_latest_android_apk(worktree_path: &Path) -> anyhow::Result<AndroidApkCan
         .ok_or_else(|| anyhow::anyhow!("no built Android APK found"))
 }
 
+fn hash_path_marker(hasher: &mut Sha256, kind: &str, relative_path: &Path) {
+    hasher.update(kind.as_bytes());
+    hasher.update([0]);
+    hasher.update(relative_path.to_string_lossy().as_bytes());
+    hasher.update([0]);
+}
+
+fn hash_file_contents(hasher: &mut Sha256, path: &Path) -> anyhow::Result<()> {
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(())
+}
+
+fn digest_path(root: &Path, path: &Path, hasher: &mut Sha256) -> anyhow::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let relative_path = path.strip_prefix(root).unwrap_or(path);
+    if metadata.is_dir() {
+        hash_path_marker(hasher, "dir", relative_path);
+        let mut entries = std::fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            digest_path(root, &entry.path(), hasher)?;
+        }
+    } else if metadata.is_file() {
+        hash_path_marker(hasher, "file", relative_path);
+        hasher.update(metadata.len().to_le_bytes());
+        hasher.update([0]);
+        hash_file_contents(hasher, path)?;
+    } else if metadata.file_type().is_symlink() {
+        hash_path_marker(hasher, "symlink", relative_path);
+        hasher.update(std::fs::read_link(path)?.to_string_lossy().as_bytes());
+    }
+    Ok(())
+}
+
+pub fn artifact_digest(path: &Path) -> anyhow::Result<String> {
+    let mut hasher = Sha256::new();
+    if path.is_file() {
+        hash_path_marker(&mut hasher, "file", Path::new(""));
+        hash_file_contents(&mut hasher, path)?;
+    } else if path.is_dir() {
+        digest_path(path, path, &mut hasher)?;
+    } else {
+        anyhow::bail!("artifact missing: {}", path.display());
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
@@ -334,6 +435,7 @@ fn store_ios_simulator_in_root_with_derived_data(
         }
     }
     copy_dir_recursive(&app_path, &artifact_path)?;
+    let artifact_digest = artifact_digest(&artifact_path)?;
 
     let metadata = IosSimulatorCacheMetadata {
         platform: IOS_SIMULATOR_PLATFORM.into(),
@@ -343,6 +445,10 @@ fn store_ios_simulator_in_root_with_derived_data(
         created_at: created_at_string(),
         source_worktree: request.worktree_path.display().to_string(),
         artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
+        storage_mode: STORAGE_MODE_COPY.into(),
+        source_artifact_path: app_path,
+        artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.into(),
+        artifact_digest,
     };
     std::fs::write(
         entry.join("metadata.json"),
@@ -352,6 +458,53 @@ fn store_ios_simulator_in_root_with_derived_data(
     Ok(IosSimulatorCacheHit {
         metadata,
         artifact_path,
+    })
+}
+
+pub fn store_ios_simulator_reference_in_root(
+    root: &Path,
+    request: IosSimulatorCacheStoreRequest,
+) -> anyhow::Result<IosSimulatorCacheHit> {
+    store_ios_simulator_reference_in_root_with_derived_data(
+        root,
+        request,
+        default_derived_data_root().as_deref(),
+    )
+}
+
+fn store_ios_simulator_reference_in_root_with_derived_data(
+    root: &Path,
+    request: IosSimulatorCacheStoreRequest,
+    derived_data_root: Option<&Path>,
+) -> anyhow::Result<IosSimulatorCacheHit> {
+    let fingerprint = ios_native_fingerprint(&request.worktree_path)?;
+    let app_path = find_latest_ios_simulator_app(&request.worktree_path, derived_data_root)?;
+    let bundle_id = read_bundle_identifier(&app_path)?;
+    let artifact_digest = artifact_digest(&app_path)?;
+    let entry = ios_entry_dir(root, &fingerprint);
+
+    std::fs::create_dir_all(&entry)?;
+    let metadata = IosSimulatorCacheMetadata {
+        platform: IOS_SIMULATOR_PLATFORM.into(),
+        fingerprint,
+        bundle_id,
+        variant: request.variant,
+        created_at: created_at_string(),
+        source_worktree: request.worktree_path.display().to_string(),
+        artifact_kind: IOS_APP_ARTIFACT_KIND.into(),
+        storage_mode: STORAGE_MODE_REFERENCE.into(),
+        source_artifact_path: app_path.clone(),
+        artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.into(),
+        artifact_digest,
+    };
+    std::fs::write(
+        entry.join("metadata.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
+
+    Ok(IosSimulatorCacheHit {
+        metadata,
+        artifact_path: app_path,
     })
 }
 
@@ -373,15 +526,20 @@ pub fn store_android_in_root(
         }
     }
     std::fs::copy(&apk.apk_path, &artifact_path)?;
+    let artifact_digest = artifact_digest(&artifact_path)?;
 
     let metadata = AndroidCacheMetadata {
         platform: ANDROID_PLATFORM.into(),
         fingerprint,
         application_id: apk.application_id,
-        variant: apk.variant_name,
+        variant: request.variant,
         created_at: created_at_string(),
         source_worktree: request.worktree_path.display().to_string(),
         artifact_kind: ANDROID_APK_ARTIFACT_KIND.into(),
+        storage_mode: STORAGE_MODE_COPY.into(),
+        source_artifact_path: apk.apk_path,
+        artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.into(),
+        artifact_digest,
     };
     std::fs::write(
         entry.join("metadata.json"),
@@ -392,6 +550,75 @@ pub fn store_android_in_root(
         metadata,
         artifact_path,
     })
+}
+
+pub fn store_android_reference_in_root(
+    root: &Path,
+    request: AndroidCacheStoreRequest,
+) -> anyhow::Result<AndroidCacheHit> {
+    let fingerprint = android_native_fingerprint(&request.worktree_path)?;
+    let apk = find_latest_android_apk(&request.worktree_path)?;
+    let artifact_digest = artifact_digest(&apk.apk_path)?;
+    let entry = android_entry_dir(root, &fingerprint);
+
+    std::fs::create_dir_all(&entry)?;
+    let metadata = AndroidCacheMetadata {
+        platform: ANDROID_PLATFORM.into(),
+        fingerprint,
+        application_id: apk.application_id,
+        variant: request.variant,
+        created_at: created_at_string(),
+        source_worktree: request.worktree_path.display().to_string(),
+        artifact_kind: ANDROID_APK_ARTIFACT_KIND.into(),
+        storage_mode: STORAGE_MODE_REFERENCE.into(),
+        source_artifact_path: apk.apk_path.clone(),
+        artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.into(),
+        artifact_digest,
+    };
+    std::fs::write(
+        entry.join("metadata.json"),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
+
+    Ok(AndroidCacheHit {
+        metadata,
+        artifact_path: apk.apk_path,
+    })
+}
+
+fn has_valid_artifact_digest(algorithm: &str, digest: &str) -> bool {
+    algorithm == ARTIFACT_DIGEST_ALGORITHM && !digest.trim().is_empty()
+}
+
+fn cached_artifact_validation_error(message: impl Into<String>) -> anyhow::Error {
+    CachedArtifactValidationError {
+        message: message.into(),
+    }
+    .into()
+}
+
+fn validate_cached_artifact_digest(
+    path: &Path,
+    algorithm: &str,
+    expected_digest: &str,
+    artifact_label: &str,
+) -> anyhow::Result<()> {
+    if !has_valid_artifact_digest(algorithm, expected_digest) {
+        return Err(cached_artifact_validation_error(format!(
+            "cached {artifact_label} digest missing or unsupported"
+        )));
+    }
+
+    let actual_digest = artifact_digest(path).map_err(|e| {
+        cached_artifact_validation_error(format!("cached {artifact_label} validation failed: {e}"))
+    })?;
+    if actual_digest != expected_digest {
+        return Err(cached_artifact_validation_error(format!(
+            "cached {artifact_label} digest mismatch: {}",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 pub fn lookup_ios_simulator_in_root(
@@ -420,16 +647,32 @@ pub fn lookup_ios_simulator_in_root(
     if metadata.bundle_id.trim().is_empty() {
         anyhow::bail!("cached iOS metadata bundle id missing");
     }
+    if !has_valid_artifact_digest(
+        &metadata.artifact_digest_algorithm,
+        &metadata.artifact_digest,
+    ) {
+        return Ok(IosSimulatorCacheLookup::Miss { fingerprint });
+    }
 
-    let artifact_path = entry.join("artifact.app");
+    let artifact_path = match metadata.storage_mode.as_str() {
+        STORAGE_MODE_COPY => entry.join("artifact.app"),
+        STORAGE_MODE_REFERENCE => metadata.source_artifact_path.clone(),
+        "" => return Ok(IosSimulatorCacheLookup::Miss { fingerprint }),
+        other => anyhow::bail!("cached iOS metadata storage mode unsupported: {other}"),
+    };
     if !artifact_path.is_dir() {
+        if metadata.storage_mode == STORAGE_MODE_REFERENCE {
+            return Ok(IosSimulatorCacheLookup::Miss { fingerprint });
+        }
         anyhow::bail!("cached .app missing: {}", artifact_path.display());
     }
 
-    Ok(IosSimulatorCacheLookup::Hit(IosSimulatorCacheHit {
-        metadata,
-        artifact_path,
-    }))
+    Ok(IosSimulatorCacheLookup::Hit(Box::new(
+        IosSimulatorCacheHit {
+            metadata,
+            artifact_path,
+        },
+    )))
 }
 
 pub fn lookup_android_in_root(
@@ -457,16 +700,30 @@ pub fn lookup_android_in_root(
     if metadata.application_id.trim().is_empty() {
         anyhow::bail!("cached Android metadata application id missing");
     }
+    if !has_valid_artifact_digest(
+        &metadata.artifact_digest_algorithm,
+        &metadata.artifact_digest,
+    ) {
+        return Ok(AndroidCacheLookup::Miss { fingerprint });
+    }
 
-    let artifact_path = entry.join("artifact.apk");
+    let artifact_path = match metadata.storage_mode.as_str() {
+        STORAGE_MODE_COPY => entry.join("artifact.apk"),
+        STORAGE_MODE_REFERENCE => metadata.source_artifact_path.clone(),
+        "" => return Ok(AndroidCacheLookup::Miss { fingerprint }),
+        other => anyhow::bail!("cached Android metadata storage mode unsupported: {other}"),
+    };
     if !artifact_path.is_file() {
+        if metadata.storage_mode == STORAGE_MODE_REFERENCE {
+            return Ok(AndroidCacheLookup::Miss { fingerprint });
+        }
         anyhow::bail!("cached APK missing: {}", artifact_path.display());
     }
 
-    Ok(AndroidCacheLookup::Hit(AndroidCacheHit {
+    Ok(AndroidCacheLookup::Hit(Box::new(AndroidCacheHit {
         metadata,
         artifact_path,
-    }))
+    })))
 }
 
 pub fn simctl_install_args(simulator_udid: &str, app_path: &Path) -> Vec<String> {
@@ -823,31 +1080,46 @@ impl NativeCachePort for LocalNativeCache {
         &self,
         worktree_path: PathBuf,
     ) -> anyhow::Result<IosSimulatorCacheLookup> {
-        lookup_ios_simulator_in_root(&native_cache_root(), worktree_path)
+        lookup_ios_simulator_in_root(&self.root(), worktree_path)
     }
 
     async fn store_ios_simulator(
         &self,
         request: IosSimulatorCacheStoreRequest,
     ) -> anyhow::Result<IosSimulatorCacheHit> {
-        store_ios_simulator_in_root(&native_cache_root(), request)
+        if self.stores_copied_artifacts() {
+            store_ios_simulator_in_root(&self.root(), request)
+        } else {
+            store_ios_simulator_reference_in_root(&self.root(), request)
+        }
     }
 
     async fn lookup_android(&self, worktree_path: PathBuf) -> anyhow::Result<AndroidCacheLookup> {
-        lookup_android_in_root(&native_cache_root(), worktree_path)
+        lookup_android_in_root(&self.root(), worktree_path)
     }
 
     async fn store_android(
         &self,
         request: AndroidCacheStoreRequest,
     ) -> anyhow::Result<AndroidCacheHit> {
-        store_android_in_root(&native_cache_root(), request)
+        if self.stores_copied_artifacts() {
+            store_android_in_root(&self.root(), request)
+        } else {
+            store_android_reference_in_root(&self.root(), request)
+        }
     }
 
     async fn install_and_launch_ios_simulator(
         &self,
         request: CachedIosLaunchRequest,
     ) -> anyhow::Result<Vec<String>> {
+        validate_cached_artifact_digest(
+            &request.app_path,
+            &request.artifact_digest_algorithm,
+            &request.artifact_digest,
+            ".app",
+        )?;
+
         let bootstatus = simctl_bootstatus_command(&request.simulator_udid);
         let mut boot_command = TokioCommand::new(&bootstatus.program);
         boot_command.args(&bootstatus.args);
@@ -907,6 +1179,13 @@ impl NativeCachePort for LocalNativeCache {
         &self,
         request: CachedAndroidLaunchRequest,
     ) -> anyhow::Result<Vec<String>> {
+        validate_cached_artifact_digest(
+            &request.apk_path,
+            &request.artifact_digest_algorithm,
+            &request.artifact_digest,
+            "APK",
+        )?;
+
         let adb_device_id = resolve_android_adb_device_id(&request.device_id).await?;
 
         let install_status = run_adb_stage(
@@ -980,9 +1259,9 @@ mod tests {
     use super::*;
     use crate::domain::native_cache::{
         ANDROID_APK_ARTIFACT_KIND, ANDROID_PLATFORM, AndroidCacheLookup, AndroidCacheMetadata,
-        AndroidCacheStoreRequest, CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND,
-        IOS_SIMULATOR_PLATFORM, IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest,
-        android_native_fingerprint, ios_native_fingerprint,
+        AndroidCacheStoreRequest, CachedAndroidLaunchRequest, CachedArtifactValidationError,
+        CachedIosLaunchRequest, IOS_APP_ARTIFACT_KIND, IOS_SIMULATOR_PLATFORM,
+        IosSimulatorCacheMetadata, IosSimulatorCacheStoreRequest,
     };
     use std::fs;
     #[cfg(unix)]
@@ -1038,6 +1317,12 @@ mod tests {
             created_at: "2026-05-31T00:00:00Z".to_string(),
             source_worktree: worktree.display().to_string(),
             artifact_kind: IOS_APP_ARTIFACT_KIND.to_string(),
+            storage_mode: STORAGE_MODE_COPY.to_string(),
+            source_artifact_path: worktree
+                .join("ios/build/Build/Products/Debug-iphonesimulator/App.app"),
+            artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.to_string(),
+            artifact_digest: artifact_digest(&entry.join("artifact.app"))
+                .unwrap_or_else(|_| "digest".to_string()),
         };
         fs::write(
             entry.join("metadata.json"),
@@ -1097,6 +1382,12 @@ mod tests {
             created_at: "2026-06-04T00:00:00Z".to_string(),
             source_worktree: worktree.display().to_string(),
             artifact_kind: ANDROID_APK_ARTIFACT_KIND.to_string(),
+            storage_mode: STORAGE_MODE_COPY.to_string(),
+            source_artifact_path: worktree
+                .join("android/app/build/outputs/apk/local/debugOptimized/app.apk"),
+            artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.to_string(),
+            artifact_digest: artifact_digest(&entry.join("artifact.apk"))
+                .unwrap_or_else(|_| "digest".to_string()),
         };
         fs::write(
             entry.join("metadata.json"),
@@ -1244,8 +1535,131 @@ mod tests {
         );
         assert_eq!(hit.metadata.fingerprint, fingerprint);
         assert_eq!(hit.metadata.application_id, "com.aljazeera.mobile.local");
-        assert_eq!(hit.metadata.variant, "localDebugOptimized");
+        assert_eq!(hit.metadata.variant, "local");
         assert_eq!(hit.metadata.artifact_kind, ANDROID_APK_ARTIFACT_KIND);
+        Ok(())
+    }
+
+    #[test]
+    fn android_reference_store_tracks_original_apk_and_digest() -> anyhow::Result<()> {
+        let root = TempTree::new("android-reference-root")?;
+        let worktree = TempTree::new("android-reference-worktree")?;
+        seed_android_fingerprint_files(worktree.path())?;
+        seed_android_apk_output(
+            worktree.path(),
+            "com.aljazeera.mobile.local",
+            "localDebugOptimized",
+            "app-local-debugOptimized.apk",
+            "apk-binary",
+        )?;
+
+        let hit = store_android_reference_in_root(
+            root.path(),
+            AndroidCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".to_string(),
+            },
+        )?;
+        let original_apk = worktree.path().join(
+            "android/app/build/outputs/apk/local/debugOptimized/app-local-debugOptimized.apk",
+        );
+
+        assert_eq!(hit.artifact_path, original_apk);
+        assert_eq!(hit.metadata.storage_mode, "reference");
+        assert_eq!(hit.metadata.source_artifact_path, hit.artifact_path);
+        assert_eq!(hit.metadata.artifact_digest_algorithm, "sha256");
+        assert!(!hit.metadata.artifact_digest.is_empty());
+
+        let lookup = lookup_android_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(lookup, AndroidCacheLookup::Hit(Box::new(hit)));
+        Ok(())
+    }
+
+    #[test]
+    fn android_reference_lookup_returns_metadata_hit_when_original_apk_changes()
+    -> anyhow::Result<()> {
+        let root = TempTree::new("android-reference-change-root")?;
+        let worktree = TempTree::new("android-reference-change-worktree")?;
+        seed_android_fingerprint_files(worktree.path())?;
+        seed_android_apk_output(
+            worktree.path(),
+            "com.aljazeera.mobile.local",
+            "localDebugOptimized",
+            "app-local-debugOptimized.apk",
+            "apk-binary",
+        )?;
+        let hit = store_android_reference_in_root(
+            root.path(),
+            AndroidCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".to_string(),
+            },
+        )?;
+
+        fs::write(&hit.artifact_path, "changed-apk-binary")?;
+
+        let lookup = lookup_android_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(lookup, AndroidCacheLookup::Hit(Box::new(hit)));
+        Ok(())
+    }
+
+    #[test]
+    fn android_copy_lookup_returns_metadata_hit_when_cached_apk_changes() -> anyhow::Result<()> {
+        let root = TempTree::new("android-copy-change-root")?;
+        let worktree = TempTree::new("android-copy-change-worktree")?;
+        seed_android_fingerprint_files(worktree.path())?;
+        seed_android_apk_output(
+            worktree.path(),
+            "com.aljazeera.mobile.local",
+            "localDebugOptimized",
+            "app-local-debugOptimized.apk",
+            "apk-binary",
+        )?;
+        let hit = store_android_in_root(
+            root.path(),
+            AndroidCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".to_string(),
+            },
+        )?;
+
+        fs::write(&hit.artifact_path, "changed-cached-apk-binary")?;
+
+        let lookup = lookup_android_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(lookup, AndroidCacheLookup::Hit(Box::new(hit)));
+        Ok(())
+    }
+
+    #[test]
+    fn android_legacy_metadata_without_digest_returns_miss() -> anyhow::Result<()> {
+        let root = TempTree::new("android-legacy-root")?;
+        let worktree = TempTree::new("android-legacy-worktree")?;
+        seed_android_fingerprint_files(worktree.path())?;
+        let fingerprint = android_native_fingerprint(worktree.path())?;
+        let entry = root.path().join("android").join(&fingerprint);
+        fs::create_dir_all(&entry)?;
+        fs::write(entry.join("artifact.apk"), "apk")?;
+        fs::write(
+            entry.join("metadata.json"),
+            serde_json::json!({
+                "platform": ANDROID_PLATFORM,
+                "fingerprint": fingerprint,
+                "application_id": "com.aljazeera.mobile.local",
+                "variant": "local",
+                "created_at": "2026-06-04T00:00:00Z",
+                "source_worktree": worktree.path().display().to_string(),
+                "artifact_kind": ANDROID_APK_ARTIFACT_KIND
+            })
+            .to_string(),
+        )?;
+
+        let lookup = lookup_android_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(
+            lookup,
+            AndroidCacheLookup::Miss {
+                fingerprint: android_native_fingerprint(worktree.path())?
+            }
+        );
         Ok(())
     }
 
@@ -1393,6 +1807,139 @@ mod tests {
     }
 
     #[test]
+    fn ios_reference_store_tracks_original_app_and_digest() -> anyhow::Result<()> {
+        let root = TempTree::new("ios-reference-root")?;
+        let worktree = TempTree::new("ios-reference-worktree")?;
+        seed_fingerprint_files(worktree.path())?;
+        seed_xcode_project(worktree.path(), "AlJazeeraMobile")?;
+        let app = worktree
+            .path()
+            .join("ios/build/Build/Products/Debug-iphonesimulator/AlJazeeraMobile.app");
+        seed_simulator_app(&app, "com.aljazeera.mobile.local")?;
+
+        let hit = store_ios_simulator_reference_in_root_with_derived_data(
+            root.path(),
+            IosSimulatorCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".to_string(),
+            },
+            None,
+        )?;
+
+        assert_eq!(hit.artifact_path, app);
+        assert_eq!(hit.metadata.storage_mode, "reference");
+        assert_eq!(hit.metadata.source_artifact_path, hit.artifact_path);
+        assert_eq!(hit.metadata.artifact_digest_algorithm, "sha256");
+        assert!(!hit.metadata.artifact_digest.is_empty());
+
+        let lookup = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(lookup, IosSimulatorCacheLookup::Hit(Box::new(hit)));
+        Ok(())
+    }
+
+    #[test]
+    fn ios_reference_lookup_returns_metadata_hit_when_original_app_file_changes()
+    -> anyhow::Result<()> {
+        let root = TempTree::new("ios-reference-change-root")?;
+        let worktree = TempTree::new("ios-reference-change-worktree")?;
+        seed_fingerprint_files(worktree.path())?;
+        seed_xcode_project(worktree.path(), "AlJazeeraMobile")?;
+        let app = worktree
+            .path()
+            .join("ios/build/Build/Products/Debug-iphonesimulator/AlJazeeraMobile.app");
+        seed_simulator_app(&app, "com.aljazeera.mobile.local")?;
+        let hit = store_ios_simulator_reference_in_root_with_derived_data(
+            root.path(),
+            IosSimulatorCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".to_string(),
+            },
+            None,
+        )?;
+
+        fs::write(app.join("AppBinary"), "changed-binary")?;
+
+        let lookup = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(lookup, IosSimulatorCacheLookup::Hit(Box::new(hit)));
+        Ok(())
+    }
+
+    #[test]
+    fn ios_app_digest_changes_when_nested_file_changes() -> anyhow::Result<()> {
+        let app = TempTree::new("ios-digest-app")?;
+        seed_simulator_app(app.path(), "com.aljazeera.mobile.local")?;
+
+        let before = artifact_digest(app.path())?;
+        fs::create_dir_all(app.path().join("Frameworks/Nested.framework"))?;
+        fs::write(
+            app.path().join("Frameworks/Nested.framework/Nested"),
+            "nested-binary",
+        )?;
+        let after = artifact_digest(app.path())?;
+
+        assert_ne!(before, after);
+        Ok(())
+    }
+
+    #[test]
+    fn ios_copy_lookup_returns_metadata_hit_when_cached_app_file_changes() -> anyhow::Result<()> {
+        let root = TempTree::new("ios-copy-change-root")?;
+        let worktree = TempTree::new("ios-copy-change-worktree")?;
+        seed_fingerprint_files(worktree.path())?;
+        seed_xcode_project(worktree.path(), "AlJazeeraMobile")?;
+        let app = worktree
+            .path()
+            .join("ios/build/Build/Products/Debug-iphonesimulator/AlJazeeraMobile.app");
+        seed_simulator_app(&app, "com.aljazeera.mobile.local")?;
+        let hit = store_ios_simulator_in_root_with_derived_data(
+            root.path(),
+            IosSimulatorCacheStoreRequest {
+                worktree_path: worktree.path().to_path_buf(),
+                variant: "local".to_string(),
+            },
+            None,
+        )?;
+
+        fs::write(hit.artifact_path.join("AppBinary"), "changed-cached-binary")?;
+
+        let lookup = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(lookup, IosSimulatorCacheLookup::Hit(Box::new(hit)));
+        Ok(())
+    }
+
+    #[test]
+    fn ios_legacy_metadata_without_digest_returns_miss() -> anyhow::Result<()> {
+        let root = TempTree::new("ios-legacy-root")?;
+        let worktree = TempTree::new("ios-legacy-worktree")?;
+        seed_fingerprint_files(worktree.path())?;
+        let fingerprint = ios_native_fingerprint(worktree.path())?;
+        let entry = root.path().join("ios-simulator").join(&fingerprint);
+        fs::create_dir_all(entry.join("artifact.app"))?;
+        fs::write(
+            entry.join("metadata.json"),
+            serde_json::json!({
+                "platform": IOS_SIMULATOR_PLATFORM,
+                "fingerprint": fingerprint,
+                "bundle_id": "com.aljazeera.mobile.local",
+                "variant": "local",
+                "created_at": "2026-05-31T00:00:00Z",
+                "source_worktree": worktree.path().display().to_string(),
+                "artifact_kind": IOS_APP_ARTIFACT_KIND
+            })
+            .to_string(),
+        )?;
+
+        let lookup = lookup_ios_simulator_in_root(root.path(), worktree.path().to_path_buf())?;
+        assert_eq!(
+            lookup,
+            IosSimulatorCacheLookup::Miss {
+                fingerprint: ios_native_fingerprint(worktree.path())?
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
     fn store_uses_derived_data_when_worktree_build_app_is_empty() -> anyhow::Result<()> {
         let root = TempTree::new("store-derived-root")?;
         let worktree = TempTree::new("store-derived-worktree")?;
@@ -1423,6 +1970,74 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn cached_ios_launch_rejects_changed_app_before_simctl() -> anyhow::Result<()> {
+        let app_tree = TempTree::new("ios-launch-validation-app")?;
+        let app = app_tree.path().join("AlJazeeraMobile.app");
+        seed_simulator_app(&app, "com.aljazeera.mobile.local")?;
+        let original_digest = artifact_digest(&app)?;
+        fs::write(app.join("AppBinary"), "changed-binary")?;
+
+        let err = LocalNativeCache::default()
+            .install_and_launch_ios_simulator(CachedIosLaunchRequest {
+                simulator_udid: "SIM-123".to_string(),
+                app_path: app,
+                bundle_id: "com.aljazeera.mobile.local".to_string(),
+                metro_port: 19001,
+                fingerprint: "fingerprint".to_string(),
+                variant: crate::domain::command::RunVariant::Local,
+                artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.to_string(),
+                artifact_digest: original_digest,
+            })
+            .await
+            .expect_err("changed cached app should fail validation before simctl");
+
+        assert!(
+            err.downcast_ref::<CachedArtifactValidationError>()
+                .is_some(),
+            "expected typed artifact validation error, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("cached .app digest mismatch"),
+            "unexpected validation error: {err}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cached_android_launch_rejects_changed_apk_before_adb() -> anyhow::Result<()> {
+        let apk_tree = TempTree::new("android-launch-validation-apk")?;
+        let apk = apk_tree.path().join("app.apk");
+        fs::write(&apk, "apk-binary")?;
+        let original_digest = artifact_digest(&apk)?;
+        fs::write(&apk, "changed-apk-binary")?;
+
+        let err = LocalNativeCache::default()
+            .install_and_launch_android(CachedAndroidLaunchRequest {
+                device_id: "emulator-5554".to_string(),
+                apk_path: apk,
+                application_id: "com.aljazeera.mobile.local".to_string(),
+                metro_port: 19001,
+                fingerprint: "fingerprint".to_string(),
+                variant: crate::domain::command::RunVariant::Local,
+                artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.to_string(),
+                artifact_digest: original_digest,
+            })
+            .await
+            .expect_err("changed cached APK should fail validation before adb");
+
+        assert!(
+            err.downcast_ref::<CachedArtifactValidationError>()
+                .is_some(),
+            "expected typed artifact validation error, got {err:?}"
+        );
+        assert!(
+            err.to_string().contains("cached APK digest mismatch"),
+            "unexpected validation error: {err}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn simctl_launch_command_sets_metro_port_env() {
         let request = CachedIosLaunchRequest {
@@ -1430,6 +2045,10 @@ mod tests {
             app_path: PathBuf::from("/tmp/App.app"),
             bundle_id: "com.aljazeera.dashboard".to_string(),
             metro_port: 19001,
+            fingerprint: "fingerprint".to_string(),
+            variant: crate::domain::command::RunVariant::Local,
+            artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.to_string(),
+            artifact_digest: "digest".to_string(),
         };
 
         let command = simctl_launch_command(&request);
@@ -1470,6 +2089,10 @@ mod tests {
             app_path: PathBuf::from("/tmp/App.app"),
             bundle_id: "com.aljazeera.dashboard".to_string(),
             metro_port: 19001,
+            fingerprint: "fingerprint".to_string(),
+            variant: crate::domain::command::RunVariant::Local,
+            artifact_digest_algorithm: ARTIFACT_DIGEST_ALGORITHM.to_string(),
+            artifact_digest: "digest".to_string(),
         };
 
         let command = simctl_set_js_location_command(&request);

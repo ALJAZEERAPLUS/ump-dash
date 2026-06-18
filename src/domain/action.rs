@@ -27,6 +27,9 @@ pub enum Action {
 
     // Metro control (user-triggered)
     MetroStart,
+    MetroStartForWorktree {
+        worktree_id: crate::domain::worktree::WorktreeId,
+    },
     MetroStop,
     MetroSendDebugger, // J when worktree table focused (metro running) or j in metro palette — HTTP POST /open-debugger
     MetroSendReload, // R when worktree table focused (metro running) or R in metro palette — HTTP POST /reload
@@ -50,6 +53,10 @@ pub enum Action {
 
     // Phase 3: Command lifecycle
     CommandRun(crate::domain::command::CommandSpec), // dispatched when command is confirmed/ready
+    CommandRunWithCache {
+        spec: crate::domain::command::CommandSpec,
+        cache_launch_supported: bool,
+    },
     /// Phase 14 / D-08: routed by `task_id` (NOT by `active_worktree_id`).
     /// Late stdout from a cancelled task lands here with no matching slice;
     /// the handler in `update.rs` silently drops it. Protects against the fast
@@ -164,6 +171,9 @@ pub enum Action {
     ExternalMetroDetected(crate::domain::ports::port_probe_port::ExternalProcessInfo), // port 8081 occupied by external process
     KillExternalMetro(u32), // user chose "Kill it" with PID to kill
     MetroStartConfirmed,    // detection passed — proceed with actual metro spawn
+    MetroStartConfirmedForWorktree {
+        worktree_id: crate::domain::worktree::WorktreeId,
+    },
 
     // Quick-2: Worktree removal
     WorktreeRemove,               // user-triggered via g>D — shows confirm modal
