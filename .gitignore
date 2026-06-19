@@ -34,3 +34,8 @@ Thumbs.db
 
 # Understand Anything knowledge graph (local-only, regenerate with /understand)
 .understand-anything/
+
+# nix env
+.direnv
+flake.lock
+result

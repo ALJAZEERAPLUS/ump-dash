@@ -16,6 +16,58 @@ Built with [Ratatui](https://ratatui.rs) in Rust.
 
 ## Installation / Build
 
+### Nix (flake)
+
+Build or run directly from this repository without cloning:
+
+```bash
+# Run without installing
+nix run github:ALJAZEERAPLUS/ump-dash
+
+# Install into your profile (persistent)
+nix profile install github:ALJAZEERAPLUS/ump-dash
+
+# Enter a dev shell with all dependencies
+nix develop github:ALJAZEERAPLUS/ump-dash
+```
+
+From a local checkout:
+
+```bash
+git clone https://github.com/ALJAZEERAPLUS/ump-dash.git
+cd ump-dash
+nix develop           # dev shell with cargo, clippy, rustfmt, jq
+nix build             # ./result/bin/ump-dash
+nix profile install . # add to profile
+```
+
+**As a flake input** in your own `flake.nix`:
+
+```nix
+{
+  inputs.ump-dash.url = "github:ALJAZEERAPLUS/ump-dash";
+
+  outputs = { self, nixpkgs, ump-dash, ... }: {
+    nixosConfigurations.mybox = nixpkgs.lib.nixosSystem {
+      modules = [
+        { environment.systemPackages = [ ump-dash.packages.${system}.default ]; }
+      ];
+    };
+  };
+}
+```
+
+**Via the overlay** (with `nixpkgs.overlays` in NixOS, nix-darwin, or home-manager):
+
+```nix
+{
+  nixpkgs.overlays = [ ump-dash.overlays.default ];
+  # then: pkgs.umpdash is available
+}
+```
+
+### Cargo (Rust toolchain)
+
 **Prerequisites:** Rust toolchain — install from [rustup.rs](https://rustup.rs)
 
 ```bash
@@ -30,6 +82,8 @@ Optionally copy the binary to a directory on your PATH:
 ```bash
 cp target/release/ump-dash ~/.local/bin/
 ```
+
+### Self-update (GitHub Release binaries)
 
 Prebuilt GitHub Release binaries can update themselves when the GitHub CLI is
 installed and authenticated:
