@@ -788,7 +788,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     KeyBinding {
         key: KeyCode::Char('n'),
         label: "n",
-        short_desc: "new branch worktree",
+        short_desc: "new branch",
         long_desc: "New branch + worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::WorktreeAddNewBranch),

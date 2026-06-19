@@ -718,6 +718,10 @@ mod palette_resolution {
         let mut state = base_state();
         state.modal_stack.palette_mode = Some(PaletteMode::Worktree);
 
+        let hints = footer_hints_for(&state);
+        assert!(hints.contains(&("n", "new branch")));
+        assert!(!hints.contains(&("n", "new branch worktree")));
+
         assert_eq!(handle_key(&state, key('c')), Some(Action::WorktreeAdd));
         assert_eq!(
             handle_key(&state, key('n')),
