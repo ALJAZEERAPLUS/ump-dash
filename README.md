@@ -131,7 +131,8 @@ cargo run
 | Enter | Use selected worktree for Metro |
 | Esc | Stop metro |
 | y | Open yarn palette |
-| w | Open worktree palette (`c` add, `d` remove, `n` new branch) |
+| + | Add worktree (`c` checkout, `n` new branch) |
+| - | Remove selected worktree |
 | o | Open palette (`c` Claude Code, `e` editor, `t` shell tab, `j` Metro debugger) |
 | R | Reload metro (when running) |
 | ? | Toggle help overlay |

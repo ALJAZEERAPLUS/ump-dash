@@ -719,11 +719,11 @@ mod palette_resolution {
         state.modal_stack.palette_mode = Some(PaletteMode::Worktree);
 
         assert_eq!(handle_key(&state, key('c')), Some(Action::WorktreeAdd));
-        assert_eq!(handle_key(&state, key('d')), Some(Action::WorktreeRemove));
         assert_eq!(
             handle_key(&state, key('n')),
             Some(Action::WorktreeAddNewBranch)
         );
+        assert_eq!(handle_key(&state, key('d')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('w')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('b')), Some(Action::ModalCancel));
 
@@ -746,12 +746,21 @@ mod palette_resolution {
 
         let hints = footer_hints_for(&state);
 
+        assert!(hints.contains(&("+", "add")));
+        assert!(hints.contains(&("-", "remove")));
         assert!(hints.contains(&("o", "open")));
         assert!(hints.contains(&("Enter", "metro")));
+        assert!(!hints.contains(&("w", "worktree")));
         assert!(!hints.contains(&("!", "shell")));
         assert!(!hints.contains(&("C", "claude")));
         assert!(!hints.contains(&("T", "shell tab")));
         assert!(!hints.contains(&("J", "debugger")));
+        assert_eq!(
+            handle_key(&state, key('+')),
+            Some(Action::EnterWorktreePalette)
+        );
+        assert_eq!(handle_key(&state, key('-')), Some(Action::WorktreeRemove));
+        assert_eq!(handle_key(&state, key('w')), None);
         assert_eq!(handle_key(&state, key('!')), None);
         assert_eq!(handle_key(&state, key('C')), None);
         assert_eq!(handle_key(&state, key('T')), None);
@@ -784,6 +793,19 @@ mod palette_resolution {
     }
 
     #[test]
+    fn open_palette_footer_shows_debugger_key_without_running_metro() {
+        let mut state = base_state();
+        state.modal_stack.palette_mode = Some(PaletteMode::Open);
+
+        let hints = footer_hints_for(&state);
+
+        assert!(hints.contains(&("c", "claude")));
+        assert!(hints.contains(&("e", "editor")));
+        assert!(hints.contains(&("t", "shell tab")));
+        assert!(hints.contains(&("j", "debugger")));
+    }
+
+    #[test]
     fn help_rows_reflect_open_and_worktree_shortcuts() {
         let rows = help_overlay_rows();
 
@@ -796,15 +818,15 @@ mod palette_resolution {
                 && row.desc == "Use selected worktree for Metro"
         }));
         assert!(rows.iter().any(|row| {
-            row.section == "Worktree  (w>)" && row.label == "c" && row.desc == "Add new worktree"
+            row.section == "Worktree  (+>)" && row.label == "c" && row.desc == "Checkout worktree"
         }));
         assert!(rows.iter().any(|row| {
-            row.section == "Worktree  (w>)"
+            row.section == "Worktree  (+>)"
                 && row.label == "n"
                 && row.desc == "New branch + worktree"
         }));
         assert!(!rows.iter().any(|row| {
-            row.section == "Worktree Table" && matches!(row.label, "!" | "C" | "T" | "J")
+            row.section == "Worktree Table" && matches!(row.label, "!" | "C" | "T" | "J" | "w")
         }));
     }
 

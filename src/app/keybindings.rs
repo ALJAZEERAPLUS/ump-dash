@@ -779,19 +779,10 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     KeyBinding {
         key: KeyCode::Char('c'),
         label: "c",
-        short_desc: "add worktree",
-        long_desc: "Add new worktree",
+        short_desc: "checkout",
+        long_desc: "Checkout worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::WorktreeAdd),
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('d'),
-        label: "d",
-        short_desc: "remove worktree",
-        long_desc: "Remove worktree (purge)",
-        context: BindingContext::Palette(PaletteMode::Worktree),
-        action: |_| Some(Action::WorktreeRemove),
         visible: |_| true,
     },
     KeyBinding {
@@ -853,7 +844,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
                 Some(Action::ModalCancel)
             }
         },
-        visible: metro_running,
+        visible: |_| true,
     },
     KeyBinding {
         key: KeyCode::Esc,
@@ -986,12 +977,21 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
-        key: KeyCode::Char('w'),
-        label: "w",
-        short_desc: "worktree",
-        long_desc: "Worktree submenu",
+        key: KeyCode::Char('+'),
+        label: "+",
+        short_desc: "add",
+        long_desc: "Add worktree",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::EnterWorktreePalette),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('-'),
+        label: "-",
+        short_desc: "remove",
+        long_desc: "Remove worktree",
+        context: BindingContext::WorktreeTable,
+        action: |_| Some(Action::WorktreeRemove),
         visible: |_| true,
     },
     KeyBinding {
@@ -1493,7 +1493,7 @@ fn section_for_context(ctx: &BindingContext) -> &'static str {
         BindingContext::Palette(PaletteMode::Ios) => "iOS  (i>)",
         BindingContext::Palette(PaletteMode::Yarn) => "Yarn  (y>)",
         BindingContext::Palette(PaletteMode::Git) => "Git  (g>)",
-        BindingContext::Palette(PaletteMode::Worktree) => "Worktree  (w>)",
+        BindingContext::Palette(PaletteMode::Worktree) => "Worktree  (+>)",
         BindingContext::Palette(PaletteMode::Open) => "Open  (o>)",
         BindingContext::Modal(_) => "Modal",
         BindingContext::Overlay(_) => "Overlay",

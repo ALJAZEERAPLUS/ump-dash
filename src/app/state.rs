@@ -56,7 +56,7 @@ pub enum PaletteMode {
     Yarn,
     /// 'g' — Git submenu
     Git,
-    /// 'w' — Worktree palette (create, remove, create-with-new-branch)
+    /// '+' — Worktree palette (checkout or create-with-new-branch)
     Worktree,
     /// 'o' — Open palette (terminal surfaces and Metro debugger)
     Open,

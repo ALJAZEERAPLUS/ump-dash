@@ -116,7 +116,7 @@ pub enum Action {
     EnterAndroidPalette,  // 'a' when WorktreeTable focused
     EnterIosPalette,      // 'i' when WorktreeTable focused
     EnterYarnPalette,     // 'y' when WorktreeTable focused
-    EnterWorktreePalette, // 'w' when WorktreeTable focused
+    EnterWorktreePalette, // '+' when WorktreeTable focused
     EnterOpenPalette,     // 'o' when WorktreeTable focused
     // EnterGitPalette already exists
 
@@ -184,12 +184,12 @@ pub enum Action {
     WorktreeRemoveFailed(String), // background: removal failed (carries error message)
 
     // Quick: Worktree creation
-    WorktreeAdd, // user-triggered via w>W — shows TextInput modal for branch name
+    WorktreeAdd, // user-triggered via +>c — shows TextInput modal for branch name
     WorktreeAdded(String), // background: creation succeeded (carries path string)
     WorktreeAddFailed(String), // background: creation failed (carries error message)
 
     // Phase 08: Worktree palette
-    WorktreeAddNewBranch, // w>B — create worktree with new branch from base
+    WorktreeAddNewBranch, // +>n — create worktree with new branch from base
 
     // Phase 08-02: New-branch worktree creation flow
     BranchesLoaded(Vec<String>), // background: remote branches fetched
