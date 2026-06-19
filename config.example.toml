@@ -13,7 +13,6 @@ jira_base_url = "https://your-org.atlassian.net"
 # JIRA account email.
 # Required for Cloud auth mode, unused for Data Center.
 jira_email = "you@example.com"
-
 # JIRA API token (Cloud) or Personal Access Token (Data Center).
 jira_token = "your-api-token-here"
 

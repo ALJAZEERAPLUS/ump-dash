@@ -39,7 +39,13 @@
         };
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
-        umpdash = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+        umpdash = craneLib.buildPackage (commonArgs // {
+          inherit cargoArtifacts;
+          postInstall = ''
+            install -Dm644 ${./config.example.toml} $out/share/ump-dash/config.example.toml
+          '';
+          passthru.settings = ./config.example.toml;
+        });
       in
       {
         packages.default = umpdash;
@@ -57,5 +63,7 @@
       overlays.default = final: prev: {
         umpdash = self.packages.${final.stdenv.hostPlatform.system}.default;
       };
+
+      homeManagerModules.default = import ./nix/home-manager.nix;
     };
 }
