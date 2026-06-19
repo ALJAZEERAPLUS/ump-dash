@@ -950,21 +950,30 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| false,
     },
     KeyBinding {
-        key: KeyCode::Char('a'),
-        label: "a",
-        short_desc: "android",
-        long_desc: "Android submenu",
+        key: KeyCode::Char('+'),
+        label: "+/-",
+        short_desc: "worktree",
+        long_desc: "Add/remove worktree",
         context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::EnterAndroidPalette),
+        action: |_| Some(Action::EnterWorktreePalette),
         visible: |_| true,
     },
     KeyBinding {
-        key: KeyCode::Char('i'),
-        label: "i",
-        short_desc: "ios",
-        long_desc: "iOS submenu",
+        key: KeyCode::Char('-'),
+        label: "-",
+        short_desc: "remove",
+        long_desc: "Remove worktree",
         context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::EnterIosPalette),
+        action: |_| Some(Action::WorktreeRemove),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Char('g'),
+        label: "g",
+        short_desc: "git",
+        long_desc: "Git submenu",
+        context: BindingContext::WorktreeTable,
+        action: |_| Some(Action::EnterGitPalette),
         visible: |_| true,
     },
     KeyBinding {
@@ -977,30 +986,21 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
-        key: KeyCode::Char('+'),
-        label: "+",
-        short_desc: "add",
-        long_desc: "Add worktree",
+        key: KeyCode::Char('i'),
+        label: "i",
+        short_desc: "ios",
+        long_desc: "iOS submenu",
         context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::EnterWorktreePalette),
+        action: |_| Some(Action::EnterIosPalette),
         visible: |_| true,
     },
     KeyBinding {
-        key: KeyCode::Char('-'),
-        label: "-",
-        short_desc: "remove",
-        long_desc: "Remove worktree",
+        key: KeyCode::Char('a'),
+        label: "a",
+        short_desc: "android",
+        long_desc: "Android submenu",
         context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::WorktreeRemove),
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('g'),
-        label: "g",
-        short_desc: "git",
-        long_desc: "Git submenu",
-        context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::EnterGitPalette),
+        action: |_| Some(Action::EnterAndroidPalette),
         visible: |_| true,
     },
     KeyBinding {
@@ -1025,7 +1025,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
                 Some(Action::RefreshWorktrees)
             }
         },
-        visible: metro_running,
+        visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Esc,
@@ -1040,7 +1040,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
                 None
             }
         },
-        visible: metro_running,
+        visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::Char('f'),
@@ -1058,7 +1058,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         long_desc: "Use selected worktree for Metro",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSwitchToSelected),
-        visible: |_| true,
+        visible: |_| false,
     },
     // ==== CommandOutput panel ====
     KeyBinding {
@@ -1264,7 +1264,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         long_desc: "Switch panel",
         context: BindingContext::Normal,
         action: |_| Some(Action::FocusNext),
-        visible: |_| true,
+        visible: |_| false,
     },
     KeyBinding {
         key: KeyCode::BackTab,

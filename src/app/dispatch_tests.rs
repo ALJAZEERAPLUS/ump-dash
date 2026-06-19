@@ -743,18 +743,30 @@ mod palette_resolution {
     }
 
     #[test]
-    fn worktree_table_footer_uses_open_menu_and_metro_labels() {
+    fn worktree_table_footer_uses_requested_shortcut_order() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
         register_ready_metro(&mut state, "wt-1", 8081);
 
         let hints = footer_hints_for(&state);
 
-        assert!(hints.contains(&("+", "add")));
-        assert!(hints.contains(&("-", "remove")));
-        assert!(hints.contains(&("o", "open")));
-        assert!(hints.contains(&("Enter", "metro")));
+        assert_eq!(
+            hints,
+            vec![
+                ("+/-", "worktree"),
+                ("g", "git"),
+                ("y", "yarn"),
+                ("i", "ios"),
+                ("a", "android"),
+                ("o", "open"),
+                ("q", "quit"),
+                ("?/F1", "help"),
+            ]
+        );
         assert!(!hints.contains(&("w", "worktree")));
+        assert!(!hints.contains(&("+", "add")));
+        assert!(!hints.contains(&("-", "remove")));
+        assert!(!hints.contains(&("Enter", "metro")));
         assert!(!hints.contains(&("!", "shell")));
         assert!(!hints.contains(&("C", "claude")));
         assert!(!hints.contains(&("T", "shell tab")));
@@ -764,6 +776,10 @@ mod palette_resolution {
             Some(Action::EnterWorktreePalette)
         );
         assert_eq!(handle_key(&state, key('-')), Some(Action::WorktreeRemove));
+        assert_eq!(
+            handle_key(&state, key_code(KeyCode::Enter)),
+            Some(Action::WorktreeSwitchToSelected)
+        );
         assert_eq!(handle_key(&state, key('w')), None);
         assert_eq!(handle_key(&state, key('!')), None);
         assert_eq!(handle_key(&state, key('C')), None);

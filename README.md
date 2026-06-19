@@ -127,16 +127,18 @@ cargo run
 
 | Key | Action |
 |-----|--------|
+| +/- | Worktree (`+ c` checkout, `+ n` new branch, `-` remove) |
+| g | Open git palette |
+| y | Open yarn palette |
+| i | Open iOS palette |
+| a | Open Android palette |
+| o | Open palette (`c` Claude Code, `e` editor, `t` shell tab, `j` Metro debugger) |
+| q | Quit |
+| ? | Toggle help overlay |
 | j / k or arrows | Navigate worktree list |
 | Enter | Use selected worktree for Metro |
 | Esc | Stop metro |
-| y | Open yarn palette |
-| + | Add worktree (`c` checkout, `n` new branch) |
-| - | Remove selected worktree |
-| o | Open palette (`c` Claude Code, `e` editor, `t` shell tab, `j` Metro debugger) |
 | R | Reload metro (when running) |
-| ? | Toggle help overlay |
-| q | Quit |
 
 ## License
 
