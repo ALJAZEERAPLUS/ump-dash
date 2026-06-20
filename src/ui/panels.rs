@@ -63,6 +63,20 @@ fn worktree_column_constraint(column: WorktreeTableColumn) -> Constraint {
     }
 }
 
+fn worktree_column_header(column: WorktreeTableColumn) -> &'static str {
+    match column {
+        WorktreeTableColumn::Status => "Y/P",
+        WorktreeTableColumn::Branch => "Branch",
+        WorktreeTableColumn::Ticket => "Ticket",
+        WorktreeTableColumn::Dir => "Dir",
+        WorktreeTableColumn::Task => "Task",
+        WorktreeTableColumn::CacheStatus => "iOS",
+        WorktreeTableColumn::Cache => "iOS FP",
+        WorktreeTableColumn::AndroidCacheStatus => "APK",
+        WorktreeTableColumn::AndroidCache => "APK FP",
+    }
+}
+
 fn activity_column_index(columns: &[WorktreeTableColumn]) -> Option<usize> {
     columns
         .iter()
@@ -190,8 +204,6 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
 
     let block = Block::bordered()
         .border_type(BorderType::Double)
-        .title(" Worktrees ")
-        .title_style(Style::default().fg(Color::White))
         .border_style(border_style);
 
     if state.worktree_browser.worktrees.is_empty() {
@@ -403,8 +415,20 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         .map(worktree_column_constraint)
         .collect::<Vec<_>>();
 
+    let header_cells = columns
+        .iter()
+        .copied()
+        .map(|column| Cell::from(worktree_column_header(column)))
+        .collect::<Vec<_>>();
+    let header = Row::new(header_cells).style(
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
+
     let table = Table::new(rows, constraints)
         .block(block)
+        .header(header)
         .row_highlight_style(highlight_style);
     // No highlight_symbol — selection is conveyed by row bg only, so the
     // left gutter (`> ` for selected, blank for others) is not reserved.
@@ -542,6 +566,28 @@ mod tests {
         IosSimulatorCacheMetadata, IosSimulatorCacheState,
     };
     use crate::domain::worktree_slice::WorktreeSlice;
+
+    #[test]
+    fn worktree_column_header_labels_match_configured_columns() {
+        let labels = crate::domain::dash_config::DEFAULT_WORKTREE_COLUMNS
+            .iter()
+            .copied()
+            .map(worktree_column_header)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec!["Y/P", "Branch", "Ticket", "Dir", "Task", "iOS", "iOS FP"]
+        );
+        assert_eq!(
+            worktree_column_header(WorktreeTableColumn::AndroidCacheStatus),
+            "APK"
+        );
+        assert_eq!(
+            worktree_column_header(WorktreeTableColumn::AndroidCache),
+            "APK FP"
+        );
+    }
 
     #[test]
     fn metro_activity_label_shows_selected_port() {
