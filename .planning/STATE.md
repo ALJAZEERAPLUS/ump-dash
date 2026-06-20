@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260620-eej | Add headers to the worktree table columns | 2026-06-20 | e71c59d | [260620-eej-change-the-table-so-instead-of-worktrees](./quick/260620-eej-change-the-table-so-instead-of-worktrees/) |
 | 260618-rst | Remove shell shortcut and reorganize worktree/open keybindings | 2026-06-18 | e1197a9 | [260618-rst-let-s-remove-shell-command-from-the-ui-t](./quick/260618-rst-let-s-remove-shell-command-from-the-ui-t/) |
 | 260608-sg5 | Include physical Android devices in the `a r` run target picker | 2026-06-08 | ad689e9 | [260608-sg5-when-i-press-a-r-and-i-see-the-list-of-a](./quick/260608-sg5-when-i-press-a-r-and-i-see-the-list-of-a/) |
 | 260607-i9b | Add self-update command for GitHub Release binaries | 2026-06-07 | 8100144 | [260607-i9b-self-update-command-design](./quick/260607-i9b-self-update-command-design/) |
@@ -142,7 +143,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-06-18 - Completed quick task 260618-rst: remove shell shortcut and reorganize worktree/open keybindings
+Last activity: 2026-06-20 - Completed quick task 260620-eej: add headers to the worktree table columns
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
