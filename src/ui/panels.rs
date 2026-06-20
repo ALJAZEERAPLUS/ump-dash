@@ -65,7 +65,7 @@ fn worktree_column_constraint(column: WorktreeTableColumn) -> Constraint {
 
 fn worktree_column_header(column: WorktreeTableColumn) -> &'static str {
     match column {
-        WorktreeTableColumn::Status => "Y/P",
+        WorktreeTableColumn::Status => "",
         WorktreeTableColumn::Branch => "Branch",
         WorktreeTableColumn::Ticket => "Ticket",
         WorktreeTableColumn::Dir => "Dir",
@@ -278,8 +278,7 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
             icon_spans.push(Span::styled("Y", Style::default().fg(yarn_color)));
         }
 
-        // Space separator between Y and P — prevents spinner glyph overlap with P
-        // (spinner cell is east_asian_width=Ambiguous; some terminals render >1 cell wide).
+        // Space separator between Y and P prevents spinner glyph overlap with P.
         icon_spans.push(Span::raw(" "));
 
         // P cell: yellow spinner if pod-install running (D-02/D-09), else staleness color
@@ -577,7 +576,7 @@ mod tests {
 
         assert_eq!(
             labels,
-            vec!["Y/P", "Branch", "Ticket", "Dir", "Task", "iOS", "iOS FP"]
+            vec!["", "Branch", "Ticket", "Dir", "Task", "iOS", "iOS FP"]
         );
         assert_eq!(
             worktree_column_header(WorktreeTableColumn::AndroidCacheStatus),
