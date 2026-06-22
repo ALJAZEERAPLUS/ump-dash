@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.1] - 2026-06-22
+
+### Fixed
+- Release CI now passes on newer Rust stable while preserving cached launch state until Metro has a running port.
+
 ## [1.6.0] - 2026-06-22
 
 ### New

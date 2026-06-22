@@ -1,6 +1,6 @@
 [package]
 name = "ump-dash"
-version = "1.6.0"
+version = "1.6.1"
 edition = "2024"
 description = "Terminal dashboard for managing UMP React Native worktrees, Metro, and git"
 license = "MIT"
