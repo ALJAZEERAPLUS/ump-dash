@@ -2578,6 +2578,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::OpenClaudeCode => {
+            state.modal_stack.palette_mode = None;
             if !state.app_config.multiplexer_available {
                 state.error_state = Some(ErrorState {
                     message:
@@ -2606,6 +2607,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::OpenShellTab => {
+            state.modal_stack.palette_mode = None;
             if !state.app_config.multiplexer_available {
                 state.error_state = Some(ErrorState {
                     message: "Cannot open shell tab: not inside a tmux, zellij, or Ghostty session"
@@ -2627,6 +2629,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             });
         }
         Action::OpenEditor => {
+            state.modal_stack.palette_mode = None;
             let editor = state.app_config.editor.trim().to_string();
             if editor.is_empty() {
                 state.error_state = Some(ErrorState {

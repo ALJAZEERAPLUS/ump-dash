@@ -1006,6 +1006,71 @@ mod palette_resolution {
     }
 
     #[test]
+    fn submenu_option_selection_returns_to_root_after_update() {
+        fn assert_returns_to_root(mut state: AppState, mode: PaletteMode, action: Action) {
+            let label = format!("{action:?}");
+            state.modal_stack.palette_mode = Some(mode);
+
+            let _effects = update(&mut state, action);
+
+            assert!(
+                state.modal_stack.palette_mode.is_none(),
+                "{label} should clear palette_mode after submenu selection"
+            );
+        }
+
+        assert_returns_to_root(
+            base_state(),
+            PaletteMode::Android,
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+        assert_returns_to_root(
+            base_state(),
+            PaletteMode::Ios,
+            Action::CommandRun(CommandSpec::UmpRunIos {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+        assert_returns_to_root(
+            base_state(),
+            PaletteMode::Yarn,
+            Action::CommandRun(CommandSpec::YarnInstall),
+        );
+        assert_returns_to_root(base_state(), PaletteMode::Yarn, Action::OpenCleanMenu);
+        assert_returns_to_root(
+            base_state(),
+            PaletteMode::Git,
+            Action::CommandRun(CommandSpec::GitFetch),
+        );
+        assert_returns_to_root(base_state(), PaletteMode::Worktree, Action::WorktreeAdd);
+        assert_returns_to_root(
+            base_state(),
+            PaletteMode::Worktree,
+            Action::WorktreeAddNewBranch,
+        );
+        assert_returns_to_root(base_state(), PaletteMode::Worktree, Action::ReviewOpen);
+
+        for action in [
+            Action::OpenClaudeCode,
+            Action::OpenEditor,
+            Action::OpenShellTab,
+            Action::MetroSendDebugger,
+        ] {
+            let mut state = base_state();
+            seed_one_worktree(&mut state);
+            register_ready_metro(&mut state, "wt-1", 8081);
+            state.app_config.editor = "code".into();
+            state.app_config.multiplexer_available = true;
+
+            assert_returns_to_root(state, PaletteMode::Open, action);
+        }
+    }
+
+    #[test]
     fn open_palette_footer_shows_debugger_key_without_running_metro() {
         let mut state = base_state();
         state.modal_stack.palette_mode = Some(PaletteMode::Open);
