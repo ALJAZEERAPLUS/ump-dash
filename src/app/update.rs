@@ -1232,12 +1232,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id) {
                     let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
-                        slice.metro.running_port().and_then(|port| {
-                            slice
-                                .pending_cached_ios_launch
-                                .take()
-                                .map(|pending| (port, pending))
-                        })
+                        let port = slice.metro.running_port()?;
+                        slice
+                            .pending_cached_ios_launch
+                            .take()
+                            .map(|pending| (port, pending))
                     });
                     if let Some((port, pending)) = launch {
                         effects.push(Effect::InstallAndLaunchCachedIosSimulator {
@@ -1252,12 +1251,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
                 if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id) {
                     let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
-                        slice.metro.running_port().and_then(|port| {
-                            slice
-                                .pending_cached_android_launch
-                                .take()
-                                .map(|pending| (port, pending))
-                        })
+                        let port = slice.metro.running_port()?;
+                        slice
+                            .pending_cached_android_launch
+                            .take()
+                            .map(|pending| (port, pending))
                     });
                     if let Some((port, pending)) = launch {
                         effects.push(Effect::InstallAndLaunchCachedAndroid {
