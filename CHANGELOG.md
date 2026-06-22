@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-06-22
+
+### New
+- **PR review worktree flow** - `+>r` now lists open GitHub PRs from `gh`, supports search and filter cycling, creates a review worktree at the selected PR head revision, and queues `yarn install`.
+
+### Fixed
+- Worktree table headers now label visible columns without adding a misleading status header.
+- Worktree shortcut and footer labels are aligned, shorter, and ordered consistently with the current worktree menu.
+
 ## [1.5.0] - 2026-06-19
 
 ### New
