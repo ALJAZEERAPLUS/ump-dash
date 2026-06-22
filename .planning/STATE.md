@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260622-bvn | Add PR review worktree flow from the + menu | 2026-06-22 | f6acaa4 | [260622-bvn-add-pr-review-worktree-flow-from-the-men](./quick/260622-bvn-add-pr-review-worktree-flow-from-the-men/) |
 | 260620-eej | Add headers to the worktree table columns | 2026-06-20 | e71c59d | [260620-eej-change-the-table-so-instead-of-worktrees](./quick/260620-eej-change-the-table-so-instead-of-worktrees/) |
 | 260618-rst | Remove shell shortcut and reorganize worktree/open keybindings | 2026-06-18 | e1197a9 | [260618-rst-let-s-remove-shell-command-from-the-ui-t](./quick/260618-rst-let-s-remove-shell-command-from-the-ui-t/) |
 | 260608-sg5 | Include physical Android devices in the `a r` run target picker | 2026-06-08 | ad689e9 | [260608-sg5-when-i-press-a-r-and-i-see-the-list-of-a](./quick/260608-sg5-when-i-press-a-r-and-i-see-the-list-of-a/) |
@@ -143,7 +144,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-06-20 - Completed quick task 260620-eej: add headers to the worktree table columns
+Last activity: 2026-06-22 - Completed quick task 260622-bvn: Add PR review worktree flow from the + menu
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
