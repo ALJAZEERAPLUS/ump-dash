@@ -19,7 +19,7 @@
 //!    `Action::ModalCancel`. Preserves the `_ => Some(Action::ModalCancel)`
 //!    behavior of the pre-registry palette match arms.
 
-use super::keybindings::{context_matches, KEYBINDINGS};
+use super::keybindings::{KEYBINDINGS, context_matches};
 use super::state::AppState;
 use crate::domain::action::Action;
 use crate::domain::command::ModalState;
@@ -40,7 +40,7 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
         }
     }
 
-    // Fallthrough 1: modal char-consumers. TextInput/DevicePicker/BranchPicker
+    // Fallthrough 1: modal char-consumers. TextInput/DevicePicker/BranchPicker/PR picker
     // accept arbitrary chars as input or filter text. The registry's explicit
     // entries handled the non-char keys; now route any remaining Char(c).
     //
@@ -59,16 +59,24 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
             }
             ModalState::DevicePicker { .. } => {
                 if let KeyCode::Char(c) = key.code
-                    && !c.is_ascii_control() {
-                        // Note: 'j' and 'k' are registered as navigation keys
-                        // — the registry walk above caught those. Any other
-                        // char falls through here and becomes filter input.
-                        return Some(Action::ModalInputChar(c));
-                    }
+                    && !c.is_ascii_control()
+                {
+                    // Note: 'j' and 'k' are registered as navigation keys
+                    // — the registry walk above caught those. Any other
+                    // char falls through here and becomes filter input.
+                    return Some(Action::ModalInputChar(c));
+                }
             }
             ModalState::BranchPicker { .. } => {
                 if let KeyCode::Char(c) = key.code {
                     return Some(Action::BranchPickerFilter(c));
+                }
+            }
+            ModalState::PullRequestPicker { .. } => {
+                if let KeyCode::Char(c) = key.code
+                    && !c.is_ascii_control()
+                {
+                    return Some(Action::PullRequestPickerFilter(c));
                 }
             }
             // Intentionally no fallthrough — these modals do not consume
@@ -79,7 +87,8 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
             | ModalState::CleanToggle { .. }
             | ModalState::SyncBeforeRun { .. }
             | ModalState::SyncBeforeMetro { .. }
-            | ModalState::ExternalMetroConflict { .. } => { /* no-op */ }
+            | ModalState::ExternalMetroConflict { .. }
+            | ModalState::Info { .. } => { /* no-op */ }
         }
     }
 

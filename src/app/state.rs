@@ -167,6 +167,9 @@ pub struct ModalStackState {
 
     /// True when the pending TextInput modal is for a new-branch worktree (not a regular worktree add).
     pub pending_new_branch_worktree: bool,
+
+    /// Selected PR waiting for the review worktree-name text input to submit.
+    pub pending_review_checkout: Option<crate::domain::review::PullRequest>,
 }
 
 /// JIRA-related state (cache + config-derived availability + project prefix).

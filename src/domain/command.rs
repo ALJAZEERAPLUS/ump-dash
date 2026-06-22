@@ -528,6 +528,15 @@ pub enum ModalState {
         selected: usize,
         filter: String,
     },
+    /// PR picker for review worktree flow.
+    PullRequestPicker {
+        pull_requests: Vec<crate::domain::review::PullRequest>,
+        selected: usize,
+        search: String,
+        filter: crate::domain::review::PullRequestFilter,
+    },
+    /// Non-error informational prompt.
+    Info { message: String },
 }
 
 /// Represents one connected device returned by `adb devices` or `xcrun simctl list`.

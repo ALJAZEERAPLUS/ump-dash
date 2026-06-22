@@ -174,7 +174,10 @@ fn seed_worktree_files(repo_root: &Path, worktree_path: &Path, seed_files: &[Str
         if let Some(parent) = dest.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
-            tracing::warn!("seed_worktree_files: mkdir {} failed: {e}", parent.display());
+            tracing::warn!(
+                "seed_worktree_files: mkdir {} failed: {e}",
+                parent.display()
+            );
             continue;
         }
         match std::fs::copy(&src, &dest) {
@@ -191,8 +194,13 @@ fn seed_worktree_files(repo_root: &Path, worktree_path: &Path, seed_files: &[Str
 /// retries with `git worktree add <path> <branch_name>` if the branch already exists.
 /// Returns the created worktree path on success. Seeding of gitignored local
 /// files happens at the `WorktreePort` boundary (`GitWorktreeAdapter`), not here.
-pub async fn add_worktree(repo_root: &Path, branch_name: &str) -> anyhow::Result<std::path::PathBuf> {
-    let parent = repo_root.parent().ok_or_else(|| anyhow::anyhow!("repo_root has no parent directory"))?;
+pub async fn add_worktree(
+    repo_root: &Path,
+    branch_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    let parent = repo_root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("repo_root has no parent directory"))?;
     let worktree_path = parent.join(branch_name);
 
     if worktree_path.exists() {
@@ -246,9 +254,10 @@ pub async fn list_remote_branches(repo_root: &Path) -> anyhow::Result<Vec<String
         anyhow::bail!("git branch -r failed: {stderr}");
     }
     let text = String::from_utf8(output.stdout)?;
-    let mut branches: Vec<String> = text.lines()
+    let mut branches: Vec<String> = text
+        .lines()
         .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.contains("->"))  // skip HEAD -> origin/main
+        .filter(|l| !l.is_empty() && !l.contains("->")) // skip HEAD -> origin/main
         .map(|l| l.strip_prefix("origin/").unwrap_or(l).to_string())
         .collect();
     branches.sort();
@@ -265,7 +274,8 @@ pub async fn add_worktree_new_branch(
     new_branch: &str,
     base_branch: &str,
 ) -> anyhow::Result<std::path::PathBuf> {
-    let parent = repo_root.parent()
+    let parent = repo_root
+        .parent()
         .ok_or_else(|| anyhow::anyhow!("repo_root has no parent directory"))?;
     let worktree_path = parent.join(new_branch);
     if worktree_path.exists() {
@@ -273,7 +283,14 @@ pub async fn add_worktree_new_branch(
     }
     let path_str = worktree_path.to_string_lossy().to_string();
     let output = tokio::process::Command::new("git")
-        .args(["worktree", "add", "-b", new_branch, &path_str, &format!("origin/{base_branch}")])
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            new_branch,
+            &path_str,
+            &format!("origin/{base_branch}"),
+        ])
         .current_dir(repo_root)
         .output()
         .await?;
@@ -281,6 +298,83 @@ pub async fn add_worktree_new_branch(
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("git worktree add -b failed: {}", stderr.trim());
     }
+    Ok(worktree_path)
+}
+
+/// Creates a review worktree for a GitHub PR.
+///
+/// This intentionally updates the local branch named exactly like the PR
+/// `headRefName`. The app layer checks current worktree state first and stops
+/// if that branch is already checked out anywhere.
+pub async fn add_review_worktree(
+    repo_root: &Path,
+    pr_number: u64,
+    branch_name: &str,
+    head_oid: &str,
+    worktree_name: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    if branch_name.trim().is_empty() {
+        anyhow::bail!("PR branch name is empty");
+    }
+    if head_oid.trim().is_empty() {
+        anyhow::bail!("PR head OID is empty");
+    }
+    if worktree_name.trim().is_empty()
+        || worktree_name.contains('/')
+        || worktree_name.contains('\\')
+        || worktree_name == "."
+        || worktree_name == ".."
+    {
+        anyhow::bail!("Invalid worktree name: {worktree_name}");
+    }
+
+    let parent = repo_root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("repo_root has no parent directory"))?;
+    let worktree_path = parent.join(worktree_name);
+    if worktree_path.exists() {
+        anyhow::bail!("Directory already exists: {}", worktree_path.display());
+    }
+
+    let refspec = format!("+refs/pull/{pr_number}/head:refs/heads/{branch_name}");
+    let fetch = tokio::process::Command::new("git")
+        .args(["fetch", "origin", &refspec])
+        .current_dir(repo_root)
+        .output()
+        .await?;
+    if !fetch.status.success() {
+        let stderr = String::from_utf8_lossy(&fetch.stderr);
+        anyhow::bail!("git fetch PR head failed: {}", stderr.trim());
+    }
+
+    let branch_ref = format!("refs/heads/{branch_name}");
+    let rev_parse = tokio::process::Command::new("git")
+        .args(["rev-parse", &branch_ref])
+        .current_dir(repo_root)
+        .output()
+        .await?;
+    if !rev_parse.status.success() {
+        let stderr = String::from_utf8_lossy(&rev_parse.stderr);
+        anyhow::bail!("git rev-parse failed: {}", stderr.trim());
+    }
+    let actual_oid = String::from_utf8_lossy(&rev_parse.stdout)
+        .trim()
+        .to_string();
+    if actual_oid != head_oid {
+        anyhow::bail!("Fetched PR branch {branch_name} at {actual_oid}, expected {head_oid}");
+    }
+
+    let path_str = worktree_path.to_string_lossy().to_string();
+    let add = tokio::process::Command::new("git")
+        .args(["worktree", "add", &path_str, branch_name])
+        .current_dir(repo_root)
+        .output()
+        .await?;
+    if !add.status.success() {
+        let stderr = String::from_utf8_lossy(&add.stderr);
+        anyhow::bail!("git worktree add failed: {}", stderr.trim());
+    }
+
     Ok(worktree_path)
 }
 
@@ -351,8 +445,21 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         new_branch: &str,
         base_branch: &str,
     ) -> anyhow::Result<std::path::PathBuf> {
+        let worktree_path = add_worktree_new_branch(repo_root, new_branch, base_branch).await?;
+        seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
+        Ok(worktree_path)
+    }
+
+    async fn add_review_worktree(
+        &self,
+        repo_root: &std::path::Path,
+        pr_number: u64,
+        branch_name: &str,
+        head_oid: &str,
+        worktree_name: &str,
+    ) -> anyhow::Result<std::path::PathBuf> {
         let worktree_path =
-            add_worktree_new_branch(repo_root, new_branch, base_branch).await?;
+            add_review_worktree(repo_root, pr_number, branch_name, head_oid, worktree_name).await?;
         seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
         Ok(worktree_path)
     }
@@ -379,10 +486,8 @@ mod tests {
     impl TempDir {
         fn new(tag: &str) -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let p = std::env::temp_dir().join(format!(
-                "ump-seed-{}-{tag}-{n}",
-                std::process::id(),
-            ));
+            let p =
+                std::env::temp_dir().join(format!("ump-seed-{}-{tag}-{n}", std::process::id(),));
             fs::create_dir_all(&p).unwrap();
             TempDir(p)
         }

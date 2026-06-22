@@ -23,8 +23,9 @@ use crate::domain::command::{
 };
 use crate::domain::pipeline::{DependencyState, Recipe};
 use crate::domain::ports::device_port::DeviceKind;
+use crate::domain::review::{PullRequest, PullRequestFilter};
 use crate::domain::task::ExitStatus;
-use crate::domain::worktree::WorktreeId;
+use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use crate::domain::worktree_slice::LastRunConfig;
 use std::path::{Path, PathBuf};
 
@@ -78,6 +79,51 @@ fn selected_worktree_snapshot(state: &AppState) -> Option<crate::domain::worktre
         .worktrees
         .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
         .cloned()
+}
+
+fn pull_request_matches_search(pr: &PullRequest, search: &str) -> bool {
+    if search.is_empty() {
+        return true;
+    }
+    let needle = search.to_lowercase();
+    pr.title.to_lowercase().contains(&needle) || pr.author.to_lowercase().contains(&needle)
+}
+
+fn visible_pull_request_count(pull_requests: &[PullRequest], search: &str) -> usize {
+    pull_requests
+        .iter()
+        .filter(|pr| pull_request_matches_search(pr, search))
+        .count()
+}
+
+fn selected_visible_pull_request(
+    pull_requests: &[PullRequest],
+    selected: usize,
+    search: &str,
+) -> Option<PullRequest> {
+    pull_requests
+        .iter()
+        .filter(|pr| pull_request_matches_search(pr, search))
+        .nth(selected)
+        .cloned()
+}
+
+fn default_review_worktree_name(pr: &PullRequest) -> String {
+    let sanitized = pr
+        .head_ref_name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' => '-',
+            c if c.is_control() => '-',
+            c => c,
+        })
+        .collect::<String>();
+    let trimmed = sanitized.trim_matches(['-', '.', ' ']).to_string();
+    if trimmed.is_empty() {
+        format!("pr-{}", pr.number)
+    } else {
+        trimmed
+    }
 }
 
 fn shell_quote(value: &str) -> String {
@@ -1899,6 +1945,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.modal_stack.pending_worktree_add = false; // discard any pending add on cancel
             state.modal_stack.pending_new_branch_base = None; // discard new-branch base on cancel
             state.modal_stack.pending_new_branch_worktree = false;
+            state.modal_stack.pending_review_checkout = None;
         }
 
         Action::ModalInputChar(c) => {
@@ -1926,6 +1973,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 | Some(ModalState::SyncBeforeMetro { .. })
                 | Some(ModalState::ExternalMetroConflict { .. })
                 | Some(ModalState::BranchPicker { .. })
+                | Some(ModalState::PullRequestPicker { .. })
+                | Some(ModalState::Info { .. })
                 | None => { /* no-op */ }
             }
         }
@@ -1953,6 +2002,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 | Some(ModalState::SyncBeforeMetro { .. })
                 | Some(ModalState::ExternalMetroConflict { .. })
                 | Some(ModalState::BranchPicker { .. })
+                | Some(ModalState::PullRequestPicker { .. })
+                | Some(ModalState::Info { .. })
                 | None => { /* no-op */ }
             }
         }
@@ -1965,7 +2016,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         pending_template,
                         ..
                     } => {
-                        if state.modal_stack.pending_new_branch_worktree {
+                        if let Some(pr) = state.modal_stack.pending_review_checkout.take() {
+                            let worktree_name = buffer.trim().to_string();
+                            if worktree_name.is_empty() {
+                                return effects;
+                            }
+                            state.worktree_browser.worktree_op_in_flight = true;
+                            effects.push(Effect::AddReviewWorktree {
+                                repo_root: state.app_config.repo_root.clone(),
+                                pr,
+                                worktree_name,
+                            });
+                        } else if state.modal_stack.pending_new_branch_worktree {
                             state.modal_stack.pending_new_branch_worktree = false;
                             let new_branch_name = buffer.trim().to_string();
                             let base_branch = state.modal_stack.pending_new_branch_base.take();
@@ -3382,6 +3444,232 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.worktree_browser.worktree_op_in_flight = false;
             state.error_state = Some(ErrorState {
                 message: format!("Failed to create worktree with new branch: {err}"),
+                can_retry: false,
+            });
+        }
+
+        // Quick-260622-bvn: PR review worktree flow
+        Action::ReviewOpen => {
+            state.modal_stack.palette_mode = None;
+            state.modal_stack.pending_review_checkout = None;
+            state.modal_stack.modal = Some(ModalState::PullRequestPicker {
+                pull_requests: Vec::new(),
+                selected: 0,
+                search: String::new(),
+                filter: PullRequestFilter::All,
+            });
+            effects.push(Effect::ListPullRequests {
+                repo_root: state.app_config.repo_root.clone(),
+                filter: PullRequestFilter::All,
+            });
+        }
+
+        Action::PullRequestsLoaded(pull_requests) => {
+            if let Some(ModalState::PullRequestPicker {
+                pull_requests: existing,
+                selected,
+                ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                *existing = pull_requests;
+                *selected = 0;
+            }
+        }
+
+        Action::PullRequestsLoadFailed(err) => {
+            state.error_state = Some(ErrorState {
+                message: format!("Failed to load pull requests: {err}"),
+                can_retry: false,
+            });
+        }
+
+        Action::PullRequestPickerNext => {
+            if let Some(ModalState::PullRequestPicker {
+                pull_requests,
+                selected,
+                search,
+                ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                let count = visible_pull_request_count(pull_requests, search);
+                if count > 0 {
+                    *selected = if *selected >= count - 1 {
+                        0
+                    } else {
+                        *selected + 1
+                    };
+                }
+            }
+        }
+
+        Action::PullRequestPickerPrev => {
+            if let Some(ModalState::PullRequestPicker {
+                pull_requests,
+                selected,
+                search,
+                ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                let count = visible_pull_request_count(pull_requests, search);
+                if count > 0 {
+                    *selected = if *selected == 0 {
+                        count - 1
+                    } else {
+                        *selected - 1
+                    };
+                }
+            }
+        }
+
+        Action::PullRequestPickerFilter(c) => {
+            if let Some(ModalState::PullRequestPicker {
+                search, selected, ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                search.push(c);
+                *selected = 0;
+            }
+        }
+
+        Action::PullRequestPickerBackspace => {
+            if let Some(ModalState::PullRequestPicker {
+                search, selected, ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                search.pop();
+                *selected = 0;
+            }
+        }
+
+        Action::PullRequestPickerNextFilter => {
+            if let Some(ModalState::PullRequestPicker {
+                pull_requests,
+                selected,
+                search,
+                filter,
+            }) = state.modal_stack.modal.as_mut()
+            {
+                *filter = filter.next();
+                pull_requests.clear();
+                search.clear();
+                *selected = 0;
+                effects.push(Effect::ListPullRequests {
+                    repo_root: state.app_config.repo_root.clone(),
+                    filter: *filter,
+                });
+            }
+        }
+
+        Action::PullRequestPickerConfirm => {
+            if let Some(ModalState::PullRequestPicker {
+                pull_requests,
+                selected,
+                search,
+                filter,
+            }) = state.modal_stack.modal.take()
+            {
+                let Some(pr) = selected_visible_pull_request(&pull_requests, selected, &search)
+                else {
+                    state.modal_stack.modal = Some(ModalState::PullRequestPicker {
+                        pull_requests,
+                        selected,
+                        search,
+                        filter,
+                    });
+                    return effects;
+                };
+
+                if let Some(existing) = state
+                    .worktree_browser
+                    .worktrees
+                    .iter()
+                    .find(|wt| wt.branch == pr.head_ref_name)
+                {
+                    state.modal_stack.modal = Some(ModalState::Info {
+                        message: format!(
+                            "Branch '{}' is already checked out at {}",
+                            pr.head_ref_name,
+                            existing.path.display()
+                        ),
+                    });
+                    state.modal_stack.pending_review_checkout = None;
+                    return effects;
+                }
+
+                let default_name = default_review_worktree_name(&pr);
+                state.modal_stack.pending_review_checkout = Some(pr);
+                state.modal_stack.modal = Some(ModalState::TextInput {
+                    prompt: "Review worktree name:".to_string(),
+                    buffer: default_name,
+                    pending_template: Box::new(CommandSpec::GitPull),
+                });
+            }
+        }
+
+        Action::ReviewWorktreeCreated {
+            branch,
+            path,
+            head_sha,
+        } => {
+            state.worktree_browser.worktree_op_in_flight = false;
+            let id = WorktreeId(path.to_string_lossy().to_string());
+            let worktree = Worktree {
+                id: id.clone(),
+                path: path.clone(),
+                branch: branch.clone(),
+                head_sha,
+                metro_status: WorktreeMetroStatus::Stopped,
+                jira_title: None,
+                stale: true,
+                stale_pods: false,
+                jira_key: crate::domain::jira::extract_jira_key(
+                    &branch,
+                    &state.jira.project_prefix,
+                ),
+            };
+
+            if let Some(existing) = state
+                .worktree_browser
+                .worktrees
+                .iter_mut()
+                .find(|existing| existing.id == id)
+            {
+                *existing = worktree;
+            } else {
+                state.worktree_browser.worktrees.push(worktree);
+            }
+            let selected = state
+                .worktree_browser
+                .worktrees
+                .iter()
+                .position(|wt| wt.id == id)
+                .unwrap_or(0);
+            state
+                .worktree_browser
+                .worktree_table_state
+                .select(Some(selected));
+            state.worktree_browser.selected_worktree_id = Some(id.clone());
+            state.worktrees.entry(id.clone()).or_insert_with(|| {
+                crate::domain::worktree_slice::WorktreeSlice {
+                    id: id.clone(),
+                    ..Default::default()
+                }
+            });
+
+            if let Some(effect) =
+                dispatch_command_for_worktree(state, &id, CommandSpec::YarnInstall)
+            {
+                effects.push(effect);
+            }
+            effects.push(Effect::ListWorktrees {
+                repo_root: state.app_config.repo_root.clone(),
+            });
+        }
+
+        Action::ReviewWorktreeCreateFailed(err) => {
+            state.worktree_browser.worktree_op_in_flight = false;
+            state.error_state = Some(ErrorState {
+                message: format!("Failed to create review worktree: {err}"),
                 can_retry: false,
             });
         }

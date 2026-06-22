@@ -26,6 +26,7 @@ use crate::domain::native_cache::{
     CachedAndroidLaunchResult, CachedIosLaunchResult, IosSimulatorCacheHit,
     IosSimulatorCacheMetadata, IosSimulatorCacheState,
 };
+use crate::domain::review::{PullRequest, PullRequestFilter};
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
@@ -208,6 +209,198 @@ fn slice_output(state: &AppState, id: &str) -> Vec<String> {
         .get(&WorktreeId(id.into()))
         .map(|s| s.output.iter().cloned().collect())
         .unwrap_or_default()
+}
+
+mod review_flow {
+    use super::*;
+
+    fn pr_fixture(branch: &str) -> PullRequest {
+        PullRequest {
+            number: 3832,
+            title: "UMP-8868 review feature".into(),
+            author: "octocat".into(),
+            head_ref_name: branch.into(),
+            head_ref_oid: "0123456789abcdef0123456789abcdef01234567".into(),
+            url: "https://github.com/ALJAZEERAPLUS/ump/pull/3832".into(),
+        }
+    }
+
+    fn seed_worktree_with_branch(state: &mut AppState, id: &str, branch: &str) {
+        seed_one_worktree_id(state, id);
+        let wt_id = WorktreeId(id.into());
+        let wt = state
+            .worktree_browser
+            .worktrees
+            .iter_mut()
+            .find(|wt| wt.id == wt_id)
+            .expect("seeded worktree exists");
+        wt.branch = branch.into();
+    }
+
+    #[test]
+    fn worktree_palette_r_opens_review_flow() {
+        let mut state = base_state();
+
+        let open_palette = handle_key(&state, key('+')).expect("+ opens worktree palette");
+        let _ = update(&mut state, open_palette);
+
+        assert_eq!(handle_key(&state, key('r')), Some(Action::ReviewOpen));
+    }
+
+    #[test]
+    fn review_open_requests_all_open_pull_requests() {
+        let mut state = base_state();
+
+        let effects = update(&mut state, Action::ReviewOpen);
+
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::PullRequestPicker {
+                filter: PullRequestFilter::All,
+                ..
+            })
+        ));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ListPullRequests {
+                filter: PullRequestFilter::All,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn tab_in_review_picker_cycles_filter_and_refetches() {
+        let mut state = base_state();
+        state.modal_stack.modal = Some(ModalState::PullRequestPicker {
+            pull_requests: vec![pr_fixture("UMP-8868")],
+            selected: 0,
+            search: "feature".into(),
+            filter: PullRequestFilter::All,
+        });
+
+        let effects = update(&mut state, Action::PullRequestPickerNextFilter);
+
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::PullRequestPicker {
+                filter: PullRequestFilter::NotReviewed,
+                selected: 0,
+                ref search,
+                ..
+            }) if search.is_empty()
+        ));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ListPullRequests {
+                filter: PullRequestFilter::NotReviewed,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn selecting_checked_out_pr_branch_stops_with_info_modal() {
+        let mut state = base_state();
+        seed_worktree_with_branch(&mut state, "UMP-8868", "UMP-8868");
+        state.modal_stack.modal = Some(ModalState::PullRequestPicker {
+            pull_requests: vec![pr_fixture("UMP-8868")],
+            selected: 0,
+            search: String::new(),
+            filter: PullRequestFilter::All,
+        });
+
+        let effects = update(&mut state, Action::PullRequestPickerConfirm);
+
+        assert!(effects.is_empty());
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::Info { ref message })
+                if message.contains("UMP-8868") && message.contains("/tmp/UMP-8868")
+        ));
+        assert!(state.modal_stack.pending_review_checkout.is_none());
+    }
+
+    #[test]
+    fn selecting_available_pr_prefills_worktree_name_from_head_ref() {
+        let mut state = base_state();
+        state.modal_stack.modal = Some(ModalState::PullRequestPicker {
+            pull_requests: vec![pr_fixture("UMP-8868")],
+            selected: 0,
+            search: String::new(),
+            filter: PullRequestFilter::All,
+        });
+
+        let effects = update(&mut state, Action::PullRequestPickerConfirm);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .modal_stack
+                .pending_review_checkout
+                .as_ref()
+                .map(|pr| pr.head_ref_name.as_str()),
+            Some("UMP-8868")
+        );
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::TextInput { ref buffer, .. }) if buffer == "UMP-8868"
+        ));
+    }
+
+    #[test]
+    fn submitting_review_worktree_name_dispatches_checkout_effect() {
+        let mut state = base_state();
+        state.modal_stack.pending_review_checkout = Some(pr_fixture("UMP-8868"));
+        state.modal_stack.modal = Some(ModalState::TextInput {
+            prompt: "Review worktree name:".into(),
+            buffer: "UMP-8868-local".into(),
+            pending_template: Box::new(CommandSpec::GitPull),
+        });
+
+        let effects = update(&mut state, Action::ModalInputSubmit);
+
+        assert!(state.modal_stack.pending_review_checkout.is_none());
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::AddReviewWorktree {
+                pr,
+                worktree_name,
+                ..
+            }] if pr.head_ref_name == "UMP-8868" && worktree_name == "UMP-8868-local"
+        ));
+    }
+
+    #[test]
+    fn created_review_worktree_is_selected_and_runs_yarn_install() {
+        let mut state = base_state();
+
+        let effects = update(
+            &mut state,
+            Action::ReviewWorktreeCreated {
+                branch: "UMP-8868".into(),
+                path: std::path::PathBuf::from("/tmp/UMP-8868"),
+                head_sha: "0123456".into(),
+            },
+        );
+
+        assert_eq!(
+            state.worktree_browser.selected_worktree_id,
+            Some(WorktreeId("/tmp/UMP-8868".into()))
+        );
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                Effect::SpawnTask {
+                    spec: CommandSpec::YarnInstall,
+                    cwd,
+                    branch,
+                    ..
+                },
+                Effect::ListWorktrees { .. }
+            ] if cwd == &std::path::PathBuf::from("/tmp/UMP-8868") && branch == "UMP-8868"
+        ));
+    }
 }
 
 #[test]

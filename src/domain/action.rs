@@ -200,4 +200,21 @@ pub enum Action {
     BranchPickerPrev,            // Up in branch picker
     BranchPickerFilter(char),    // type-to-filter character
     BranchPickerBackspace,       // backspace in filter
+
+    // Quick-260622-bvn: PR review worktree flow
+    ReviewOpen, // +>r — load open PRs and show review picker
+    PullRequestsLoaded(Vec<crate::domain::review::PullRequest>),
+    PullRequestsLoadFailed(String),
+    PullRequestPickerNext,
+    PullRequestPickerPrev,
+    PullRequestPickerFilter(char),
+    PullRequestPickerBackspace,
+    PullRequestPickerNextFilter,
+    PullRequestPickerConfirm,
+    ReviewWorktreeCreated {
+        branch: String,
+        path: std::path::PathBuf,
+        head_sha: String,
+    },
+    ReviewWorktreeCreateFailed(String),
 }

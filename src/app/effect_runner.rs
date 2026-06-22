@@ -29,7 +29,9 @@
 //!   RemoveWorktree { repo_root, path }             → adapters.worktrees.remove(...)
 //!   AddWorktree { repo_root, branch }              → adapters.worktrees.add(...)
 //!   AddWorktreeNewBranch { repo_root, new, base }  → adapters.worktrees.add_new_branch(...)
+//!   AddReviewWorktree { repo_root, pr, worktree_name } → adapters.worktrees.add_review_worktree(...)
 //!   ListRemoteBranches { repo_root }               → adapters.worktrees.list_remote_branches(repo_root)
+//!   ListPullRequests { repo_root, filter }          → adapters.review.list_pull_requests(repo_root, filter)
 //!   FetchJiraTitles { keys }                       → adapters.jira.as_ref()?.fetch_title(...)
 //!   SaveJiraCache(map)                             → spawn_blocking infra::jira_cache::save_jira_cache  (F-111 deferred)
 //!   RecordSimUsed(udid)                            → spawn_blocking infra::sim_history::record_sim_used  (F-111 deferred)
@@ -475,6 +477,54 @@ impl EffectRunner {
                 });
             }
 
+            Effect::ListPullRequests { repo_root, filter } => {
+                let review = self.adapters.review.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    match review.list_pull_requests(&repo_root, filter).await {
+                        Ok(pull_requests) => {
+                            let _ = tx.send(Action::PullRequestsLoaded(pull_requests));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::PullRequestsLoadFailed(e.to_string()));
+                        }
+                    }
+                });
+            }
+
+            Effect::AddReviewWorktree {
+                repo_root,
+                pr,
+                worktree_name,
+            } => {
+                let wt = self.adapters.worktrees.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    match wt
+                        .add_review_worktree(
+                            &repo_root,
+                            pr.number,
+                            &pr.head_ref_name,
+                            &pr.head_ref_oid,
+                            &worktree_name,
+                        )
+                        .await
+                    {
+                        Ok(path) => {
+                            let head_sha = pr.head_ref_oid.chars().take(7).collect::<String>();
+                            let _ = tx.send(Action::ReviewWorktreeCreated {
+                                branch: pr.head_ref_name,
+                                path,
+                                head_sha,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::ReviewWorktreeCreateFailed(e.to_string()));
+                        }
+                    }
+                });
+            }
+
             Effect::FetchJiraTitles { keys } => {
                 // Plan 13-08: closes the D-13-07-02 deferral.
                 // adapters.jira is Option<Arc<dyn JiraPort>>; when None we
@@ -785,7 +835,9 @@ mod tests {
     use crate::domain::ports::metro_port::{MetroHandle, MetroPort};
     use crate::domain::ports::native_cache_port::NativeCachePort;
     use crate::domain::ports::port_probe_port::{ExternalProcessInfo, PortProbePort};
+    use crate::domain::ports::review_port::ReviewPort;
     use crate::domain::ports::worktree_port::WorktreePort;
+    use crate::domain::review::{PullRequest, PullRequestFilter};
     use crate::domain::worktree::{Worktree, WorktreeId};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
@@ -936,7 +988,31 @@ mod tests {
             Ok(PathBuf::from("/tmp/noop"))
         }
 
+        async fn add_review_worktree(
+            &self,
+            _repo_root: &Path,
+            _pr_number: u64,
+            _branch_name: &str,
+            _head_oid: &str,
+            _worktree_name: &str,
+        ) -> anyhow::Result<PathBuf> {
+            Ok(PathBuf::from("/tmp/noop"))
+        }
+
         async fn list_remote_branches(&self, _repo_root: &Path) -> anyhow::Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct NoopReview;
+
+    #[async_trait::async_trait]
+    impl ReviewPort for NoopReview {
+        async fn list_pull_requests(
+            &self,
+            _repo_root: &Path,
+            _filter: PullRequestFilter,
+        ) -> anyhow::Result<Vec<PullRequest>> {
             Ok(Vec::new())
         }
     }
@@ -1095,6 +1171,7 @@ mod tests {
                 devices: Arc::new(NoopDevices),
                 native_cache: Arc::new(ScriptedNativeCache::new(script)),
                 external_command: Arc::new(NoopExternalCommand),
+                review: Arc::new(NoopReview),
                 jira: None,
                 multiplexer: None,
             },

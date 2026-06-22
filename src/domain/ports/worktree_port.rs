@@ -37,6 +37,17 @@ pub trait WorktreePort: Send + Sync {
         base_branch: &str,
     ) -> anyhow::Result<PathBuf>;
 
+    /// Creates a review worktree by force-updating the local PR branch to the
+    /// current GitHub PR head and adding a worktree at `worktree_name`.
+    async fn add_review_worktree(
+        &self,
+        repo_root: &Path,
+        pr_number: u64,
+        branch_name: &str,
+        head_oid: &str,
+        worktree_name: &str,
+    ) -> anyhow::Result<PathBuf>;
+
     /// Lists remote branches by running `git branch -r` in `repo_root`.
     /// Strips the `origin/` prefix and excludes HEAD pointers.
     async fn list_remote_branches(&self, repo_root: &Path) -> anyhow::Result<Vec<String>>;

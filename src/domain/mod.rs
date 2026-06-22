@@ -10,6 +10,7 @@ pub mod native_cache;
 pub mod pipeline;
 pub mod ports;
 pub mod refresh;
+pub mod review;
 pub mod staleness;
 pub mod task;
 pub mod worktree;

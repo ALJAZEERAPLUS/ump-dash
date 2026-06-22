@@ -16,5 +16,6 @@ pub mod multiplexer_port;
 pub mod native_cache_port;
 pub mod port_probe_port;
 pub mod process_port;
+pub mod review_port;
 pub mod task_handle;
 pub mod worktree_port;

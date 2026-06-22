@@ -11,18 +11,19 @@
 //! state; the deprecated `tmux` module was deleted (its `TmuxAdapter`
 //! replacement lives in `multiplexer.rs`).
 
-pub mod port;
-pub mod process;
-pub mod worktrees;
 pub mod command_runner;
-pub mod devices;
 pub mod config;
+pub mod devices;
 pub mod external_command;
 pub mod jira;
 pub mod jira_cache;
+pub mod metro;
 pub mod multiplexer;
-pub mod self_update;
 pub mod native_cache;
+pub mod port;
+pub mod process;
+pub mod review;
+pub mod self_update;
 pub mod sim_history;
 pub mod task_handle;
-pub mod metro;
+pub mod worktrees;

@@ -106,8 +106,17 @@ pub enum Effect {
         new: String,
         base: String,
     },
+    AddReviewWorktree {
+        repo_root: PathBuf,
+        pr: crate::domain::review::PullRequest,
+        worktree_name: String,
+    },
     ListRemoteBranches {
         repo_root: PathBuf,
+    },
+    ListPullRequests {
+        repo_root: PathBuf,
+        filter: crate::domain::review::PullRequestFilter,
     },
 
     // Persistence (spawn_blocking sites — F-111 PersistencePort deferred)
@@ -249,6 +258,22 @@ mod tests {
         let _ = Effect::ListRemoteBranches {
             repo_root: PathBuf::from("."),
         };
+        let _ = Effect::ListPullRequests {
+            repo_root: PathBuf::from("."),
+            filter: crate::domain::review::PullRequestFilter::All,
+        };
+        let _ = Effect::AddReviewWorktree {
+            repo_root: PathBuf::from("."),
+            pr: crate::domain::review::PullRequest {
+                number: 1,
+                title: "Review".into(),
+                author: "octocat".into(),
+                head_ref_name: "UMP-1".into(),
+                head_ref_oid: "0123456789abcdef0123456789abcdef01234567".into(),
+                url: "https://example.invalid/pr/1".into(),
+            },
+            worktree_name: "UMP-1".into(),
+        };
         let _ = Effect::KillProcess { pid: 999 };
         let _ = Effect::LoadDevices {
             kind: DeviceKind::Android,
@@ -291,6 +316,8 @@ mod tests {
                 Effect::StoreAndroidCache { .. } => 20,
                 Effect::InstallAndLaunchCachedAndroid { .. } => 21,
                 Effect::OpenExternalEditor { .. } => 22,
+                Effect::AddReviewWorktree { .. } => 23,
+                Effect::ListPullRequests { .. } => 24,
             }
         }
         let e = Effect::ListWorktrees {

@@ -93,6 +93,7 @@ async fn main() -> color_eyre::Result<()> {
             native_cache_artifact_root,
         )),
         external_command: Arc::new(ump_dash::infra::external_command::ShellExternalCommand),
+        review: Arc::new(ump_dash::infra::review::GitHubCliReviewAdapter),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),
     };

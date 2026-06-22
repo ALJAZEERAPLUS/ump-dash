@@ -44,6 +44,13 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState) {
             selected,
             filter,
         } => render_branch_picker_modal(f, branches, *selected, filter),
+        ModalState::PullRequestPicker {
+            pull_requests,
+            selected,
+            search,
+            filter,
+        } => render_pull_request_picker_modal(f, pull_requests, *selected, search, *filter),
+        ModalState::Info { message } => render_info_modal(f, message),
     }
 }
 
@@ -470,6 +477,102 @@ fn render_branch_picker_modal(f: &mut Frame, branches: &[String], selected: usiz
 
     f.render_widget(Clear, area);
     f.render_stateful_widget(list, area, &mut ls);
+}
+
+fn render_pull_request_picker_modal(
+    f: &mut Frame,
+    pull_requests: &[crate::domain::review::PullRequest],
+    selected: usize,
+    search: &str,
+    filter: crate::domain::review::PullRequestFilter,
+) {
+    let area = centered_rect(f.area(), 72, 70, 52, 10);
+    let lower = search.to_lowercase();
+    let filtered: Vec<&crate::domain::review::PullRequest> = pull_requests
+        .iter()
+        .filter(|pr| {
+            search.is_empty()
+                || pr.title.to_lowercase().contains(&lower)
+                || pr.author.to_lowercase().contains(&lower)
+        })
+        .collect();
+
+    let title = format!(" Review PRs [{}]  Search: {} ", filter.label(), search);
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    if filtered.is_empty() {
+        let msg = if pull_requests.is_empty() {
+            "No pull requests loaded."
+        } else {
+            "No pull requests match search."
+        };
+        let para = Paragraph::new(vec![
+            Line::from(msg),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("[Tab]", Style::default().fg(Color::Yellow)),
+                Span::raw(" filter    "),
+                Span::styled("[Esc]", Style::default().fg(Color::Red)),
+                Span::raw(" cancel"),
+            ]),
+        ])
+        .block(block);
+        f.render_widget(Clear, area);
+        f.render_widget(para, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = filtered
+        .iter()
+        .map(|pr| {
+            ListItem::new(Line::from(format!(
+                "#{} {}  @{}  {}",
+                pr.number, pr.title, pr.author, pr.head_ref_name
+            )))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("> ")
+        .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
+
+    let mut ls = ListState::default();
+    ls.select(Some(selected.min(filtered.len() - 1)));
+
+    f.render_widget(Clear, area);
+    f.render_stateful_widget(list, area, &mut ls);
+}
+
+fn render_info_modal(f: &mut Frame, message: &str) {
+    let area = centered_rect(f.area(), 58, 25, 42, 5);
+    let para = Paragraph::new(vec![
+        Line::from(message),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("[Enter]", Style::default().fg(Color::Green)),
+            Span::raw(" ok    "),
+            Span::styled("[Esc]", Style::default().fg(Color::Red)),
+            Span::raw(" dismiss"),
+        ]),
+    ])
+    .block(
+        Block::default()
+            .title(" Notice ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow)),
+    );
+
+    f.render_widget(Clear, area);
+    f.render_widget(para, area);
 }
 
 /// Computes a centered Rect within `area`, using percentage sizing with minimum dimensions.

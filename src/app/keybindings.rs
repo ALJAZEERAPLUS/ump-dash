@@ -55,6 +55,8 @@ pub enum ModalKind {
     SyncBeforeMetro,
     ExternalMetroConflict,
     BranchPicker,
+    PullRequestPicker,
+    Info,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -538,6 +540,80 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| Some(Action::BranchPickerBackspace),
         visible: |_| false,
     },
+    // ==== Modal: PullRequestPicker (Enter/Esc/arrows/Tab/Backspace; Char handled post-loop) ====
+    KeyBinding {
+        key: KeyCode::Enter,
+        label: "Enter",
+        short_desc: "select",
+        long_desc: "Select PR",
+        context: BindingContext::Modal(ModalKind::PullRequestPicker),
+        action: |_| Some(Action::PullRequestPickerConfirm),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc",
+        short_desc: "cancel",
+        long_desc: "Cancel",
+        context: BindingContext::Modal(ModalKind::PullRequestPicker),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Tab,
+        label: "Tab",
+        short_desc: "filter",
+        long_desc: "Cycle PR filter",
+        context: BindingContext::Modal(ModalKind::PullRequestPicker),
+        action: |_| Some(Action::PullRequestPickerNextFilter),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Down,
+        label: "Up/Down",
+        short_desc: "navigate",
+        long_desc: "Navigate PR list",
+        context: BindingContext::Modal(ModalKind::PullRequestPicker),
+        action: |_| Some(Action::PullRequestPickerNext),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Up,
+        label: "Up",
+        short_desc: "prev",
+        long_desc: "Previous PR",
+        context: BindingContext::Modal(ModalKind::PullRequestPicker),
+        action: |_| Some(Action::PullRequestPickerPrev),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Backspace,
+        label: "Backspace",
+        short_desc: "backspace",
+        long_desc: "Delete search character",
+        context: BindingContext::Modal(ModalKind::PullRequestPicker),
+        action: |_| Some(Action::PullRequestPickerBackspace),
+        visible: |_| false,
+    },
+    // ==== Modal: Info ====
+    KeyBinding {
+        key: KeyCode::Enter,
+        label: "Enter",
+        short_desc: "ok",
+        long_desc: "Dismiss message",
+        context: BindingContext::Modal(ModalKind::Info),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc",
+        short_desc: "dismiss",
+        long_desc: "Dismiss message",
+        context: BindingContext::Modal(ModalKind::Info),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
     // ==== Palette: Android ====
     KeyBinding {
         key: KeyCode::Char('r'),
@@ -792,6 +868,15 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         long_desc: "New branch + worktree",
         context: BindingContext::Palette(PaletteMode::Worktree),
         action: |_| Some(Action::WorktreeAddNewBranch),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('r'),
+        label: "r",
+        short_desc: "review",
+        long_desc: "Review PR",
+        context: BindingContext::Palette(PaletteMode::Worktree),
+        action: |_| Some(Action::ReviewOpen),
         visible: |_| true,
     },
     KeyBinding {
@@ -1381,6 +1466,11 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
                 Some(ModalState::BranchPicker { .. }),
                 ModalKind::BranchPicker
             )
+            | (
+                Some(ModalState::PullRequestPicker { .. }),
+                ModalKind::PullRequestPicker
+            )
+            | (Some(ModalState::Info { .. }), ModalKind::Info)
     )
 }
 
