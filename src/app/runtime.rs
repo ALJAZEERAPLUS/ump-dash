@@ -102,6 +102,17 @@ pub async fn run(
 
         // Wait for at least one event (blocks until something happens)
         tokio::select! {
+            biased;
+            Some((wt_id, record)) = task_handle_rx.recv() => {
+                // Phase 14: write the TaskRecord into the slice on the main thread.
+                // RESEARCH §Pitfall P-6 race: if the worktree disappeared between spawn
+                // and delivery, abort the orphan handle so the JoinHandle doesn't leak.
+                if let Some(slice) = state.worktrees.get_mut(&wt_id) {
+                    slice.task = Some(record);
+                } else {
+                    record.handle.abort();
+                }
+            }
             _ = tick.tick() => {
                 // Periodic tick: triggers redraw for time-based UI updates
             }
@@ -137,15 +148,15 @@ pub async fn run(
                 let effects = update(&mut state, Action::RefreshWorktrees);
                 runner.run_effects(effects).await;
             }
-            Some((wt_id, record)) = task_handle_rx.recv() => {
-                // Phase 14: write the TaskRecord into the slice on the main thread.
-                // RESEARCH §Pitfall P-6 race: if the worktree disappeared between spawn
-                // and delivery, abort the orphan handle so the JoinHandle doesn't leak.
-                if let Some(slice) = state.worktrees.get_mut(&wt_id) {
-                    slice.task = Some(record);
-                } else {
-                    record.handle.abort();
-                }
+        }
+
+        // Drain pending task records before actions so fast process exits can
+        // still find their owner slice and drain any queued follow-up command.
+        while let Ok((wt_id, record)) = task_handle_rx.try_recv() {
+            if let Some(slice) = state.worktrees.get_mut(&wt_id) {
+                slice.task = Some(record);
+            } else {
+                record.handle.abort();
             }
         }
 
@@ -164,7 +175,7 @@ pub async fn run(
             if let Ok(handle) = handle_rx.try_recv() {
                 register_metro_handle(&mut state, handle)
             }
-            if let Ok((wt_id, record)) = task_handle_rx.try_recv() {
+            while let Ok((wt_id, record)) = task_handle_rx.try_recv() {
                 if let Some(slice) = state.worktrees.get_mut(&wt_id) {
                     slice.task = Some(record);
                 } else {

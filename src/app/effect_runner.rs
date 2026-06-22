@@ -671,6 +671,9 @@ impl EffectRunner {
                 // in a 5-second timeout so the spawn-failure path (oneshot
                 // sender dropped) does not leak an awaiter (T-15-03-05).
                 let (pid_tx, pid_rx) = tokio::sync::oneshot::channel::<u32>();
+                // Do not forward output/exit before the main loop can receive
+                // the TaskRecord; fast commands otherwise lose queue ownership.
+                let (record_ready_tx, record_ready_rx) = tokio::sync::oneshot::channel::<()>();
 
                 let tx = self.action_tx.clone();
                 let spec_for_record = spec.clone();
@@ -743,6 +746,8 @@ impl EffectRunner {
                         }
                     };
 
+                    let _ = record_ready_rx.await;
+
                     // Step D: forwarding loop with cancel select. The cancel
                     // arm fires Action::CommandExited { Cancelled } and breaks
                     // immediately — the OS-level Exited(status) that arrives
@@ -812,6 +817,7 @@ impl EffectRunner {
                         }),
                     };
                     let _ = task_handle_tx.send((worktree_id, record));
+                    let _ = record_ready_tx.send(());
                 });
             }
         }
@@ -899,6 +905,30 @@ mod tests {
             _branch: String,
         ) -> UnboundedReceiver<CommandEvent> {
             let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            rx
+        }
+    }
+
+    #[derive(Debug)]
+    struct FastExitCommandRunner;
+
+    impl CommandRunnerPort for FastExitCommandRunner {
+        fn spawn(
+            &self,
+            _spec: CommandSpec,
+            _cwd: PathBuf,
+            _branch: String,
+        ) -> UnboundedReceiver<CommandEvent> {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("true")
+                .status()
+                .expect("test should create a successful exit status");
+            tx.send(CommandEvent::ProcessStarted { pid: 4242 })
+                .expect("receiver should be open");
+            tx.send(CommandEvent::Exited(status))
+                .expect("receiver should be open");
             rx
         }
     }
@@ -1187,6 +1217,69 @@ mod tests {
             .await
             .expect("native cache effect should send an action")
             .expect("action channel should stay open")
+    }
+
+    #[tokio::test]
+    async fn spawn_task_delivers_task_record_before_fast_command_exit() {
+        let (action_tx, mut action_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (handle_tx, _handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (task_handle_tx, mut task_handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let runner = EffectRunner::new(
+            Adapters {
+                command_runner: Arc::new(FastExitCommandRunner),
+                metro: Arc::new(NoopMetro),
+                port_probe: Arc::new(NoopProbe),
+                worktrees: Arc::new(NoopWorktrees),
+                devices: Arc::new(NoopDevices),
+                native_cache: Arc::new(ScriptedNativeCache::new(NativeScript::LookupAndroid(Ok(
+                    AndroidCacheLookup::Miss {
+                        fingerprint: "unused".into(),
+                    },
+                )))),
+                external_command: Arc::new(NoopExternalCommand),
+                review: Arc::new(NoopReview),
+                jira: None,
+                multiplexer: None,
+            },
+            action_tx,
+            handle_tx,
+            task_handle_tx,
+        );
+
+        runner
+            .run_effects(vec![crate::app::effect::Effect::SpawnTask {
+                task_id: crate::domain::task::TaskId(42),
+                worktree_id: WorktreeId("wt-1".into()),
+                spec: CommandSpec::ShellCommand {
+                    command: "true".into(),
+                },
+                cwd: PathBuf::from("/tmp/wt-1"),
+                branch: "main".into(),
+                repo_root: PathBuf::from("/tmp"),
+            }])
+            .await;
+
+        enum FirstDelivery {
+            Task,
+            Exit(Box<Action>),
+        }
+
+        let first = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::select! {
+                biased;
+                Some((_wt_id, _record)) = task_handle_rx.recv() => FirstDelivery::Task,
+                Some(action) = action_rx.recv() => FirstDelivery::Exit(Box::new(action)),
+            }
+        })
+        .await
+        .expect("task record or exit action should be delivered");
+
+        match first {
+            FirstDelivery::Task => {}
+            FirstDelivery::Exit(action) => {
+                panic!("task record must be delivered before fast command exit; got {action:?}")
+            }
+        }
     }
 
     #[tokio::test]
