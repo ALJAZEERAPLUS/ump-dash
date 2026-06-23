@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] - 2026-06-23
+
+### New
+- **Worktree agent MCP server** - UMP Dashboard can now run an embedded local MCP server so agents inside worktrees can ask the dashboard to start Metro, run and build apps, sync deps, inspect logs, list devices, clean/reset, and cancel tasks through the same orchestration path as keyboard actions.
+- **Agent-ready worktrees** - newly created worktrees can be provisioned with `.mcp.json` and a run-app skill so agents discover the dashboard tools automatically.
+- **Worktree checkout branch picker** - creating a worktree from an existing branch now opens the branch picker first, then creates the worktree from the selected branch.
+
+### Fixed
+- Android cache hits are preserved while device lists refresh and are now used for available AVD targets.
+- Fast-exiting commands now drain their task records reliably instead of leaving stale running state.
+- Open submenu actions reset the palette state before returning to the dashboard.
+
+### Improved
+- Agent run/build requests now make native cache decisions inside the normal run flow, matching the behavior of interactive iOS and Android runs.
+
 ## [1.6.1] - 2026-06-22
 
 ### Fixed
