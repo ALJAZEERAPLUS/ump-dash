@@ -140,6 +140,14 @@ pub enum Effect {
 
     // Recursive self-dispatch
     ScheduleAction(crate::domain::action::Action),
+
+    // MCP: reply to an agent request, correlated by request_id. effect_runner
+    // forwards (request_id, outcome) to the infra MCP server's correlation
+    // registry, which resolves the waiting tool call's oneshot. Plain data.
+    AgentReply {
+        request_id: crate::domain::agent_protocol::AgentRequestId,
+        outcome: crate::domain::agent_protocol::AgentOutcome,
+    },
 }
 
 #[cfg(test)]
@@ -318,6 +326,7 @@ mod tests {
                 Effect::OpenExternalEditor { .. } => 22,
                 Effect::AddReviewWorktree { .. } => 23,
                 Effect::ListPullRequests { .. } => 24,
+                Effect::AgentReply { .. } => 25,
             }
         }
         let e = Effect::ListWorktrees {

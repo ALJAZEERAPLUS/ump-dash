@@ -52,7 +52,8 @@ fn android_run_device_script(serial_arg: &str, variant: RunVariant) -> String {
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RunVariant {
     Local,
     Dev,

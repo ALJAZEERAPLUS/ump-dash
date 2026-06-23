@@ -4976,3 +4976,339 @@ mod cancellation_guard {
         );
     }
 }
+
+// =========================================================================
+// Sub-module: MCP agent requests (Action::Agent)
+//
+// Proves the agent path reuses the same lock/dependency primitives as the
+// keyboard path: dependency recipes front-load yarn/pods, needs_metro
+// auto-starts metro, the BlockNew collision policy is surfaced, a different
+// running task makes the request queue (orphan-safe), and the non-cancellable
+// guard refuses git cancellation.
+// =========================================================================
+
+mod agent_requests {
+    use super::*;
+    use crate::domain::agent_protocol::{
+        AgentOutcome, AgentRequest, AgentRequestId, BlockReason, MetroReport,
+    };
+
+    fn agent_action(cwd: &str, request: AgentRequest) -> Action {
+        Action::Agent {
+            request_id: AgentRequestId(1),
+            cwd: std::path::PathBuf::from(cwd),
+            request,
+        }
+    }
+
+    /// Extract the single AgentReply outcome from a returned effect list.
+    fn outcome(effects: &[Effect]) -> AgentOutcome {
+        effects
+            .iter()
+            .find_map(|e| match e {
+                Effect::AgentReply { outcome, .. } => Some(outcome.clone()),
+                _ => None,
+            })
+            .expect("expected exactly one AgentReply effect")
+    }
+
+    fn spawned_specs(effects: &[Effect]) -> Vec<CommandSpec> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::SpawnTask { spec, .. } => Some(spec.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn has_spawn_metro(effects: &[Effect]) -> bool {
+        effects.iter().any(|e| matches!(e, Effect::SpawnMetro { .. }))
+    }
+
+    #[test]
+    fn unknown_cwd_blocks_with_unknown_worktree() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action("/tmp/not-a-worktree", AgentRequest::GetWorktreeStatus),
+        );
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::Blocked {
+                reason: BlockReason::UnknownWorktree { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn get_worktree_status_reports_branch_and_metro_stopped() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state.worktree_browser.worktrees[0].branch = "feat/x".into();
+        state.worktree_browser.worktrees[0].stale = true;
+
+        let effects = update(
+            &mut state,
+            agent_action("/tmp/wt-1", AgentRequest::GetWorktreeStatus),
+        );
+        match outcome(&effects) {
+            AgentOutcome::Status(report) => {
+                assert_eq!(report.branch, "feat/x");
+                assert!(report.yarn_stale);
+                assert!(matches!(report.metro, MetroReport::Stopped));
+            }
+            other => panic!("expected Status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sync_deps_dispatches_yarn_install_and_queues_pods() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action("/tmp/wt-1", AgentRequest::SyncDeps { include_pods: true }),
+        );
+
+        assert_eq!(spawned_specs(&effects), vec![CommandSpec::YarnInstall]);
+        // YarnPodInstall is queued behind the running install.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1);
+        assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
+    }
+
+    #[test]
+    fn sync_deps_blocks_when_yarn_install_already_running() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        // Simulate a running yarn install (BlockNew collision policy).
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(99, CommandSpec::YarnInstall));
+
+        let effects = update(
+            &mut state,
+            agent_action("/tmp/wt-1", AgentRequest::SyncDeps { include_pods: false }),
+        );
+
+        assert!(spawned_specs(&effects).is_empty(), "must not spawn a 2nd install");
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::Blocked {
+                reason: BlockReason::CollisionBlockNew { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn run_android_stale_front_loads_yarn_then_queues_run() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state.worktree_browser.worktrees[0].stale = true;
+        // Give it metro so the run isn't deferred for the metro prerequisite.
+        register_ready_metro(&mut state, "wt-1", 8081);
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunAndroid {
+                    device_id: "emulator-5554".into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        // First dispatched step is the yarn install (dependency front-load).
+        assert_eq!(spawned_specs(&effects), vec![CommandSpec::YarnInstall]);
+        // The run command waits in the queue.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1);
+        match outcome(&effects) {
+            AgentOutcome::Accepted { expanded, .. } => {
+                assert_eq!(expanded, vec!["yarn install", "Run Android (UMP)"]);
+            }
+            other => panic!("expected Accepted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_android_without_metro_auto_starts_metro() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        // deps fresh, no metro running.
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunAndroid {
+                    device_id: "emulator-5554".into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        assert!(
+            has_spawn_metro(&effects),
+            "needs_metro run with no metro must emit SpawnMetro; got {effects:?}"
+        );
+        // The run command is parked in the queue until metro is Ready.
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1);
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::MetroStarting { .. }
+        ));
+    }
+
+    #[test]
+    fn request_queues_behind_a_different_running_task_without_orphaning() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 8081);
+        // A different task (lint) is already running.
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(99, CommandSpec::YarnLint));
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunAndroid {
+                    device_id: "emulator-5554".into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        // The running task is NOT replaced; the request is queued.
+        assert!(spawned_specs(&effects).is_empty());
+        assert_running_in(&state, "wt-1");
+        assert_eq!(slice_queue_len(&state, "wt-1"), 1);
+        assert!(matches!(outcome(&effects), AgentOutcome::Queued { .. }));
+    }
+
+    #[test]
+    fn start_metro_when_already_running_reports_metro_already() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 8099);
+
+        let effects = update(&mut state, agent_action("/tmp/wt-1", AgentRequest::StartMetro));
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::MetroAlready { port: 8099 }
+        ));
+        assert!(!has_spawn_metro(&effects));
+    }
+
+    #[test]
+    fn cancel_running_cancellable_task_clears_it() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(99, CommandSpec::YarnLint));
+
+        let effects = update(&mut state, agent_action("/tmp/wt-1", AgentRequest::Cancel));
+        assert!(matches!(outcome(&effects), AgentOutcome::Cancelled { .. }));
+        assert_no_running_task_anywhere(&state);
+    }
+
+    #[test]
+    fn cancel_non_cancellable_git_task_is_blocked_and_retained() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(99, CommandSpec::GitPull));
+
+        let effects = update(&mut state, agent_action("/tmp/wt-1", AgentRequest::Cancel));
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::Blocked {
+                reason: BlockReason::NonCancellableRunning { .. }
+            }
+        ));
+        // The git task keeps running.
+        assert_running_in(&state, "wt-1");
+    }
+
+    #[test]
+    fn shell_without_confirm_is_blocked() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::Shell {
+                    command: "echo hi".into(),
+                    confirm: false,
+                },
+            ),
+        );
+        assert!(spawned_specs(&effects).is_empty());
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::Blocked {
+                reason: BlockReason::ConfirmationRequired { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn shell_with_confirm_dispatches() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::Shell {
+                    command: "echo hi".into(),
+                    confirm: true,
+                },
+            ),
+        );
+        assert_eq!(
+            spawned_specs(&effects),
+            vec![CommandSpec::ShellCommand {
+                command: "echo hi".into()
+            }]
+        );
+        assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
+    }
+
+    #[test]
+    fn run_ios_requires_device_id() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunIos {
+                    device_id: String::new(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+        assert!(matches!(outcome(&effects), AgentOutcome::Error { .. }));
+        assert!(spawned_specs(&effects).is_empty());
+    }
+}

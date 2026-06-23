@@ -17,6 +17,9 @@ use super::state::{
     PendingCachedIosRun, active_output, active_worktree_id,
 };
 use crate::domain::action::Action;
+use crate::domain::agent_protocol::{
+    AgentOutcome, AgentRequest, BlockReason, MetroReport, TaskStatusReport, WorktreeStatusReport,
+};
 use crate::domain::command::{
     CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant, android_avd_name,
     android_boot_avd_command,
@@ -546,6 +549,438 @@ fn dispatch_command_for_worktree(
         branch: wt.branch.clone(),
         repo_root: state.app_config.repo_root.clone(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// MCP agent request handling (Action::Agent).
+//
+// Pure — reuses the same dispatch primitives the keyboard path uses
+// (`dispatch_command_for_worktree` collision gate, `Recipe::SyncThenRun`,
+// `ensure_metro_for_worktree`) so every collision / dependency / lock decision
+// is shared. Unlike the keyboard path these are worktree-TARGETED (the agent's
+// own worktree, not the UI selection) and orphan-safe: a request that arrives
+// while a different task is running is queued, never dispatched over the live
+// task. See src/domain/agent_protocol.rs.
+// ---------------------------------------------------------------------------
+
+/// Resolve an agent's working directory to a known worktree. Pure: matches the
+/// cwd against the loaded worktree set (longest path prefix wins, mirroring the
+/// path-derived WorktreeId in src/infra/worktrees.rs).
+fn resolve_agent_worktree(state: &AppState, cwd: &Path) -> Option<WorktreeId> {
+    state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .filter(|wt| cwd == wt.path || cwd.starts_with(&wt.path))
+        .max_by_key(|wt| wt.path.as_os_str().len())
+        .map(|wt| wt.id.clone())
+}
+
+fn spec_labels(specs: &[CommandSpec]) -> Vec<String> {
+    specs.iter().map(|s| s.label().to_string()).collect()
+}
+
+/// Labels of the work "ahead" of a newly-queued spec: the running task (if any)
+/// plus everything already queued, in order.
+fn worktree_ahead_labels(state: &AppState, wt_id: &WorktreeId) -> Vec<String> {
+    let mut ahead = Vec::new();
+    if let Some(slice) = state.worktrees.get(wt_id) {
+        if let Some(task) = slice.task.as_ref() {
+            ahead.push(task.spec.label().to_string());
+        }
+        ahead.extend(slice.queue.iter().map(|s| s.label().to_string()));
+    }
+    ahead
+}
+
+enum AgentKick {
+    Dispatched(u64),
+    MetroStarting,
+    BlockedNew,
+    Empty,
+}
+
+/// Pop the head of the worktree queue and dispatch it, metro-aware — mirrors the
+/// CommandExited slice-drain logic as a callable kick. Only call when the
+/// worktree has no running task (idle), so no orphan is possible.
+fn agent_kick_queue(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    wt_id: &WorktreeId,
+) -> AgentKick {
+    let has_metro = worktree_has_metro_or_reserved(state, wt_id);
+    enum Step {
+        Dispatch(CommandSpec),
+        NeedsMetro,
+        Empty,
+    }
+    let step = if let Some(slice) = state.worktrees.get_mut(wt_id) {
+        if let Some(next) = slice.queue.pop_front() {
+            if next.needs_metro() && !has_metro {
+                slice.queue.push_front(next);
+                Step::NeedsMetro
+            } else {
+                Step::Dispatch(next)
+            }
+        } else {
+            Step::Empty
+        }
+    } else {
+        Step::Empty
+    };
+    match step {
+        Step::Dispatch(spec) => match dispatch_command_for_worktree(state, wt_id, spec) {
+            Some(eff) => {
+                let task_id = match &eff {
+                    Effect::SpawnTask { task_id, .. } => task_id.0,
+                    _ => 0,
+                };
+                effects.push(eff);
+                AgentKick::Dispatched(task_id)
+            }
+            None => AgentKick::BlockedNew,
+        },
+        Step::NeedsMetro => {
+            effects.extend(update(
+                state,
+                Action::MetroStartForWorktree {
+                    worktree_id: wt_id.clone(),
+                },
+            ));
+            AgentKick::MetroStarting
+        }
+        Step::Empty => AgentKick::Empty,
+    }
+}
+
+/// Enqueue an ordered sequence onto the worktree slice, then drive the head if
+/// the worktree is idle. Returns the lock/block outcome. `block_on_collision`
+/// surfaces a `BlockNew` head as `Blocked` (idempotent single-command requests
+/// like sync_deps / reset_hard); run/build pass `false` so a busy worktree
+/// queues instead.
+fn agent_enqueue(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    wt_id: &WorktreeId,
+    sequence: Vec<CommandSpec>,
+    block_on_collision: bool,
+) -> AgentOutcome {
+    if sequence.is_empty() {
+        return AgentOutcome::Error {
+            message: "nothing to do".into(),
+        };
+    }
+    let expanded = spec_labels(&sequence);
+
+    // Busy-worktree handling.
+    let busy = state
+        .worktrees
+        .get(wt_id)
+        .map(|s| s.task.is_some())
+        .unwrap_or(false);
+    if busy {
+        if block_on_collision
+            && let Some(slice) = state.worktrees.get(wt_id)
+            && let Some(task) = slice.task.as_ref()
+        {
+            let head = &sequence[0];
+            let same = std::mem::discriminant(&task.spec) == std::mem::discriminant(head);
+            if same && head.collision_policy() == CollisionPolicy::BlockNew {
+                return AgentOutcome::Blocked {
+                    reason: BlockReason::CollisionBlockNew {
+                        spec_label: head.label().to_string(),
+                    },
+                };
+            }
+        }
+        // Queue behind the running task to avoid orphaning it; it drains on
+        // CommandExited.
+        let ahead = worktree_ahead_labels(state, wt_id);
+        let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+            crate::domain::worktree_slice::WorktreeSlice {
+                id: wt_id.clone(),
+                ..Default::default()
+            }
+        });
+        for cmd in sequence {
+            slice.queue.push_back(cmd);
+        }
+        return AgentOutcome::Queued {
+            position: ahead.len(),
+            ahead,
+        };
+    }
+
+    // Idle: enqueue then kick the head (metro-aware).
+    let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
+        crate::domain::worktree_slice::WorktreeSlice {
+            id: wt_id.clone(),
+            ..Default::default()
+        }
+    });
+    for cmd in sequence {
+        slice.queue.push_back(cmd);
+    }
+    match agent_kick_queue(state, effects, wt_id) {
+        AgentKick::Dispatched(task_id) => AgentOutcome::Accepted { task_id, expanded },
+        AgentKick::MetroStarting => AgentOutcome::MetroStarting {
+            port: state
+                .worktrees
+                .get(wt_id)
+                .and_then(|s| s.metro.running_port()),
+        },
+        AgentKick::BlockedNew => AgentOutcome::Blocked {
+            reason: BlockReason::CollisionBlockNew {
+                spec_label: expanded.first().cloned().unwrap_or_default(),
+            },
+        },
+        AgentKick::Empty => AgentOutcome::Error {
+            message: "queue empty after enqueue".into(),
+        },
+    }
+}
+
+/// Dependency snapshot for an agent run/build on a worktree. Mirrors the
+/// keyboard CommandRun staleness projection (cached yarn staleness + live pods
+/// check for iOS targets).
+fn agent_deps_for(state: &AppState, wt_id: &WorktreeId, is_ios: bool) -> DependencyState {
+    let wt = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|w| &w.id == wt_id);
+    let yarn_stale = wt.map(|w| w.stale).unwrap_or(false);
+    let pods_stale = if is_ios {
+        wt.map(|w| crate::domain::staleness::check_stale_pods(&w.path))
+            .unwrap_or(false)
+    } else {
+        false
+    };
+    DependencyState::new(yarn_stale, pods_stale, is_ios)
+}
+
+fn agent_start_metro(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    wt_id: &WorktreeId,
+) -> AgentOutcome {
+    if worktree_has_metro_or_reserved(state, wt_id) {
+        if let Some(slice) = state.worktrees.get(wt_id)
+            && slice.metro.is_running()
+        {
+            return AgentOutcome::MetroAlready {
+                port: slice.metro.running_port().unwrap_or(0),
+            };
+        }
+        return AgentOutcome::MetroStarting {
+            port: state
+                .worktrees
+                .get(wt_id)
+                .and_then(|s| s.metro.running_port()),
+        };
+    }
+    ensure_metro_for_worktree(state, effects, wt_id.clone());
+    AgentOutcome::MetroStarting {
+        port: state
+            .worktrees
+            .get(wt_id)
+            .and_then(|s| s.metro.running_port()),
+    }
+}
+
+fn agent_status_report(state: &AppState, wt_id: &WorktreeId) -> WorktreeStatusReport {
+    let wt = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|w| &w.id == wt_id);
+    let slice = state.worktrees.get(wt_id);
+    let metro = match slice {
+        Some(s) if s.metro.is_running() => MetroReport::Running {
+            port: s.metro.running_port().unwrap_or(0),
+        },
+        Some(s) if s.metro.running_port().is_some() => MetroReport::Starting {
+            port: s.metro.running_port(),
+        },
+        _ => MetroReport::Stopped,
+    };
+    WorktreeStatusReport {
+        worktree_id: wt_id.0.clone(),
+        branch: wt.map(|w| w.branch.clone()).unwrap_or_default(),
+        yarn_stale: wt.map(|w| w.stale).unwrap_or(false),
+        pods_stale: wt.map(|w| w.stale_pods).unwrap_or(false),
+        metro,
+        current_task: slice.and_then(|s| s.task.as_ref().map(|t| t.spec.label().to_string())),
+        queue: slice
+            .map(|s| s.queue.iter().map(|c| c.label().to_string()).collect())
+            .unwrap_or_default(),
+    }
+}
+
+fn agent_cancel(state: &mut AppState, wt_id: &WorktreeId) -> AgentOutcome {
+    if let Some(slice) = state.worktrees.get_mut(wt_id)
+        && let Some(record) = slice.task.take()
+    {
+        let label = record.spec.label().to_string();
+        if record.spec.is_cancellable() {
+            record.handle.abort();
+            slice.queue.clear();
+            slice.post_drain = None;
+            slice.output.push_back("[cancelled by agent]".into());
+            while slice.output.len() > MAX_COMMAND_LINES {
+                slice.output.pop_front();
+            }
+            return AgentOutcome::Cancelled { spec_label: label };
+        }
+        // Non-cancellable git porcelain — reinsert and refuse.
+        slice.task = Some(record);
+        return AgentOutcome::Blocked {
+            reason: BlockReason::NonCancellableRunning { spec_label: label },
+        };
+    }
+    AgentOutcome::NothingToCancel
+}
+
+fn confirmation_required(spec_label: &str) -> AgentOutcome {
+    AgentOutcome::Blocked {
+        reason: BlockReason::ConfirmationRequired {
+            spec_label: spec_label.to_string(),
+        },
+    }
+}
+
+/// Dispatch a resolved agent request against its worktree, returning the
+/// lock/block outcome and pushing any spawn/metro effects.
+fn handle_agent_request(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    wt_id: &WorktreeId,
+    request: AgentRequest,
+) -> AgentOutcome {
+    match request {
+        AgentRequest::GetWorktreeStatus => {
+            AgentOutcome::Status(agent_status_report(state, wt_id))
+        }
+        AgentRequest::GetTaskStatus => {
+            let slice = state.worktrees.get(wt_id);
+            AgentOutcome::TaskStatus(TaskStatusReport {
+                running: slice.and_then(|s| s.task.as_ref().map(|t| t.spec.label().to_string())),
+                queue: slice
+                    .map(|s| s.queue.iter().map(|c| c.label().to_string()).collect())
+                    .unwrap_or_default(),
+            })
+        }
+        AgentRequest::GetLogs { tail } => {
+            let lines = state
+                .worktrees
+                .get(wt_id)
+                .map(|s| {
+                    let total = s.output.len();
+                    let n = tail.unwrap_or(total).min(total);
+                    s.output.iter().skip(total - n).cloned().collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            AgentOutcome::Logs { lines }
+        }
+        AgentRequest::Cancel => agent_cancel(state, wt_id),
+        AgentRequest::StartMetro => agent_start_metro(state, effects, wt_id),
+        AgentRequest::SyncDeps { include_pods } => {
+            let mut seq = vec![CommandSpec::YarnInstall];
+            if include_pods {
+                seq.push(CommandSpec::YarnPodInstall);
+            }
+            agent_enqueue(state, effects, wt_id, seq, true)
+        }
+        AgentRequest::Shell { command, confirm } => {
+            if !confirm {
+                return confirmation_required("shell command");
+            }
+            agent_enqueue(
+                state,
+                effects,
+                wt_id,
+                vec![CommandSpec::ShellCommand { command }],
+                false,
+            )
+        }
+        AgentRequest::ResetHard { confirm } => {
+            if !confirm {
+                return confirmation_required(CommandSpec::GitResetHard.label());
+            }
+            agent_enqueue(state, effects, wt_id, vec![CommandSpec::GitResetHard], true)
+        }
+        AgentRequest::RmNodeModules { confirm } => {
+            if !confirm {
+                return confirmation_required(CommandSpec::RmNodeModules.label());
+            }
+            agent_enqueue(state, effects, wt_id, vec![CommandSpec::RmNodeModules], false)
+        }
+        AgentRequest::Clean {
+            node_modules,
+            pods,
+            android,
+            confirm,
+        } => {
+            if !confirm {
+                return confirmation_required("clean");
+            }
+            let opts = CleanOptions {
+                node_modules,
+                pods,
+                android,
+                sync_after: false,
+            };
+            let seq = Recipe::Clean(opts).expand(&DependencyState::new(false, false, false));
+            if seq.is_empty() {
+                return AgentOutcome::Error {
+                    message: "no clean targets selected".into(),
+                };
+            }
+            agent_enqueue(state, effects, wt_id, seq, false)
+        }
+        AgentRequest::Build { install } => {
+            let deps = agent_deps_for(state, wt_id, false);
+            let mut seq = Recipe::SyncThenRun(CommandSpec::RnReleaseBuild).expand(&deps);
+            if install {
+                seq.push(CommandSpec::AdbInstallApk);
+            }
+            agent_enqueue(state, effects, wt_id, seq, false)
+        }
+        AgentRequest::RunIos {
+            device_id,
+            variant,
+        } => {
+            if device_id.is_empty() {
+                return AgentOutcome::Error {
+                    message: "device_id required (use list_devices to enumerate targets)".into(),
+                };
+            }
+            let deps = agent_deps_for(state, wt_id, true);
+            let seq = Recipe::SyncThenRun(CommandSpec::UmpRunIos {
+                device_id,
+                variant,
+            })
+            .expand(&deps);
+            agent_enqueue(state, effects, wt_id, seq, false)
+        }
+        AgentRequest::RunAndroid {
+            device_id,
+            variant,
+        } => {
+            if device_id.is_empty() {
+                return AgentOutcome::Error {
+                    message: "device_id required (use list_devices to enumerate targets)".into(),
+                };
+            }
+            let deps = agent_deps_for(state, wt_id, false);
+            let seq = Recipe::SyncThenRun(CommandSpec::UmpRunAndroid {
+                device_id,
+                variant,
+            })
+            .expand(&deps);
+            agent_enqueue(state, effects, wt_id, seq, false)
+        }
+    }
 }
 
 fn is_ump_run(spec: &CommandSpec) -> bool {
@@ -3739,6 +4174,28 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             state.error_state = Some(ErrorState {
                 message: format!("Failed to create review worktree: {err}"),
                 can_retry: false,
+            });
+        }
+
+        // MCP: agent-originated request. Resolve the agent's cwd to a worktree,
+        // run it through the shared dispatch primitives, and emit the correlated
+        // reply. See handle_agent_request + src/domain/agent_protocol.rs.
+        Action::Agent {
+            request_id,
+            cwd,
+            request,
+        } => {
+            let outcome = match resolve_agent_worktree(state, &cwd) {
+                Some(wt_id) => handle_agent_request(state, &mut effects, &wt_id, request),
+                None => AgentOutcome::Blocked {
+                    reason: BlockReason::UnknownWorktree {
+                        cwd: cwd.to_string_lossy().to_string(),
+                    },
+                },
+            };
+            effects.push(Effect::AgentReply {
+                request_id,
+                outcome,
             });
         }
     }

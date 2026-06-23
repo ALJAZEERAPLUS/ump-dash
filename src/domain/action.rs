@@ -217,4 +217,14 @@ pub enum Action {
         head_sha: String,
     },
     ReviewWorktreeCreateFailed(String),
+
+    // MCP: agent-originated request. The embedded MCP server (src/infra/mcp_server.rs)
+    // builds these from tool calls and feeds them into the SAME update() pipeline as
+    // keyboard actions, so every collision/dependency/lock decision is reused. The
+    // reply is correlated back via Effect::AgentReply { request_id, .. }.
+    Agent {
+        request_id: crate::domain::agent_protocol::AgentRequestId,
+        cwd: std::path::PathBuf,
+        request: crate::domain::agent_protocol::AgentRequest,
+    },
 }

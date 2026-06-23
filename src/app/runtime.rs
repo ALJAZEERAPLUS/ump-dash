@@ -81,12 +81,25 @@ pub async fn run(
         crate::domain::task::TaskRecord,
     )>();
 
+    // MCP correlation channel: effect_runner forwards Effect::AgentReply here;
+    // the embedded MCP server (if enabled) drains it to resolve waiting tool
+    // calls. Extract the server handle before `adapters` is moved into the runner.
+    let (agent_reply_tx, agent_reply_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mcp_server = adapters.mcp_server.clone();
+
     let runner = EffectRunner::new(
         adapters,
         action_tx.clone(),
         handle_tx.clone(),
         task_handle_tx.clone(),
-    );
+    )
+    .with_agent_reply_tx(agent_reply_tx);
+
+    // Start the embedded MCP server. It injects Action::Agent into the same
+    // action channel update() consumes and receives replies via agent_reply_rx.
+    if let Some(mcp) = mcp_server {
+        mcp.serve(action_tx.clone(), agent_reply_rx);
+    }
 
     // Startup effects: load worktrees. Metro launches choose an available port
     // at spawn time, so startup no longer locks on external 8081 ownership.

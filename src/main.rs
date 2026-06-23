@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 use ump_dash::app::{Adapters, AppState, run};
+use ump_dash::domain::ports::device_port::DevicePort;
 use ump_dash::domain::ports::jira_port::JiraPort;
+use ump_dash::domain::ports::mcp_server_port::McpServerPort;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
@@ -81,6 +83,31 @@ async fn main() -> color_eyre::Result<()> {
         .as_ref()
         .and_then(|cfg| cfg.native_cache_artifact_root_path());
 
+    // Device adapter is shared between the Adapters bundle and the MCP server
+    // (its `list_devices` tool enumerates targets directly).
+    let devices: Arc<dyn DevicePort> = Arc::new(ump_dash::infra::devices::AdbXcrunDevices);
+
+    // Embedded MCP server — lets worktree agents request actions over localhost
+    // HTTP. Disabled via `mcp_enabled = false`. Identifies worktrees from the
+    // repo root, so it needs the resolved repo_root up front.
+    let mcp_server: Option<Arc<dyn McpServerPort>> = {
+        let enabled = config.as_ref().map(|c| c.mcp_enabled).unwrap_or(true);
+        if enabled {
+            let port = config.as_ref().map(|c| c.mcp_port).unwrap_or(8790);
+            let repo_root = config
+                .as_ref()
+                .and_then(|c| c.repo_root_path())
+                .unwrap_or_default();
+            Some(Arc::new(ump_dash::infra::mcp_server::RmcpAgentServer::new(
+                port,
+                repo_root,
+                devices.clone(),
+            )) as Arc<dyn McpServerPort>)
+        } else {
+            None
+        }
+    };
+
     let adapters = Adapters {
         command_runner: Arc::new(ump_dash::infra::command_runner::TokioCommandRunner),
         metro: Arc::new(ump_dash::infra::metro::TokioMetroAdapter::new()),
@@ -88,7 +115,7 @@ async fn main() -> color_eyre::Result<()> {
         worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter::new(
             seed_files,
         )),
-        devices: Arc::new(ump_dash::infra::devices::AdbXcrunDevices),
+        devices: devices.clone(),
         native_cache: Arc::new(ump_dash::infra::native_cache::LocalNativeCache::new(
             native_cache_artifact_root,
         )),
@@ -96,6 +123,7 @@ async fn main() -> color_eyre::Result<()> {
         review: Arc::new(ump_dash::infra::review::GitHubCliReviewAdapter),
         jira: jira_port.clone(),
         multiplexer: multiplexer_port.clone(),
+        mcp_server,
     };
 
     // Step 6: Build the pre-populated AppState. The flat fields here mirror

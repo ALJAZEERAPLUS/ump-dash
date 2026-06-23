@@ -21,6 +21,7 @@ use crate::domain::ports::command_runner_port::CommandRunnerPort;
 use crate::domain::ports::device_port::DevicePort;
 use crate::domain::ports::external_command_port::ExternalCommandPort;
 use crate::domain::ports::jira_port::JiraPort;
+use crate::domain::ports::mcp_server_port::McpServerPort;
 use crate::domain::ports::metro_port::MetroPort;
 use crate::domain::ports::multiplexer_port::MultiplexerPort;
 use crate::domain::ports::native_cache_port::NativeCachePort;
@@ -46,4 +47,6 @@ pub struct Adapters {
     pub jira: Option<Arc<dyn JiraPort>>,
     /// `None` when the process is not running inside tmux, zellij, or Ghostty.
     pub multiplexer: Option<Arc<dyn MultiplexerPort>>,
+    /// `None` when the embedded MCP server is disabled (config `mcp_enabled = false`).
+    pub mcp_server: Option<Arc<dyn McpServerPort>>,
 }

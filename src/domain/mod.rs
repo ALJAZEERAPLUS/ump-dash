@@ -2,6 +2,7 @@
 //! Note: metro.rs references tokio types for the MetroHandle bridge type — see that
 //! file's architectural note for the rationale. mod.rs itself imports nothing from infra.
 pub mod action;
+pub mod agent_protocol;
 pub mod command;
 pub mod dash_config;
 pub mod jira;

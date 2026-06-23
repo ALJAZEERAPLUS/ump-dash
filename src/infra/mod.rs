@@ -17,6 +17,7 @@ pub mod devices;
 pub mod external_command;
 pub mod jira;
 pub mod jira_cache;
+pub mod mcp_server;
 pub mod metro;
 pub mod multiplexer;
 pub mod native_cache;

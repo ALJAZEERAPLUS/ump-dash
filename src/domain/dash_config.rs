@@ -37,6 +37,14 @@ fn default_spinner_style() -> String {
     "circles".to_string()
 }
 
+fn default_mcp_enabled() -> bool {
+    true
+}
+
+fn default_mcp_port() -> u16 {
+    8790
+}
+
 fn expand_home(path: &str) -> std::path::PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -186,6 +194,15 @@ pub struct DashConfig {
     /// Android keystores; override in config.toml to seed a different set.
     #[serde(default = "default_seed_files")]
     pub seed_files: Vec<String>,
+
+    /// When true (default), the embedded MCP server starts so worktree agents
+    /// can request actions (build, metro, run, sync) over localhost HTTP.
+    #[serde(default = "default_mcp_enabled")]
+    pub mcp_enabled: bool,
+
+    /// Localhost TCP port the embedded MCP server binds. Default 8790.
+    #[serde(default = "default_mcp_port")]
+    pub mcp_port: u16,
 }
 
 impl DashConfig {
@@ -277,6 +294,20 @@ editor_in_terminal = false
 
         assert_eq!(config.editor, "emacsclient -c -n");
         assert!(!config.editor_in_terminal);
+    }
+
+    #[test]
+    fn mcp_defaults_to_enabled_on_port_8790() {
+        let config = parse_config("");
+        assert!(config.mcp_enabled);
+        assert_eq!(config.mcp_port, 8790);
+    }
+
+    #[test]
+    fn mcp_config_overrides_defaults() {
+        let config = parse_config("mcp_enabled = false\nmcp_port = 9001");
+        assert!(!config.mcp_enabled);
+        assert_eq!(config.mcp_port, 9001);
     }
 
     #[test]

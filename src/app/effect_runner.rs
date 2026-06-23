@@ -103,6 +103,17 @@ pub struct EffectRunner {
     pub yarn_semaphores: std::sync::Mutex<
         std::collections::HashMap<std::path::PathBuf, std::sync::Arc<tokio::sync::Semaphore>>,
     >,
+
+    /// MCP correlation sink. When set (by `runtime.rs` if the embedded MCP server
+    /// is enabled), `Effect::AgentReply` forwards `(request_id, outcome)` here.
+    /// The infra MCP server drains it and resolves the waiting tool call's
+    /// oneshot. `None` when the MCP server is disabled — replies are dropped.
+    pub agent_reply_tx: Option<
+        UnboundedSender<(
+            crate::domain::agent_protocol::AgentRequestId,
+            crate::domain::agent_protocol::AgentOutcome,
+        )>,
+    >,
 }
 
 impl EffectRunner {
@@ -121,7 +132,21 @@ impl EffectRunner {
             handle_tx,
             task_handle_tx,
             yarn_semaphores: std::sync::Mutex::new(std::collections::HashMap::new()),
+            agent_reply_tx: None,
         }
+    }
+
+    /// Attach the MCP correlation sink. Called by `runtime.rs` when the embedded
+    /// MCP server is enabled; `Effect::AgentReply` is dropped until this is set.
+    pub fn with_agent_reply_tx(
+        mut self,
+        tx: UnboundedSender<(
+            crate::domain::agent_protocol::AgentRequestId,
+            crate::domain::agent_protocol::AgentOutcome,
+        )>,
+    ) -> Self {
+        self.agent_reply_tx = Some(tx);
+        self
     }
 
     pub async fn run_effects(&self, effects: Vec<Effect>) {
@@ -820,6 +845,17 @@ impl EffectRunner {
                     let _ = record_ready_tx.send(());
                 });
             }
+
+            Effect::AgentReply {
+                request_id,
+                outcome,
+            } => {
+                // Forward to the infra MCP correlation registry (if the server is
+                // enabled). Synchronous send — no spawn, no .await.
+                if let Some(tx) = &self.agent_reply_tx {
+                    let _ = tx.send((request_id, outcome));
+                }
+            }
         }
     }
 }
@@ -1204,6 +1240,7 @@ mod tests {
                 review: Arc::new(NoopReview),
                 jira: None,
                 multiplexer: None,
+                mcp_server: None,
             },
             action_tx,
             handle_tx,
@@ -1240,6 +1277,7 @@ mod tests {
                 review: Arc::new(NoopReview),
                 jira: None,
                 multiplexer: None,
+                mcp_server: None,
             },
             action_tx,
             handle_tx,
