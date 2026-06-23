@@ -2,20 +2,19 @@
 quick_id: 260623-k7w
 status: complete
 completed: 2026-06-23
-commit: aee6519
+commit: ffa5c48
 ---
 
 # Quick Task 260623-k7w Summary
 
-Implemented the checkout-new branch picker flow for `g>c`.
+Implemented the existing-branch picker flow for worktree checkout (`+>c`) and removed the incorrect picker behavior from git checkout-new (`g>c`).
 
 ## Changes
 
-- `CommandSpec::GitCheckoutNew` now carries an optional base branch.
-- `g>c` requests remote branches and opens the existing `BranchPicker` before asking for the new branch name.
-- Confirming a picker entry for checkout-new stores the selected base branch in the pending command template.
-- Submitting the new branch name now dispatches `git checkout -b <new> <base>`.
-- The new-worktree branch picker flow still uses the same picker and keeps its existing base-branch handling.
+- `+>c` now requests remote branches and opens the existing `BranchPicker`.
+- Confirming a picker entry for `+>c` dispatches `Effect::AddWorktree` for the selected branch.
+- `g>c` is restored to the direct new-branch-name text input and dispatches `git checkout -b <new>`.
+- The new-branch worktree flow (`+>n`) still uses the same picker and keeps its base-branch handling.
 
 ## Verification
 
