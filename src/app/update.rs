@@ -2228,7 +2228,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                             &mut effects,
                             real_spec,
                             true,
-                            false,
+                            true,
                         );
                         return effects;
                     }
@@ -2293,6 +2293,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     && let Some(avd_name) = android_avd_name(device_id)
                 {
                     remember_ump_run_config(state, &real_spec, cache_launch_supported);
+                    if try_begin_cached_run_for_spec(
+                        state,
+                        &mut effects,
+                        &real_spec,
+                        cache_launch_supported,
+                    ) {
+                        return effects;
+                    }
                     let boot = CommandSpec::ShellCommand {
                         command: android_boot_avd_command(avd_name),
                     };
@@ -2461,7 +2469,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                     &mut effects,
                                     real_spec,
                                     true,
-                                    false,
+                                    true,
                                 );
                                 return effects;
                             }

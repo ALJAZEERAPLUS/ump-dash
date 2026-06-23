@@ -1856,6 +1856,110 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn available_android_avd_run_variant_picker_shows_cached_variant() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("active slice should exist")
+            .android_cache = AndroidCacheState::Hit(Box::new(hit));
+
+        let effects = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::LoadDevices {
+                kind: DeviceKind::Android,
+                request_id: None,
+            }]
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Android,
+                request_id: None,
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "avd:Pixel_9a".into(),
+                    name: "Pixel 9a (available)".into(),
+                }],
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                pending_template,
+                boot_android_emulator: true,
+                cache_launch_supported: true,
+                cached_variants: [true, false, false],
+                ..
+            }) if pending_template.as_ref() == &CommandSpec::UmpRunAndroid {
+                device_id: "avd:Pixel_9a".into(),
+                variant: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn cached_available_android_avd_launches_cached_apk_without_queued_normal_run() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        register_ready_metro(&mut state, "wt-1", 19001);
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("active slice should exist")
+            .android_cache = AndroidCacheState::Hit(Box::new(hit.clone()));
+        state.modal_stack.modal = Some(ModalState::RunVariantPicker {
+            selected: 0,
+            pending_template: Box::new(CommandSpec::UmpRunAndroid {
+                device_id: "avd:Pixel_9a".into(),
+                variant: None,
+            }),
+            boot_android_emulator: true,
+            cache_launch_supported: true,
+            cached_variants: [true, false, false],
+        });
+
+        let effects = update(&mut state, Action::ModalRunVariantConfirm);
+
+        assert!(
+            effects.iter().any(|effect| matches!(
+                effect,
+                Effect::InstallAndLaunchCachedAndroid { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.device_id == "avd:Pixel_9a"
+                        && request.apk_path == hit.artifact_path
+                        && request.metro_port == 19001
+            )),
+            "cached available AVD should launch cached APK; got {effects:?}"
+        );
+        assert!(
+            !effects.iter().any(|effect| matches!(
+                effect,
+                Effect::SpawnTask {
+                    spec: CommandSpec::ShellCommand { .. },
+                    ..
+                }
+            )),
+            "cached available AVD should not spawn a separate boot command; got {effects:?}"
+        );
+        assert_eq!(slice_queue_len(&state, "wt-1"), 0);
+    }
+
+    #[test]
     fn android_cache_lookup_hit_updates_open_run_variant_picker_cached_flags() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -3337,7 +3441,7 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: true,
-            cache_launch_supported: false,
+            cache_launch_supported: true,
             cached_variants: [false; 3],
         });
 
