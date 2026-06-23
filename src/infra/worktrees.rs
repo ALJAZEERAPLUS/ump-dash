@@ -187,6 +187,118 @@ fn seed_worktree_files(repo_root: &Path, worktree_path: &Path, seed_files: &[Str
     }
 }
 
+/// Builds the `.mcp.json` content that points Claude Code at the embedded MCP
+/// server (`http://127.0.0.1:<port>/mcp`).
+///
+/// When `existing` parses as a JSON object, only the `mcpServers."ump-dash"`
+/// entry is set/refreshed — any other servers the user configured (and any
+/// other top-level keys) are preserved. Otherwise a fresh document is produced.
+/// Pure (no I/O) so it can be unit-tested directly.
+fn agent_mcp_json(existing: Option<&str>, port: u16) -> String {
+    use serde_json::{Value, json};
+
+    let mut doc = existing
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+
+    let obj = doc.as_object_mut().expect("doc is a JSON object");
+    let servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+    servers
+        .as_object_mut()
+        .expect("mcpServers is a JSON object")
+        .insert(
+            "ump-dash".to_string(),
+            json!({
+                "type": "http",
+                "url": format!("http://127.0.0.1:{port}/mcp"),
+            }),
+        );
+
+    let mut out = serde_json::to_string_pretty(&doc).unwrap_or_default();
+    out.push('\n');
+    out
+}
+
+/// Project run skill seeded into each worktree. The built-in `run` skill defers
+/// to a project skill like this when present, so an agent in the worktree drives
+/// the dashboard's `ump-dash` MCP tools to run/build instead of hand-rolling
+/// metro/yarn/native build commands.
+const RUN_SKILL_MD: &str = r#"---
+name: run-app
+description: Use when asked to run, build, launch, or start this app on a simulator, emulator, or device. Drives the dashboard's `ump-dash` MCP tools instead of hand-running metro/yarn/build.
+---
+
+# Run this app via the `ump-dash` MCP tools
+
+This worktree is managed by the UMP dashboard, which exposes an `ump-dash` MCP
+server. Use its tools to run or build the app — do **not** run `metro`, `yarn`,
+`pod install`, or native build commands yourself. The dashboard syncs
+dependencies, starts Metro, and uses the prebuilt cache automatically.
+
+Every tool takes `worktree`: the absolute path of this worktree (your current
+working directory).
+
+## To run the app
+
+1. `list_devices` with `platform` `"ios"` or `"android"`, then pick a target's `id`.
+2. `run_ios` (or `run_android`) with `worktree` = this directory and
+   `device_id` = the `id` from step 1. That's it — do not call `start_metro`,
+   `sync_deps`, or `get_worktree_status` first.
+3. A cache hit launches instantly with **no task to poll** — its result shows in
+   `get_logs`. For a cold build, poll `get_task_status` until it finishes.
+
+## Notes
+
+- To build without launching, use `build`. To force a dependency sync, use
+  `sync_deps` — both are usually unnecessary.
+- Destructive tools (`shell`, `clean`, `reset_hard`) require `confirm=true`.
+"#;
+
+/// Best-effort provisioning of MCP-agent files into a freshly-created worktree
+/// (mirrors `seed_worktree_files`' log-on-error, non-fatal style):
+/// - `.mcp.json`: merged so the worktree points at the embedded MCP server
+///   while preserving any other servers already configured there. Always
+///   (re)written so the `ump-dash` endpoint stays current.
+/// - `.claude/skills/run-app/SKILL.md`: written only when absent (never
+///   clobbers a user's edits), mirroring `seed_worktree_files`.
+fn provision_worktree_agent_files(worktree_path: &Path, port: u16) {
+    // .mcp.json — merge-safe: read existing (if any), refresh only ump-dash.
+    let mcp_path = worktree_path.join(".mcp.json");
+    let existing = std::fs::read_to_string(&mcp_path).ok();
+    let content = agent_mcp_json(existing.as_deref(), port);
+    match std::fs::write(&mcp_path, content) {
+        Ok(_) => tracing::info!("provision_worktree_agent_files: wrote .mcp.json (port {port})"),
+        Err(e) => tracing::warn!("provision_worktree_agent_files: write .mcp.json failed: {e}"),
+    }
+
+    // .claude/skills/run-app/SKILL.md — non-clobber (write only if missing).
+    let skill_path = worktree_path
+        .join(".claude")
+        .join("skills")
+        .join("run-app")
+        .join("SKILL.md");
+    if skill_path.exists() {
+        return;
+    }
+    if let Some(parent) = skill_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(
+            "provision_worktree_agent_files: mkdir {} failed: {e}",
+            parent.display()
+        );
+        return;
+    }
+    match std::fs::write(&skill_path, RUN_SKILL_MD) {
+        Ok(_) => tracing::info!("provision_worktree_agent_files: wrote run-app skill"),
+        Err(e) => tracing::warn!("provision_worktree_agent_files: write skill failed: {e}"),
+    }
+}
+
 /// Creates a new worktree as a sibling directory of repo_root.
 ///
 /// Computes the worktree path as `repo_root.parent().unwrap().join(branch_name)`.
@@ -403,12 +515,28 @@ pub struct GitWorktreeAdapter {
     /// Files copied into each newly-created worktree, resolved from
     /// `DashConfig::seed_files` at the composition root.
     seed_files: Vec<String>,
+    /// `Some(port)` when the embedded MCP server is enabled: newly-created
+    /// worktrees are then provisioned with `.mcp.json` + the run-app skill so
+    /// agents inside them discover the dashboard. `None` disables provisioning.
+    mcp_port: Option<u16>,
 }
 
 impl GitWorktreeAdapter {
-    /// Builds the adapter with the seed-file list (see `DashConfig::seed_files`).
-    pub fn new(seed_files: Vec<String>) -> Self {
-        Self { seed_files }
+    /// Builds the adapter with the seed-file list (see `DashConfig::seed_files`)
+    /// and the MCP port (`Some` when the embedded MCP server is enabled).
+    pub fn new(seed_files: Vec<String>, mcp_port: Option<u16>) -> Self {
+        Self {
+            seed_files,
+            mcp_port,
+        }
+    }
+
+    /// Provisions MCP-agent files into a freshly-created worktree when the
+    /// embedded MCP server is enabled. No-op when `mcp_port` is `None`.
+    fn provision_agent_files(&self, worktree_path: &Path) {
+        if let Some(port) = self.mcp_port {
+            provision_worktree_agent_files(worktree_path, port);
+        }
     }
 }
 
@@ -436,6 +564,7 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
     ) -> anyhow::Result<std::path::PathBuf> {
         let worktree_path = add_worktree(repo_root, branch_name).await?;
         seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
+        self.provision_agent_files(&worktree_path);
         Ok(worktree_path)
     }
 
@@ -447,6 +576,7 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
     ) -> anyhow::Result<std::path::PathBuf> {
         let worktree_path = add_worktree_new_branch(repo_root, new_branch, base_branch).await?;
         seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
+        self.provision_agent_files(&worktree_path);
         Ok(worktree_path)
     }
 
@@ -461,6 +591,7 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         let worktree_path =
             add_review_worktree(repo_root, pr_number, branch_name, head_oid, worktree_name).await?;
         seed_worktree_files(repo_root, &worktree_path, &self.seed_files);
+        self.provision_agent_files(&worktree_path);
         Ok(worktree_path)
     }
 
@@ -567,6 +698,98 @@ mod tests {
         assert!(
             !wt.path().join(".env").exists(),
             "no dest should be created when source is absent"
+        );
+    }
+
+    /// A fresh `.mcp.json` carries the loopback URL with the configured port and
+    /// the `ump-dash` HTTP server entry.
+    #[test]
+    fn agent_mcp_json_fresh_has_url_and_port() {
+        let content = agent_mcp_json(None, 8790);
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let server = &v["mcpServers"]["ump-dash"];
+        assert_eq!(server["type"], "http");
+        assert_eq!(server["url"], "http://127.0.0.1:8790/mcp");
+    }
+
+    /// Merging into an existing doc preserves other servers and other top-level
+    /// keys while refreshing only the `ump-dash` entry.
+    #[test]
+    fn agent_mcp_json_merges_preserving_other_servers() {
+        let existing = r#"{
+            "mcpServers": {
+                "other": { "type": "http", "url": "http://example/other" }
+            },
+            "someOtherKey": 42
+        }"#;
+        let content = agent_mcp_json(Some(existing), 9000);
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            v["mcpServers"]["other"]["url"], "http://example/other",
+            "pre-existing server must be preserved"
+        );
+        assert_eq!(v["someOtherKey"], 42, "other top-level keys must survive");
+        assert_eq!(v["mcpServers"]["ump-dash"]["url"], "http://127.0.0.1:9000/mcp");
+    }
+
+    /// Non-JSON existing content is replaced by a fresh, valid document.
+    #[test]
+    fn agent_mcp_json_replaces_invalid_existing() {
+        let content = agent_mcp_json(Some("not json {"), 8790);
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["mcpServers"]["ump-dash"]["url"], "http://127.0.0.1:8790/mcp");
+    }
+
+    /// Provisioning writes both the `.mcp.json` and the run-app skill.
+    #[test]
+    fn provision_writes_mcp_json_and_skill() {
+        let wt = TempDir::new("wt");
+
+        provision_worktree_agent_files(wt.path(), 8790);
+
+        let mcp = fs::read_to_string(wt.path().join(".mcp.json")).unwrap();
+        assert!(mcp.contains("http://127.0.0.1:8790/mcp"));
+
+        let skill = fs::read_to_string(
+            wt.path().join(".claude/skills/run-app/SKILL.md"),
+        )
+        .unwrap();
+        assert!(skill.contains("name: run-app"), "skill frontmatter present");
+    }
+
+    /// An existing run-app skill is never clobbered (respects user edits).
+    #[test]
+    fn provision_does_not_clobber_existing_skill() {
+        let wt = TempDir::new("wt");
+        let skill_path = wt.path().join(".claude/skills/run-app/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, b"USER EDITED").unwrap();
+
+        provision_worktree_agent_files(wt.path(), 8790);
+
+        assert_eq!(
+            fs::read(&skill_path).unwrap(),
+            b"USER EDITED",
+            "an existing skill file must be left untouched"
+        );
+    }
+
+    /// With the MCP server disabled (`mcp_port` = None), no agent files are
+    /// written into the worktree.
+    #[test]
+    fn provision_skipped_when_mcp_disabled() {
+        let wt = TempDir::new("wt");
+        let adapter = GitWorktreeAdapter::new(vec![], None);
+
+        adapter.provision_agent_files(wt.path());
+
+        assert!(
+            !wt.path().join(".mcp.json").exists(),
+            ".mcp.json must not be written when MCP is disabled"
+        );
+        assert!(
+            !wt.path().join(".claude/skills/run-app/SKILL.md").exists(),
+            "run-app skill must not be written when MCP is disabled"
         );
     }
 }

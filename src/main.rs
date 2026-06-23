@@ -89,23 +89,23 @@ async fn main() -> color_eyre::Result<()> {
 
     // Embedded MCP server — lets worktree agents request actions over localhost
     // HTTP. Disabled via `mcp_enabled = false`. Identifies worktrees from the
-    // repo root, so it needs the resolved repo_root up front.
-    let mcp_server: Option<Arc<dyn McpServerPort>> = {
-        let enabled = config.as_ref().map(|c| c.mcp_enabled).unwrap_or(true);
-        if enabled {
-            let port = config.as_ref().map(|c| c.mcp_port).unwrap_or(8790);
-            let repo_root = config
-                .as_ref()
-                .and_then(|c| c.repo_root_path())
-                .unwrap_or_default();
-            Some(Arc::new(ump_dash::infra::mcp_server::RmcpAgentServer::new(
-                port,
-                repo_root,
-                devices.clone(),
-            )) as Arc<dyn McpServerPort>)
-        } else {
-            None
-        }
+    // repo root, so it needs the resolved repo_root up front. `mcp_enabled` /
+    // `mcp_port` are hoisted so the worktree adapter can seed new worktrees with
+    // a matching `.mcp.json` (see `GitWorktreeAdapter::new`).
+    let mcp_enabled = config.as_ref().map(|c| c.mcp_enabled).unwrap_or(true);
+    let mcp_port = config.as_ref().map(|c| c.mcp_port).unwrap_or(8790);
+    let mcp_server: Option<Arc<dyn McpServerPort>> = if mcp_enabled {
+        let repo_root = config
+            .as_ref()
+            .and_then(|c| c.repo_root_path())
+            .unwrap_or_default();
+        Some(Arc::new(ump_dash::infra::mcp_server::RmcpAgentServer::new(
+            mcp_port,
+            repo_root,
+            devices.clone(),
+        )) as Arc<dyn McpServerPort>)
+    } else {
+        None
     };
 
     let adapters = Adapters {
@@ -114,6 +114,7 @@ async fn main() -> color_eyre::Result<()> {
         port_probe: Arc::new(ump_dash::infra::port::LsofPortProbe),
         worktrees: Arc::new(ump_dash::infra::worktrees::GitWorktreeAdapter::new(
             seed_files,
+            if mcp_enabled { Some(mcp_port) } else { None },
         )),
         devices: devices.clone(),
         native_cache: Arc::new(ump_dash::infra::native_cache::LocalNativeCache::new(
