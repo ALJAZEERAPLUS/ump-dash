@@ -883,8 +883,9 @@ mod palette_resolution {
             other => panic!("git 'b' must produce GitCheckout with empty branch; got {other:?}"),
         }
         match handle_key(&state, key('c')) {
-            Some(Action::CommandRun(CommandSpec::GitCheckoutNew { branch })) => {
+            Some(Action::CommandRun(CommandSpec::GitCheckoutNew { branch, base })) => {
                 assert_eq!(branch, "");
+                assert_eq!(base, None);
             }
             other => panic!("git 'c' must produce GitCheckoutNew with empty branch; got {other:?}"),
         }
@@ -1315,6 +1316,118 @@ mod modal_dismissal {
         );
         let _effects = update(&mut state, Action::ModalCancel);
         assert!(state.modal_stack.modal.is_none());
+    }
+
+    #[test]
+    fn git_checkout_new_opens_branch_picker_before_name_input() {
+        let mut state = base_state();
+
+        let effects = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::GitCheckoutNew {
+                branch: String::new(),
+                base: None,
+            }),
+        );
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::ListRemoteBranches { .. }]),
+            "checkout-new should load branches before asking for the new branch name; got {effects:?}"
+        );
+        assert!(
+            state.modal_stack.modal.is_none(),
+            "branch picker should open only after BranchesLoaded arrives"
+        );
+    }
+
+    #[test]
+    fn branch_picker_confirm_for_checkout_new_prompts_for_new_branch_name() {
+        let mut state = base_state();
+        state.modal_stack.modal = Some(ModalState::BranchPicker {
+            branches: vec!["origin/main".into(), "origin/release".into()],
+            selected: 1,
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::BranchPickerConfirm);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.modal_stack.modal,
+            Some(ModalState::TextInput {
+                prompt: "New branch name:".into(),
+                buffer: String::new(),
+                pending_template: Box::new(CommandSpec::GitCheckoutNew {
+                    branch: String::new(),
+                    base: Some("origin/release".into()),
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn branch_picker_confirm_for_worktree_new_branch_still_prompts_for_worktree_branch_name() {
+        let mut state = base_state();
+        state.modal_stack.pending_new_branch_worktree = true;
+        state.modal_stack.modal = Some(ModalState::BranchPicker {
+            branches: vec!["origin/main".into(), "origin/release".into()],
+            selected: 0,
+            filter: String::new(),
+        });
+
+        let effects = update(&mut state, Action::BranchPickerConfirm);
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.modal_stack.pending_new_branch_base,
+            Some("origin/main".into())
+        );
+        assert_eq!(
+            state.modal_stack.modal,
+            Some(ModalState::TextInput {
+                prompt: "New branch name:".into(),
+                buffer: String::new(),
+                pending_template: Box::new(CommandSpec::GitPull),
+            })
+        );
+    }
+
+    #[test]
+    fn git_checkout_new_submit_dispatches_with_selected_base_branch() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state.modal_stack.modal = Some(ModalState::TextInput {
+            prompt: "New branch name:".into(),
+            buffer: "feature/next".into(),
+            pending_template: Box::new(CommandSpec::GitCheckoutNew {
+                branch: String::new(),
+                base: Some("origin/main".into()),
+            }),
+        });
+
+        let effects = update(&mut state, Action::ModalInputSubmit);
+
+        assert_eq!(effects.len(), 1);
+        assert!(
+            matches!(
+                &effects[0],
+                Effect::SpawnTask {
+                    spec: CommandSpec::GitCheckoutNew { branch, base },
+                    ..
+                } if branch == "feature/next" && base.as_deref() == Some("origin/main")
+            ),
+            "checkout-new submit should dispatch with selected base branch; got {effects:?}"
+        );
+
+        let wt_id = WorktreeId("wt-1".into());
+        let output = state
+            .worktrees
+            .get(&wt_id)
+            .expect("seeded worktree slice")
+            .output
+            .back()
+            .expect("dispatch output line");
+        assert_eq!(output, "$ git checkout -b feature/next origin/main");
     }
 
     #[test]

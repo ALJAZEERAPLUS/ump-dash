@@ -109,7 +109,8 @@ mod tests {
     fn git_checkout_new_triggers_full_refresh() {
         assert_eq!(
             refresh_needed(&CommandSpec::GitCheckoutNew {
-                branch: "feat".into()
+                branch: "feat".into(),
+                base: None,
             }),
             full_refresh()
         );

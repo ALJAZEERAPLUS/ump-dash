@@ -232,7 +232,8 @@ mod tests {
     fn git_checkout_new_label() {
         assert_eq!(
             task_short_label(&CommandSpec::GitCheckoutNew {
-                branch: "x".into()
+                branch: "x".into(),
+                base: None,
             }),
             "co -b"
         );
@@ -272,6 +273,7 @@ mod tests {
             },
             CommandSpec::GitCheckoutNew {
                 branch: "new-feat".into(),
+                base: None,
             },
             CommandSpec::RnCleanAndroid,
             CommandSpec::RnCleanCocoapods,

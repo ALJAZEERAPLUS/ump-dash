@@ -825,6 +825,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| {
             Some(Action::CommandRun(CommandSpec::GitCheckoutNew {
                 branch: String::new(),
+                base: None,
             }))
         },
         visible: |_| true,

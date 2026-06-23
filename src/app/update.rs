@@ -2040,6 +2040,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return effects;
             }
 
+            if matches!(
+                &spec,
+                CommandSpec::GitCheckoutNew { branch, base }
+                    if branch.is_empty() && base.is_none()
+            ) {
+                state.modal_stack.pending_new_branch_base = None;
+                state.modal_stack.pending_new_branch_worktree = false;
+                effects.push(Effect::ListRemoteBranches {
+                    repo_root: state.app_config.repo_root.clone(),
+                });
+                return effects;
+            }
+
             if spec.needs_text_input() {
                 let prompt = match &spec {
                     CommandSpec::GitRebase { .. } => "Rebase onto:".to_string(),
@@ -2512,8 +2525,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 CommandSpec::GitCheckout { .. } => {
                                     CommandSpec::GitCheckout { branch: buffer }
                                 }
-                                CommandSpec::GitCheckoutNew { .. } => {
-                                    CommandSpec::GitCheckoutNew { branch: buffer }
+                                CommandSpec::GitCheckoutNew { base, .. } => {
+                                    CommandSpec::GitCheckoutNew {
+                                        branch: buffer,
+                                        base,
+                                    }
                                 }
                                 CommandSpec::YarnJest { .. } => {
                                     CommandSpec::YarnJest { filter: buffer }
@@ -3752,6 +3768,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         // Phase 08-02: New-branch worktree creation flow
         Action::WorktreeAddNewBranch => {
             state.modal_stack.palette_mode = None;
+            state.modal_stack.pending_new_branch_base = None;
+            state.modal_stack.pending_new_branch_worktree = true;
             effects.push(Effect::ListRemoteBranches {
                 repo_root: state.app_config.repo_root.clone(),
             });
@@ -3858,14 +3876,28 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         .filter(|b| b.to_lowercase().contains(&lower))
                         .collect()
                 };
+                let is_worktree_flow = state.modal_stack.pending_new_branch_worktree;
                 if let Some(base_branch) = filtered.get(selected) {
-                    state.modal_stack.pending_new_branch_base = Some((*base_branch).clone());
-                    state.modal_stack.pending_new_branch_worktree = true;
-                    state.modal_stack.modal = Some(ModalState::TextInput {
-                        prompt: "New branch name:".to_string(),
-                        buffer: String::new(),
-                        pending_template: Box::new(CommandSpec::GitPull), // sentinel — not used
-                    });
+                    if is_worktree_flow {
+                        state.modal_stack.pending_new_branch_base = Some((*base_branch).clone());
+                        state.modal_stack.modal = Some(ModalState::TextInput {
+                            prompt: "New branch name:".to_string(),
+                            buffer: String::new(),
+                            pending_template: Box::new(CommandSpec::GitPull), // sentinel — not used
+                        });
+                    } else {
+                        state.modal_stack.pending_new_branch_base = None;
+                        state.modal_stack.modal = Some(ModalState::TextInput {
+                            prompt: "New branch name:".to_string(),
+                            buffer: String::new(),
+                            pending_template: Box::new(CommandSpec::GitCheckoutNew {
+                                branch: String::new(),
+                                base: Some((*base_branch).clone()),
+                            }),
+                        });
+                    }
+                } else if is_worktree_flow {
+                    state.modal_stack.pending_new_branch_worktree = false;
                 }
             }
         }

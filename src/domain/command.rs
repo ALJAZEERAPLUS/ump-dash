@@ -132,6 +132,7 @@ pub enum CommandSpec {
     },
     GitCheckoutNew {
         branch: String,
+        base: Option<String>,
     },
 
     // React Native clean commands (3 variants)
@@ -206,8 +207,12 @@ impl CommandSpec {
             CommandSpec::GitCheckout { branch } => {
                 vec!["git".into(), "checkout".into(), branch.clone()]
             }
-            CommandSpec::GitCheckoutNew { branch } => {
-                vec!["git".into(), "checkout".into(), "-b".into(), branch.clone()]
+            CommandSpec::GitCheckoutNew { branch, base } => {
+                let mut argv = vec!["git".into(), "checkout".into(), "-b".into(), branch.clone()];
+                if let Some(base) = base {
+                    argv.push(base.clone());
+                }
+                argv
             }
 
             CommandSpec::RnCleanAndroid => vec![
@@ -694,6 +699,7 @@ mod tests {
             },
             CommandSpec::GitCheckoutNew {
                 branch: "main".into(),
+                base: None,
             },
             CommandSpec::GitFetch,
         ];
@@ -844,6 +850,7 @@ mod tests {
             },
             CommandSpec::GitCheckoutNew {
                 branch: "main".into(),
+                base: None,
             },
             CommandSpec::GitFetch,
         ];
@@ -877,6 +884,7 @@ mod tests {
             },
             CommandSpec::GitCheckoutNew {
                 branch: "main".into(),
+                base: None,
             },
             CommandSpec::RnCleanAndroid,
             CommandSpec::RnCleanCocoapods,
