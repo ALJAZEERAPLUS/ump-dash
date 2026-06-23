@@ -161,12 +161,11 @@ pub struct ModalStackState {
     /// Worktree creation — set when w>w is pressed, consumed by ModalInputSubmit.
     pub pending_worktree_add: bool,
 
-    /// Selected base branch for the new-branch worktree flow.
-    /// Checkout-new stores its base branch in the pending `CommandSpec` template.
+    /// Selected base branch for the new-branch worktree flow
+    /// (set by BranchPickerConfirm, consumed by ModalInputSubmit).
     pub pending_new_branch_base: Option<String>,
 
-    /// True when the branch picker / pending TextInput modal is for a new-branch
-    /// worktree (not checkout-new or a regular worktree add).
+    /// True when the pending TextInput modal is for a new-branch worktree (not a regular worktree add).
     pub pending_new_branch_worktree: bool,
 
     /// Selected PR waiting for the review worktree-name text input to submit.
