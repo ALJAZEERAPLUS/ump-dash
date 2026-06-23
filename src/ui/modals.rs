@@ -21,11 +21,9 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState) {
             filter,
             ..
         } => render_device_picker_modal(f, devices, *selected, filter),
-        ModalState::RunVariantPicker {
-            selected,
-            cached_variants,
-            ..
-        } => render_run_variant_picker_modal(f, *selected, cached_variants),
+        ModalState::RunVariantPicker { selected, .. } => {
+            render_run_variant_picker_modal(f, *selected)
+        }
         ModalState::CleanToggle { options } => render_clean_modal(f, options),
         ModalState::SyncBeforeRun {
             run_command,
@@ -54,15 +52,7 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState) {
     }
 }
 
-fn run_variant_picker_label(variant: crate::domain::command::RunVariant, cached: bool) -> String {
-    if cached {
-        format!("{} (cached)", variant.label())
-    } else {
-        variant.label().to_string()
-    }
-}
-
-fn render_run_variant_picker_modal(f: &mut Frame, selected: usize, cached_variants: &[bool; 3]) {
+fn render_run_variant_picker_modal(f: &mut Frame, selected: usize) {
     let area = centered_rect(f.area(), 40, 35, 28, 6);
     let block = Block::default()
         .title(" Select Run Type ")
@@ -71,13 +61,7 @@ fn render_run_variant_picker_modal(f: &mut Frame, selected: usize, cached_varian
 
     let items: Vec<ListItem> = crate::domain::command::RunVariant::ALL
         .iter()
-        .enumerate()
-        .map(|(idx, variant)| {
-            ListItem::new(Line::from(run_variant_picker_label(
-                *variant,
-                cached_variants[idx],
-            )))
-        })
+        .map(|variant| ListItem::new(Line::from(variant.label())))
         .collect();
 
     let list = List::new(items)
@@ -584,19 +568,4 @@ fn centered_rect(area: Rect, percent_x: u16, percent_y: u16, min_w: u16, min_h: 
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::command::RunVariant;
-
-    #[test]
-    fn run_variant_picker_label_marks_cached_variants_only() {
-        assert_eq!(
-            run_variant_picker_label(RunVariant::Local, true),
-            "local (cached)"
-        );
-        assert_eq!(run_variant_picker_label(RunVariant::Dev, false), "dev");
-    }
 }

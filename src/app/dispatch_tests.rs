@@ -1327,8 +1327,6 @@ mod modal_dismissal {
                 variant: None,
             }),
             boot_android_emulator: false,
-            cache_launch_supported: false,
-            cached_variants: [false; 3],
         });
         assert_eq!(
             handle_key(&state, key_code(KeyCode::Esc)),
@@ -1662,7 +1660,7 @@ mod ump_run_dialog {
                 kind: DeviceKind::Ios,
                 request_id: None,
                 devices: vec![crate::domain::command::DeviceInfo {
-                    id: "SIM-1".into(),
+                    id: "3029FE94-EE71-4CF4-BC6A-4CE967633606".into(),
                     name: "iPhone 15 (Shutdown)".into(),
                 }],
             },
@@ -1670,10 +1668,7 @@ mod ump_run_dialog {
         assert!(effects.is_empty());
         assert!(matches!(
             state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [true, false, false],
-                ..
-            })
+            Some(ModalState::RunVariantPicker { .. })
         ));
 
         let effects = update(&mut state, Action::ModalRunVariantConfirm);
@@ -1683,7 +1678,7 @@ mod ump_run_dialog {
                 effect,
                 Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
                     if worktree_id == &WorktreeId("wt-1".into())
-                        && request.simulator_udid == "SIM-1"
+                        && request.simulator_udid == "3029FE94-EE71-4CF4-BC6A-4CE967633606"
                         && request.bundle_id == hit.metadata.bundle_id
                         && request.app_path == hit.artifact_path
                         && request.metro_port == 19001
@@ -1772,145 +1767,6 @@ mod ump_run_dialog {
     }
 
     #[test]
-    fn ios_run_variant_picker_preselects_cached_variant() {
-        let mut state = base_state();
-        seed_one_worktree(&mut state);
-        let mut hit = cached_ios_hit_fixture();
-        hit.metadata.variant = RunVariant::Dev.label().into();
-        state
-            .worktrees
-            .get_mut(&WorktreeId("wt-1".into()))
-            .expect("active slice should exist")
-            .ios_simulator_cache = IosSimulatorCacheState::Hit(Box::new(hit));
-
-        let _ = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::UmpRunIos {
-                device_id: String::new(),
-                variant: None,
-            }),
-        );
-        let effects = update(
-            &mut state,
-            Action::DevicesEnumerated {
-                kind: DeviceKind::Ios,
-                request_id: None,
-                devices: vec![crate::domain::command::DeviceInfo {
-                    id: "SIM-1".into(),
-                    name: "iPhone 15 (Shutdown)".into(),
-                }],
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                selected: 1,
-                cached_variants: [false, true, false],
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn android_run_variant_picker_preselects_cached_variant() {
-        let mut state = base_state();
-        seed_one_worktree(&mut state);
-        let mut hit = cached_android_hit_fixture();
-        hit.metadata.variant = RunVariant::Prod.label().into();
-        state
-            .worktrees
-            .get_mut(&WorktreeId("wt-1".into()))
-            .expect("active slice should exist")
-            .android_cache = AndroidCacheState::Hit(Box::new(hit));
-
-        let _ = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::UmpRunAndroid {
-                device_id: String::new(),
-                variant: None,
-            }),
-        );
-        let effects = update(
-            &mut state,
-            Action::DevicesEnumerated {
-                kind: DeviceKind::Android,
-                request_id: None,
-                devices: vec![crate::domain::command::DeviceInfo {
-                    id: "emulator-5554".into(),
-                    name: "Pixel 9".into(),
-                }],
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                selected: 2,
-                cached_variants: [false, false, true],
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn available_android_avd_run_variant_picker_shows_cached_variant() {
-        let mut state = base_state();
-        seed_one_worktree(&mut state);
-        let mut hit = cached_android_hit_fixture();
-        hit.metadata.variant = RunVariant::Local.label().into();
-        state
-            .worktrees
-            .get_mut(&WorktreeId("wt-1".into()))
-            .expect("active slice should exist")
-            .android_cache = AndroidCacheState::Hit(Box::new(hit));
-
-        let effects = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::UmpRunAndroid {
-                device_id: String::new(),
-                variant: None,
-            }),
-        );
-        assert!(matches!(
-            effects.as_slice(),
-            [Effect::LoadDevices {
-                kind: DeviceKind::Android,
-                request_id: None,
-            }]
-        ));
-
-        let effects = update(
-            &mut state,
-            Action::DevicesEnumerated {
-                kind: DeviceKind::Android,
-                request_id: None,
-                devices: vec![crate::domain::command::DeviceInfo {
-                    id: "avd:Pixel_9a".into(),
-                    name: "Pixel 9a (available)".into(),
-                }],
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                pending_template,
-                boot_android_emulator: true,
-                cache_launch_supported: true,
-                cached_variants: [true, false, false],
-                ..
-            }) if pending_template.as_ref() == &CommandSpec::UmpRunAndroid {
-                device_id: "avd:Pixel_9a".into(),
-                variant: None,
-            }
-        ));
-    }
-
-    #[test]
     fn cached_available_android_avd_launches_cached_apk_without_queued_normal_run() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -1929,8 +1785,6 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: true,
-            cache_launch_supported: true,
-            cached_variants: [true, false, false],
         });
 
         let effects = update(&mut state, Action::ModalRunVariantConfirm);
@@ -1960,60 +1814,6 @@ mod ump_run_dialog {
     }
 
     #[test]
-    fn android_cache_lookup_hit_updates_open_run_variant_picker_cached_flags() {
-        let mut state = base_state();
-        seed_one_worktree(&mut state);
-
-        let _ = update(&mut state, Action::EnterAndroidPalette);
-        let _ = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::UmpRunAndroid {
-                device_id: String::new(),
-                variant: None,
-            }),
-        );
-        let effects = update(
-            &mut state,
-            Action::DevicesEnumerated {
-                kind: DeviceKind::Android,
-                request_id: None,
-                devices: vec![crate::domain::command::DeviceInfo {
-                    id: "emulator-5554".into(),
-                    name: "Pixel 9".into(),
-                }],
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [false, false, false],
-                ..
-            })
-        ));
-
-        let mut hit = cached_android_hit_fixture();
-        hit.metadata.variant = RunVariant::Dev.label().into();
-        let effects = update(
-            &mut state,
-            Action::AndroidCacheLookupFinished {
-                worktree_id: WorktreeId("wt-1".into()),
-                result: Ok(AndroidCacheLookup::Hit(Box::new(hit))),
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [false, true, false],
-                ..
-            })
-        ));
-    }
-
-    #[test]
     fn stale_android_cache_lookup_miss_does_not_clear_existing_hit_or_picker_flag() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -2025,34 +1825,6 @@ mod ump_run_dialog {
             .get_mut(&WorktreeId("wt-1".into()))
             .expect("active slice should exist")
             .android_cache = AndroidCacheState::Hit(Box::new(hit.clone()));
-
-        let _ = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::UmpRunAndroid {
-                device_id: String::new(),
-                variant: None,
-            }),
-        );
-        let effects = update(
-            &mut state,
-            Action::DevicesEnumerated {
-                kind: DeviceKind::Android,
-                request_id: None,
-                devices: vec![crate::domain::command::DeviceInfo {
-                    id: "emulator-5554".into(),
-                    name: "Pixel 9".into(),
-                }],
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [true, false, false],
-                ..
-            })
-        ));
 
         let effects = update(
             &mut state,
@@ -2072,13 +1844,6 @@ mod ump_run_dialog {
                 .hit(),
             Some(&hit)
         );
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [true, false, false],
-                ..
-            })
-        ));
     }
 
     #[test]
@@ -2092,34 +1857,6 @@ mod ump_run_dialog {
             .get_mut(&WorktreeId("wt-1".into()))
             .expect("active slice should exist")
             .android_cache = AndroidCacheState::Hit(Box::new(hit.clone()));
-
-        let _ = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::UmpRunAndroid {
-                device_id: String::new(),
-                variant: None,
-            }),
-        );
-        let effects = update(
-            &mut state,
-            Action::DevicesEnumerated {
-                kind: DeviceKind::Android,
-                request_id: None,
-                devices: vec![crate::domain::command::DeviceInfo {
-                    id: "emulator-5554".into(),
-                    name: "Pixel 9".into(),
-                }],
-            },
-        );
-
-        assert!(effects.is_empty());
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [true, false, false],
-                ..
-            })
-        ));
 
         let effects = update(
             &mut state,
@@ -2139,13 +1876,6 @@ mod ump_run_dialog {
                 .hit(),
             Some(&hit)
         );
-        assert!(matches!(
-            state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [true, false, false],
-                ..
-            })
-        ));
     }
 
     #[test]
@@ -2182,10 +1912,7 @@ mod ump_run_dialog {
         assert!(effects.is_empty());
         assert!(matches!(
             state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [false, false, false],
-                ..
-            })
+            Some(ModalState::RunVariantPicker { .. })
         ));
 
         let effects = update(&mut state, Action::ModalRunVariantConfirm);
@@ -2252,10 +1979,7 @@ mod ump_run_dialog {
         assert!(effects.is_empty());
         assert!(matches!(
             state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [true, false, false],
-                ..
-            })
+            Some(ModalState::RunVariantPicker { .. })
         ));
 
         let effects = update(&mut state, Action::ModalRunVariantConfirm);
@@ -2317,10 +2041,7 @@ mod ump_run_dialog {
         assert!(effects.is_empty());
         assert!(matches!(
             state.modal_stack.modal,
-            Some(ModalState::RunVariantPicker {
-                cached_variants: [false, true, false],
-                ..
-            })
+            Some(ModalState::RunVariantPicker { .. })
         ));
         if let Some(ModalState::RunVariantPicker { selected, .. }) = &mut state.modal_stack.modal {
             *selected = 0;
@@ -3348,8 +3069,6 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: false,
-            cache_launch_supported: false,
-            cached_variants: [false; 3],
         });
 
         let effects = update(&mut state, Action::ModalRunVariantConfirm);
@@ -3383,8 +3102,6 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: false,
-            cache_launch_supported: false,
-            cached_variants: [false; 3],
         });
 
         let _ = update(&mut state, Action::ModalRunVariantPrev);
@@ -3411,8 +3128,6 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: false,
-            cache_launch_supported: false,
-            cached_variants: [false; 3],
         });
 
         let _ = update(&mut state, Action::ModalRunVariantConfirm);
@@ -3420,13 +3135,10 @@ mod ump_run_dialog {
 
         assert_eq!(
             handle_key(&state, key('R')),
-            Some(Action::CommandRunWithCache {
-                spec: CommandSpec::UmpRunAndroid {
-                    device_id: "emulator-5554".into(),
-                    variant: Some(RunVariant::Dev),
-                },
-                cache_launch_supported: false,
-            })
+            Some(Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: "emulator-5554".into(),
+                variant: Some(RunVariant::Dev),
+            }))
         );
     }
 
@@ -3441,8 +3153,6 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: true,
-            cache_launch_supported: true,
-            cached_variants: [false; 3],
         });
 
         let effects = update(&mut state, Action::ModalRunVariantConfirm);
@@ -3488,8 +3198,6 @@ mod ump_run_dialog {
                 variant: None,
             }),
             boot_android_emulator: false,
-            cache_launch_supported: false,
-            cached_variants: [false; 3],
         });
 
         let _ = update(&mut state, Action::ModalRunVariantConfirm);
@@ -3502,13 +3210,10 @@ mod ump_run_dialog {
         state.modal_stack.palette_mode = Some(PaletteMode::Ios);
         assert_eq!(
             handle_key(&state, key('R')),
-            Some(Action::CommandRunWithCache {
-                spec: CommandSpec::UmpRunIos {
-                    device_id: "ios-wt-a".into(),
-                    variant: Some(RunVariant::Prod),
-                },
-                cache_launch_supported: false,
-            })
+            Some(Action::CommandRun(CommandSpec::UmpRunIos {
+                device_id: "ios-wt-a".into(),
+                variant: Some(RunVariant::Prod),
+            }))
         );
     }
 
@@ -3525,22 +3230,18 @@ mod ump_run_dialog {
             .expect("active slice should exist");
         slice.ios_simulator_cache = IosSimulatorCacheState::Hit(Box::new(hit.clone()));
         slice.last_ios_run = Some(crate::domain::worktree_slice::LastRunConfig {
-            device_id: "SIM-1".into(),
+            device_id: "3029FE94-EE71-4CF4-BC6A-4CE967633606".into(),
             variant: RunVariant::Local,
-            cache_launch_supported: true,
         });
         state.modal_stack.palette_mode = Some(PaletteMode::Ios);
 
         let action = handle_key(&state, key('R')).expect("repeat should resolve");
         assert_eq!(
             action,
-            Action::CommandRunWithCache {
-                spec: CommandSpec::UmpRunIos {
-                    device_id: "SIM-1".into(),
-                    variant: Some(RunVariant::Local),
-                },
-                cache_launch_supported: true,
-            }
+            Action::CommandRun(CommandSpec::UmpRunIos {
+                device_id: "3029FE94-EE71-4CF4-BC6A-4CE967633606".into(),
+                variant: Some(RunVariant::Local),
+            })
         );
 
         let effects = update(&mut state, action);
@@ -3550,7 +3251,7 @@ mod ump_run_dialog {
                 effect,
                 Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
                     if worktree_id == &WorktreeId("wt-1".into())
-                        && request.simulator_udid == "SIM-1"
+                        && request.simulator_udid == "3029FE94-EE71-4CF4-BC6A-4CE967633606"
                         && request.app_path == hit.artifact_path
                         && request.metro_port == 19001
             )),
@@ -5310,5 +5011,238 @@ mod agent_requests {
         );
         assert!(matches!(outcome(&effects), AgentOutcome::Error { .. }));
         assert!(spawned_specs(&effects).is_empty());
+    }
+
+    // The bug this refactor fixes: an agent run must use an available build
+    // cache, exactly like the UI — the dashboard decides, the agent just runs.
+    const SIM_UDID: &str = "3029FE94-EE71-4CF4-BC6A-4CE967633606";
+
+    #[test]
+    fn agent_run_ios_uses_cache_when_available() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 19001);
+        let mut hit = cached_ios_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .ios_simulator_cache = IosSimulatorCacheState::Hit(Box::new(hit.clone()));
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunIos {
+                    device_id: SIM_UDID.into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.simulator_udid == SIM_UDID
+                        && request.metro_port == 19001
+            )),
+            "agent run must install the cached artifact, not cold-build; got {effects:?}"
+        );
+        assert!(
+            spawned_specs(&effects).is_empty(),
+            "cached launch must not spawn a cold UmpRun build task"
+        );
+        assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
+    }
+
+    #[test]
+    fn agent_run_android_uses_cache_when_available() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 19002);
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .android_cache = AndroidCacheState::Hit(Box::new(hit));
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunAndroid {
+                    device_id: "emulator-5554".into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::InstallAndLaunchCachedAndroid { worktree_id, .. }
+                    if worktree_id == &WorktreeId("wt-1".into())
+            )),
+            "agent android run must install the cached apk; got {effects:?}"
+        );
+        assert!(spawned_specs(&effects).is_empty());
+    }
+
+    #[test]
+    fn agent_run_ios_without_variant_uses_cache() {
+        // An agent that "just runs" (no variant) must still use the build cache:
+        // the variant is resolved from the cache hit, matching the UI which
+        // always supplies a variant via its run-variant picker.
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 19001);
+        let mut hit = cached_ios_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .ios_simulator_cache = IosSimulatorCacheState::Hit(Box::new(hit));
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunIos {
+                    device_id: SIM_UDID.into(),
+                    variant: None,
+                },
+            ),
+        );
+
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::InstallAndLaunchCachedIosSimulator { worktree_id, request }
+                    if worktree_id == &WorktreeId("wt-1".into())
+                        && request.simulator_udid == SIM_UDID
+                        && request.metro_port == 19001
+            )),
+            "variant-less agent run must install the cached artifact, not cold-build; got {effects:?}"
+        );
+        assert!(
+            spawned_specs(&effects).is_empty(),
+            "cached launch must not spawn a cold UmpRun build task"
+        );
+        assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
+    }
+
+    #[test]
+    fn agent_run_android_without_variant_uses_cache() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 19002);
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .android_cache = AndroidCacheState::Hit(Box::new(hit));
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunAndroid {
+                    device_id: "emulator-5554".into(),
+                    variant: None,
+                },
+            ),
+        );
+
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::InstallAndLaunchCachedAndroid { worktree_id, .. }
+                    if worktree_id == &WorktreeId("wt-1".into())
+            )),
+            "variant-less agent android run must install the cached apk; got {effects:?}"
+        );
+        assert!(
+            spawned_specs(&effects).is_empty(),
+            "cached launch must not spawn a cold UmpRun build task"
+        );
+        assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
+    }
+
+    #[test]
+    fn agent_run_ios_on_physical_device_does_not_use_simulator_cache() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        register_ready_metro(&mut state, "wt-1", 19003);
+        let mut hit = cached_ios_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .ios_simulator_cache = IosSimulatorCacheState::Hit(Box::new(hit));
+
+        // A physical device UDID is not a canonical UUID → no cached launch.
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunIos {
+                    device_id: "00008120-001A2D3E1234567E".into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::InstallAndLaunchCachedIosSimulator { .. })),
+            "physical iOS device must not install a simulator cache artifact; got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn agent_run_android_cold_boots_stopped_avd() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        // Fresh deps, no cache, no metro.
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::RunAndroid {
+                    device_id: "avd:Pixel_9a".into(),
+                    variant: Some(RunVariant::Local),
+                },
+            ),
+        );
+
+        // First dispatched step boots the emulator; the run waits behind it.
+        let first = spawned_specs(&effects);
+        assert!(
+            matches!(
+                first.first(),
+                Some(CommandSpec::ShellCommand { command }) if command.contains("Pixel_9a")
+            ),
+            "stopped avd must be booted first; got {first:?}"
+        );
+        assert!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .map(|s| s.queue.iter().any(|c| matches!(c, CommandSpec::UmpRunAndroid { .. })))
+                .unwrap_or(false),
+            "the UmpRun must be queued behind the boot"
+        );
+        assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
     }
 }

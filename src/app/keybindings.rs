@@ -1506,24 +1506,22 @@ fn has_last_ios_run(state: &AppState) -> bool {
 
 fn repeat_last_android_run(state: &AppState) -> Option<Action> {
     Some(
-        last_android_run(state).map_or(Action::ModalCancel, |config| Action::CommandRunWithCache {
-            spec: CommandSpec::UmpRunAndroid {
+        last_android_run(state).map_or(Action::ModalCancel, |config| {
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
                 device_id: config.device_id.clone(),
                 variant: Some(config.variant),
-            },
-            cache_launch_supported: config.cache_launch_supported,
+            })
         }),
     )
 }
 
 fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
     Some(
-        last_ios_run(state).map_or(Action::ModalCancel, |config| Action::CommandRunWithCache {
-            spec: CommandSpec::UmpRunIos {
+        last_ios_run(state).map_or(Action::ModalCancel, |config| {
+            Action::CommandRun(CommandSpec::UmpRunIos {
                 device_id: config.device_id.clone(),
                 variant: Some(config.variant),
-            },
-            cache_launch_supported: config.cache_launch_supported,
+            })
         }),
     )
 }

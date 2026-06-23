@@ -53,10 +53,6 @@ pub enum Action {
 
     // Phase 3: Command lifecycle
     CommandRun(crate::domain::command::CommandSpec), // dispatched when command is confirmed/ready
-    CommandRunWithCache {
-        spec: crate::domain::command::CommandSpec,
-        cache_launch_supported: bool,
-    },
     /// Phase 14 / D-08: routed by `task_id` (NOT by `active_worktree_id`).
     /// Late stdout from a cancelled task lands here with no matching slice;
     /// the handler in `update.rs` silently drops it. Protects against the fast

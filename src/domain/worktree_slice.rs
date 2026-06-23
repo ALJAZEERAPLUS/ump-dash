@@ -26,11 +26,12 @@ use crate::domain::worktree::WorktreeId;
 use std::collections::VecDeque;
 
 /// Last fully selected UMP run config for one platform in one worktree.
+/// Used by the "repeat last run" keybinding; cache use is decided at run time by
+/// `dispatch_run`, so no cache flag is stored here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastRunConfig {
     pub device_id: String,
     pub variant: RunVariant,
-    pub cache_launch_supported: bool,
 }
 
 /// Per-worktree state. One slice per `WorktreeId` lives in

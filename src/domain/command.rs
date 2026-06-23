@@ -504,12 +504,12 @@ pub enum ModalState {
         filter: String,
     },
     /// User picked the target; now choose UMP run type in local/dev/prod order.
+    /// Cache use is decided downstream by `dispatch_run`, so the picker carries
+    /// no cache flags.
     RunVariantPicker {
         selected: usize,
         pending_template: Box<CommandSpec>,
         boot_android_emulator: bool,
-        cache_launch_supported: bool,
-        cached_variants: [bool; 3],
     },
     /// Clean submenu with toggleable options. User checks items then confirms.
     CleanToggle { options: CleanOptions },

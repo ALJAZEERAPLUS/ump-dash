@@ -125,9 +125,13 @@ struct LogsArgs {
 struct RunArgs {
     /// Absolute path of your worktree (your current working directory).
     worktree: String,
-    /// Target device/simulator id (use `list_devices` to enumerate).
+    /// Target device/simulator id. Pass the `id` field from `list_devices`
+    /// (the simulator/emulator UDID or device serial) — NOT the human-readable
+    /// `name`. The build cache (fast prebuilt launch) only applies when this is
+    /// a simulator UDID.
     device_id: String,
-    /// Build variant: "local" (default), "dev", or "prod".
+    /// Build variant: "local" (default), "dev", or "prod". A Local cache hit is
+    /// used automatically for a fast prebuilt launch.
     variant: Option<String>,
 }
 
@@ -205,18 +209,20 @@ impl McpToolServer {
 #[tool_router]
 impl McpToolServer {
     #[tool(
-        description = "Pre-flight status of your worktree: dependency staleness, metro state + port, the running task, and the queue."
+        description = "Optional diagnostic: pre-flight status (dependency staleness, metro state + port, running task, queue). You do NOT need this before run_ios/run_android — they handle deps/metro/cache themselves."
     )]
     async fn get_worktree_status(&self, Parameters(a): Parameters<WorktreeArgs>) -> String {
         json(&self.gateway.request(a.worktree, AgentRequest::GetWorktreeStatus).await)
     }
 
-    #[tool(description = "The running task and queued specs for your worktree.")]
+    #[tool(
+        description = "Running task + queue for a cold build. NOTE: a cached (prebuilt) launch is instant and has NO task — it will not appear here; check get_logs for its result instead."
+    )]
     async fn get_task_status(&self, Parameters(a): Parameters<WorktreeArgs>) -> String {
         json(&self.gateway.request(a.worktree, AgentRequest::GetTaskStatus).await)
     }
 
-    #[tool(description = "Tail of the command output for your worktree.")]
+    #[tool(description = "Tail of the command output for your worktree (includes cached-launch results, e.g. '[cached-ios] installed and launched cached app').")]
     async fn get_logs(&self, Parameters(a): Parameters<LogsArgs>) -> String {
         json(
             &self
@@ -232,14 +238,14 @@ impl McpToolServer {
     }
 
     #[tool(
-        description = "Start Metro for your worktree (front-loads `yarn install` if deps are stale). Returns the port Rozenite can connect to."
+        description = "Optional: start Metro standalone (front-loads `yarn install` if stale); returns the Rozenite port. Rarely needed — run_ios/run_android start Metro for you."
     )]
     async fn start_metro(&self, Parameters(a): Parameters<WorktreeArgs>) -> String {
         json(&self.gateway.request(a.worktree, AgentRequest::StartMetro).await)
     }
 
     #[tool(
-        description = "Run the app on an iOS simulator/device. Ensures deps are synced and Metro is running first. device_id is required (use list_devices)."
+        description = "Run the app on an iOS simulator. Just call this — it syncs deps, starts Metro, and uses the prebuilt cache automatically; do NOT call start_metro/sync_deps/get_worktree_status first. device_id must be the `id` from list_devices (the simulator UDID), not the name. variant defaults to local. On a cache hit the launch is instant with no task to poll — its result shows in get_logs."
     )]
     async fn run_ios(&self, Parameters(a): Parameters<RunArgs>) -> String {
         json(
@@ -257,7 +263,7 @@ impl McpToolServer {
     }
 
     #[tool(
-        description = "Run the app on an Android emulator/device. Ensures deps are synced and Metro is running first. device_id is required (use list_devices)."
+        description = "Run the app on an Android emulator/device. Just call this — it syncs deps, starts Metro, boots a stopped emulator, and uses the prebuilt cache automatically; do NOT call start_metro/sync_deps/get_worktree_status first. device_id must be the `id` from list_devices (the emulator/device serial), not the name. variant defaults to local. On a cache hit the launch is instant with no task to poll — its result shows in get_logs."
     )]
     async fn run_android(&self, Parameters(a): Parameters<RunArgs>) -> String {
         json(
@@ -418,10 +424,13 @@ impl ServerHandler for McpToolServer {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
         info.instructions = Some(
             "Dashboard control for your git worktree. Pass your absolute worktree path \
-             (your cwd) as `worktree` on every call. Start with get_worktree_status to see \
-             dependency/metro state, then start_metro / run_ios / run_android / build. \
-             Action tools return immediately with a lock/block decision and a task_id; poll \
-             get_task_status / get_logs for completion. Destructive tools require confirm=true."
+             (your cwd) as `worktree` on every call. To run the app, just call run_ios or \
+             run_android with a device_id from list_devices — nothing else. The dashboard \
+             automatically syncs dependencies, starts Metro, and uses the build cache; you do \
+             NOT need to check status, start Metro, or sync deps first. Action tools return \
+             immediately with a decision + task_id; poll get_task_status / get_logs for \
+             completion. start_metro, sync_deps, build, and get_worktree_status are optional \
+             diagnostics that are rarely needed. Destructive tools require confirm=true."
                 .into(),
         );
         info

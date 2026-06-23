@@ -955,13 +955,12 @@ fn handle_agent_request(
                     message: "device_id required (use list_devices to enumerate targets)".into(),
                 };
             }
-            let deps = agent_deps_for(state, wt_id, true);
-            let seq = Recipe::SyncThenRun(CommandSpec::UmpRunIos {
-                device_id,
-                variant,
-            })
-            .expand(&deps);
-            agent_enqueue(state, effects, wt_id, seq, false)
+            dispatch_run(
+                state,
+                effects,
+                wt_id,
+                CommandSpec::UmpRunIos { device_id, variant },
+            )
         }
         AgentRequest::RunAndroid {
             device_id,
@@ -972,13 +971,12 @@ fn handle_agent_request(
                     message: "device_id required (use list_devices to enumerate targets)".into(),
                 };
             }
-            let deps = agent_deps_for(state, wt_id, false);
-            let seq = Recipe::SyncThenRun(CommandSpec::UmpRunAndroid {
-                device_id,
-                variant,
-            })
-            .expand(&deps);
-            agent_enqueue(state, effects, wt_id, seq, false)
+            dispatch_run(
+                state,
+                effects,
+                wt_id,
+                CommandSpec::UmpRunAndroid { device_id, variant },
+            )
         }
     }
 }
@@ -1027,14 +1025,10 @@ fn command_with_run_variant(spec: CommandSpec, variant: RunVariant) -> CommandSp
     }
 }
 
-fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec, cache_launch_supported: bool) {
-    let Some(wt_id) = active_worktree_id(state) else {
-        return;
-    };
-
+fn remember_ump_run_config(state: &mut AppState, wt_id: &WorktreeId, spec: &CommandSpec) {
     let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
         crate::domain::worktree_slice::WorktreeSlice {
-            id: wt_id,
+            id: wt_id.clone(),
             ..Default::default()
         }
     });
@@ -1044,53 +1038,41 @@ fn remember_ump_run_config(state: &mut AppState, spec: &CommandSpec, cache_launc
             device_id,
             variant: Some(variant),
         } => {
-            let cache_launch_supported = cache_launch_supported
-                || slice.last_android_run.as_ref().is_some_and(|config| {
-                    config.device_id == *device_id
-                        && config.variant == *variant
-                        && config.cache_launch_supported
-                });
             slice.last_android_run = Some(LastRunConfig {
                 device_id: device_id.clone(),
                 variant: *variant,
-                cache_launch_supported,
             });
         }
         CommandSpec::UmpRunIos {
             device_id,
             variant: Some(variant),
         } => {
-            let cache_launch_supported = cache_launch_supported
-                || slice.last_ios_run.as_ref().is_some_and(|config| {
-                    config.device_id == *device_id
-                        && config.variant == *variant
-                        && config.cache_launch_supported
-                });
             slice.last_ios_run = Some(LastRunConfig {
                 device_id: device_id.clone(),
                 variant: *variant,
-                cache_launch_supported,
             });
         }
         _ => {}
     }
 }
 
-fn ios_device_supports_cached_launch(device: &crate::domain::command::DeviceInfo) -> bool {
-    device.name.ends_with(" (Booted)")
-        || device.name.ends_with(" (Shutdown)")
-        || device.name.ends_with(" (Creating)")
-        || device.name.ends_with(" (Booting)")
-        || device.name.ends_with(" (Shutting Down)")
-        || device.name.ends_with(" (Unknown)")
+/// Heuristic: a simctl simulator UDID is a canonical UUID (5 hex groups of
+/// lengths 8-4-4-4-12 joined by dashes). Physical iOS UDIDs and android serials
+/// are not. Cached launch is only valid for simulators — the cached artifact is
+/// a simulator `.app` — so this gates the iOS cache path.
+fn is_ios_simulator_udid(device_id: &str) -> bool {
+    let groups: Vec<&str> = device_id.split('-').collect();
+    groups.len() == 5
+        && groups.iter().map(|g| g.len()).eq([8usize, 4, 4, 4, 12])
+        && device_id.chars().all(|c| c == '-' || c.is_ascii_hexdigit())
 }
 
-fn selected_ios_cache_hit_for_variant(
+fn ios_cache_hit_for_variant(
     state: &AppState,
+    wt_id: &WorktreeId,
     variant: RunVariant,
 ) -> Option<crate::domain::native_cache::IosSimulatorCacheHit> {
-    let id = active_worktree_id(state)?;
-    let selected_cache = &state.worktrees.get(&id)?.ios_simulator_cache;
+    let selected_cache = &state.worktrees.get(wt_id)?.ios_simulator_cache;
     if let Some(hit) = selected_cache.hit() {
         return (hit.metadata.variant == variant.label()).then(|| hit.clone());
     }
@@ -1110,12 +1092,12 @@ fn selected_ios_cache_hit_for_variant(
         .cloned()
 }
 
-fn selected_android_cache_hit_for_variant(
+fn android_cache_hit_for_variant(
     state: &AppState,
+    wt_id: &WorktreeId,
     variant: RunVariant,
 ) -> Option<crate::domain::native_cache::AndroidCacheHit> {
-    let id = active_worktree_id(state)?;
-    let selected_cache = &state.worktrees.get(&id)?.android_cache;
+    let selected_cache = &state.worktrees.get(wt_id)?.android_cache;
     if let Some(hit) = selected_cache.hit() {
         return android_cache_variant_matches(&hit.metadata.variant, variant).then(|| hit.clone());
     }
@@ -1166,86 +1148,37 @@ fn android_cache_hit_variant(
         .unwrap_or(RunVariant::Local)
 }
 
-fn cached_variants_for_run_picker(
-    state: &AppState,
-    spec: &CommandSpec,
-    cache_launch_supported: bool,
-) -> [bool; 3] {
-    if !cache_launch_supported {
-        return [false; 3];
-    }
-
-    let mut cached = [false; 3];
-    for (idx, variant) in RunVariant::ALL.iter().enumerate() {
-        cached[idx] = match spec {
-            CommandSpec::UmpRunIos { .. } => {
-                selected_ios_cache_hit_for_variant(state, *variant).is_some()
-            }
-            CommandSpec::UmpRunAndroid { .. } => {
-                selected_android_cache_hit_for_variant(state, *variant).is_some()
-            }
-            _ => false,
-        };
-    }
-    cached
-}
-
-fn refresh_open_run_variant_picker_cache_flags<F>(state: &mut AppState, matches_spec: F)
-where
-    F: FnOnce(&CommandSpec) -> bool,
-{
-    let Some(ModalState::RunVariantPicker {
-        pending_template,
-        cache_launch_supported,
-        ..
-    }) = state.modal_stack.modal.as_ref()
-    else {
-        return;
-    };
-    if !*cache_launch_supported {
-        return;
-    }
-
-    let spec = pending_template.as_ref().clone();
-    if !matches_spec(&spec) {
-        return;
-    }
-
-    let refreshed = cached_variants_for_run_picker(state, &spec, *cache_launch_supported);
-    if let Some(ModalState::RunVariantPicker {
-        cached_variants, ..
-    }) = state.modal_stack.modal.as_mut()
-    {
-        *cached_variants = refreshed;
-    }
-}
-
-fn try_begin_cached_run_for_spec(
+/// The dashboard's cache decision, worktree-targeted. If a prebuilt artifact
+/// matches this run (simulator/emulator + variant), start a cached launch
+/// (install + metro, skipping sync/build) and return true. Shared by the
+/// keyboard run flow and the MCP agent run path so both transparently use the
+/// cache — the caller just asks to run; this decides whether the cache applies.
+fn try_cached_launch(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
+    wt_id: &WorktreeId,
     spec: &CommandSpec,
-    cache_launch_supported: bool,
 ) -> bool {
-    if !cache_launch_supported {
-        return false;
-    }
-    let Some((worktree_id, worktree_path)) = active_worktree_snapshot(state) else {
+    let Some(worktree_path) = worktree_snapshot_for_id(state, wt_id) else {
         return false;
     };
-
     match spec {
         CommandSpec::UmpRunIos {
             device_id,
             variant: Some(variant),
         } => {
-            if let Some(cache_hit) = selected_ios_cache_hit_for_variant(state, *variant) {
+            // Cached iOS artifacts are simulator `.app`s — only valid for sims.
+            if !is_ios_simulator_udid(device_id) {
+                return false;
+            }
+            if let Some(hit) = ios_cache_hit_for_variant(state, wt_id, *variant) {
                 begin_cached_ios_launch(
                     state,
                     effects,
-                    worktree_id,
+                    wt_id.clone(),
                     worktree_path,
                     device_id.clone(),
-                    cache_hit,
+                    hit,
                 );
                 true
             } else {
@@ -1256,14 +1189,14 @@ fn try_begin_cached_run_for_spec(
             device_id,
             variant: Some(variant),
         } => {
-            if let Some(cache_hit) = selected_android_cache_hit_for_variant(state, *variant) {
+            if let Some(hit) = android_cache_hit_for_variant(state, wt_id, *variant) {
                 begin_cached_android_launch(
                     state,
                     effects,
-                    worktree_id,
+                    wt_id.clone(),
                     worktree_path,
                     device_id.clone(),
-                    cache_hit,
+                    hit,
                 );
                 true
             } else {
@@ -1274,36 +1207,91 @@ fn try_begin_cached_run_for_spec(
     }
 }
 
+/// Resolve a missing run variant for an agent run. Agents may omit the variant
+/// ("just run it"); the UI's run-variant picker always supplies one, and the
+/// cache match requires `variant: Some`. Default to `RunVariant::Local` — the
+/// common case — so a Local cache hit still launches the prebuilt artifact via
+/// `try_cached_launch`. Specs that already carry a variant pass through
+/// unchanged (the keyboard path never reaches here).
+fn resolve_agent_run_variant(spec: CommandSpec) -> CommandSpec {
+    match spec {
+        CommandSpec::UmpRunIos {
+            variant: None,
+            device_id,
+        } => CommandSpec::UmpRunIos {
+            device_id,
+            variant: Some(RunVariant::Local),
+        },
+        CommandSpec::UmpRunAndroid {
+            variant: None,
+            device_id,
+        } => CommandSpec::UmpRunAndroid {
+            device_id,
+            variant: Some(RunVariant::Local),
+        },
+        other => other,
+    }
+}
+
+/// MCP agent run entry. Same cache decision as the keyboard (`try_cached_launch`),
+/// then an auto-sync cold run — agents can't answer a sync modal — booting a
+/// stopped `avd:` emulator first. Returns the lock/block outcome for the reply.
+fn dispatch_run(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    wt_id: &WorktreeId,
+    spec: CommandSpec,
+) -> AgentOutcome {
+    // An agent may omit the variant ("just run it"). The UI's run-variant picker
+    // always supplies one, so the cache match (variant: Some) only fires there.
+    // Default a missing variant to Local so the agent path uses the cache the
+    // same way the UI does.
+    let spec = resolve_agent_run_variant(spec);
+    if try_cached_launch(state, effects, wt_id, &spec) {
+        return AgentOutcome::Accepted {
+            task_id: 0,
+            expanded: vec![format!(
+                "cached launch (instant prebuilt install, no task to poll — see get_logs): {}",
+                spec.label()
+            )],
+        };
+    }
+    let (is_ios, device_id) = match &spec {
+        CommandSpec::UmpRunIos { device_id, .. } => (true, device_id.clone()),
+        CommandSpec::UmpRunAndroid { device_id, .. } => (false, device_id.clone()),
+        _ => (false, String::new()),
+    };
+    let deps = agent_deps_for(state, wt_id, is_ios);
+    let mut seq = Recipe::SyncThenRun(spec).expand(&deps);
+    // Cold-boot a stopped emulator before the run (parity with the UI).
+    if !is_ios && let Some(avd) = android_avd_name(&device_id) {
+        let boot = CommandSpec::ShellCommand {
+            command: android_boot_avd_command(avd),
+        };
+        let run_idx = seq.len().saturating_sub(1);
+        seq.insert(run_idx, boot);
+    }
+    agent_enqueue(state, effects, wt_id, seq, false)
+}
+
 fn open_run_variant_picker_or_dispatch(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
     spec: CommandSpec,
     boot_android_emulator: bool,
-    cache_launch_supported: bool,
 ) {
     if spec.needs_run_variant_selection() {
-        let cached_variants = cached_variants_for_run_picker(state, &spec, cache_launch_supported);
-        let selected = cached_variants
-            .iter()
-            .position(|cached| *cached)
-            .unwrap_or(0);
         state.modal_stack.modal = Some(ModalState::RunVariantPicker {
-            selected,
+            selected: 0,
             pending_template: Box::new(spec),
             boot_android_emulator,
-            cache_launch_supported,
-            cached_variants,
         });
         return;
     }
 
-    effects.extend(update(
-        state,
-        Action::CommandRunWithCache {
-            spec,
-            cache_launch_supported,
-        },
-    ));
+    // Variant already known → dispatch as a normal run; the cache decision now
+    // happens inside the CommandRun handler (try_cached_launch).
+    effects.extend(update(state, Action::CommandRun(spec)));
 }
 
 fn cached_ios_launch_request(
@@ -1892,22 +1880,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Command dispatch ---
-        Action::CommandRunWithCache {
-            spec,
-            cache_launch_supported,
-        } => {
-            state.modal_stack.palette_mode = None;
-            remember_ump_run_config(state, &spec, cache_launch_supported);
-            if try_begin_cached_run_for_spec(state, &mut effects, &spec, cache_launch_supported) {
-                return effects;
-            }
-            effects.extend(update(state, Action::CommandRun(spec)));
-        }
-
         Action::CommandRun(spec) => {
             // Clear palette mode whenever a command is dispatched
             state.modal_stack.palette_mode = None;
-            remember_ump_run_config(state, &spec, false);
+            if let Some(wt) = active_worktree_id(state) {
+                remember_ump_run_config(state, &wt, &spec);
+            }
 
             // Get selected worktree (needed for all branches)
             let wt_branch = if !state.worktree_browser.worktrees.is_empty() {
@@ -1945,9 +1923,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         selected: 0,
                         pending_template: Box::new(spec),
                         boot_android_emulator: false,
-                        cache_launch_supported: false,
-                        cached_variants: [false; 3],
                     });
+                    return effects;
+                }
+
+                // Cache decision (dashboard-owned): a prebuilt artifact for this
+                // fully-specified run short-circuits the cold sync+build. Same
+                // decision the agent path makes via dispatch_run.
+                if let Some(wt_id) = active_worktree_id(state)
+                    && try_cached_launch(state, &mut effects, &wt_id, &spec)
+                {
                     return effects;
                 }
             }
@@ -2658,33 +2643,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         && matches!(pending_template.as_ref(), CommandSpec::UmpRunAndroid { .. })
                     {
                         let real_spec = command_with_device(*pending_template, device_id);
-                        open_run_variant_picker_or_dispatch(
-                            state,
-                            &mut effects,
-                            real_spec,
-                            true,
-                            true,
-                        );
+                        open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, true);
                         return effects;
                     }
 
-                    let cache_launch_supported = match pending_template.as_ref() {
-                        CommandSpec::UmpRunAndroid { .. } => true,
-                        CommandSpec::UmpRunIos { .. } => ios_device_supports_cached_launch(device),
-                        _ => false,
-                    };
                     let real_spec = command_with_device(*pending_template, device_id.clone());
-                    // Record iOS simulator usage for sort-by-recent
-                    if is_ios && cache_launch_supported {
+                    // Record iOS simulator usage for sort-by-recent.
+                    if is_ios && is_ios_simulator_udid(&device_id) {
                         effects.push(Effect::ScheduleAction(Action::SimulatorUsed(device_id)));
                     }
-                    open_run_variant_picker_or_dispatch(
-                        state,
-                        &mut effects,
-                        real_spec,
-                        false,
-                        cache_launch_supported,
-                    );
+                    open_run_variant_picker_or_dispatch(state, &mut effects, real_spec, false);
                 }
             }
         }
@@ -2716,24 +2684,23 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 selected,
                 pending_template,
                 boot_android_emulator,
-                cache_launch_supported,
-                ..
             }) = state.modal_stack.modal.take()
             {
                 let variant = RunVariant::ALL[selected.min(RunVariant::ALL.len() - 1)];
                 let real_spec = command_with_run_variant(*pending_template, variant);
+                let active = active_worktree_id(state);
+                if let Some(wt_id) = active.as_ref() {
+                    remember_ump_run_config(state, wt_id, &real_spec);
+                }
 
                 if boot_android_emulator
                     && let CommandSpec::UmpRunAndroid { device_id, .. } = &real_spec
                     && let Some(avd_name) = android_avd_name(device_id)
                 {
-                    remember_ump_run_config(state, &real_spec, cache_launch_supported);
-                    if try_begin_cached_run_for_spec(
-                        state,
-                        &mut effects,
-                        &real_spec,
-                        cache_launch_supported,
-                    ) {
+                    // A prebuilt artifact short-circuits the boot+build.
+                    if let Some(wt_id) = active.as_ref()
+                        && try_cached_launch(state, &mut effects, wt_id, &real_spec)
+                    {
                         return effects;
                     }
                     let boot = CommandSpec::ShellCommand {
@@ -2742,7 +2709,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     if let Some(eff) = dispatch_command(state, boot) {
                         effects.push(eff);
                     }
-                    if let Some(wt_id) = active_worktree_id(state) {
+                    if let Some(wt_id) = active {
                         let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
                             crate::domain::worktree_slice::WorktreeSlice {
                                 id: wt_id,
@@ -2754,13 +2721,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     return effects;
                 }
 
-                effects.extend(update(
-                    state,
-                    Action::CommandRunWithCache {
-                        spec: real_spec,
-                        cache_launch_supported,
-                    },
-                ));
+                // Normal run: CommandRun makes the cache decision then cold-runs.
+                effects.extend(update(state, Action::CommandRun(real_spec)));
             }
         }
 
@@ -2892,39 +2854,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         }
                     }
                     1 => {
-                        // Only one device — skip picker
-                        let is_available_emulator = android_avd_name(&devices[0].id).is_some();
-
-                        // Available emulator: boot it, then run via shell command
-                        if is_available_emulator {
-                            if matches!(spec, CommandSpec::UmpRunAndroid { .. }) {
-                                let real_spec = command_with_device(spec, devices[0].id.clone());
-                                open_run_variant_picker_or_dispatch(
-                                    state,
-                                    &mut effects,
-                                    real_spec,
-                                    true,
-                                    true,
-                                );
-                                return effects;
-                            }
-                        } else {
-                            let cache_launch_supported = match &spec {
-                                CommandSpec::UmpRunAndroid { .. } => true,
-                                CommandSpec::UmpRunIos { .. } => {
-                                    ios_device_supports_cached_launch(&devices[0])
-                                }
-                                _ => false,
-                            };
-                            let real_spec = command_with_device(spec, devices[0].id.clone());
-                            open_run_variant_picker_or_dispatch(
-                                state,
-                                &mut effects,
-                                real_spec,
-                                false,
-                                cache_launch_supported,
-                            );
-                        }
+                        // Only one device — skip picker. An available (stopped)
+                        // emulator is booted before the run; the cache decision
+                        // happens downstream (CommandRun → try_cached_launch).
+                        let boot_android_emulator = android_avd_name(&devices[0].id).is_some()
+                            && matches!(spec, CommandSpec::UmpRunAndroid { .. });
+                        let real_spec = command_with_device(spec, devices[0].id.clone());
+                        open_run_variant_picker_or_dispatch(
+                            state,
+                            &mut effects,
+                            real_spec,
+                            boot_android_emulator,
+                        );
                     }
                     _ => {
                         // Multiple devices — show picker
@@ -3328,9 +3269,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                 }
             }
-            refresh_open_run_variant_picker_cache_flags(state, |spec| {
-                matches!(spec, CommandSpec::UmpRunIos { .. })
-            });
         }
         Action::AndroidCacheLookupFinished {
             worktree_id,
@@ -3385,9 +3323,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     }
                 }
             }
-            refresh_open_run_variant_picker_cache_flags(state, |spec| {
-                matches!(spec, CommandSpec::UmpRunAndroid { .. })
-            });
         }
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
@@ -3483,7 +3418,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 slice.output_scroll = 0;
             }
             if let Some(spec) = fallback_spec {
-                remember_ump_run_config(state, &spec, false);
+                remember_ump_run_config(state, &worktree_id, &spec);
                 if let Some(effect) = dispatch_command_for_worktree(state, &worktree_id, spec) {
                     effects.push(effect);
                 }
@@ -3531,7 +3466,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 slice.output_scroll = 0;
             }
             if let Some(spec) = fallback_spec {
-                remember_ump_run_config(state, &spec, false);
+                remember_ump_run_config(state, &worktree_id, &spec);
                 if let Some(effect) = dispatch_command_for_worktree(state, &worktree_id, spec) {
                     effects.push(effect);
                 }
