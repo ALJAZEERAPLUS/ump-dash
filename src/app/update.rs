@@ -755,6 +755,36 @@ fn cached_variants_for_run_picker(
     cached
 }
 
+fn refresh_open_run_variant_picker_cache_flags<F>(state: &mut AppState, matches_spec: F)
+where
+    F: FnOnce(&CommandSpec) -> bool,
+{
+    let Some(ModalState::RunVariantPicker {
+        pending_template,
+        cache_launch_supported,
+        ..
+    }) = state.modal_stack.modal.as_ref()
+    else {
+        return;
+    };
+    if !*cache_launch_supported {
+        return;
+    }
+
+    let spec = pending_template.as_ref().clone();
+    if !matches_spec(&spec) {
+        return;
+    }
+
+    let refreshed = cached_variants_for_run_picker(state, &spec, *cache_launch_supported);
+    if let Some(ModalState::RunVariantPicker {
+        cached_variants, ..
+    }) = state.modal_stack.modal.as_mut()
+    {
+        *cached_variants = refreshed;
+    }
+}
+
 fn try_begin_cached_run_for_spec(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
@@ -2814,79 +2844,108 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::IosSimulatorCacheLookupFinished {
             worktree_id,
             result,
-        } => match result {
-            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
-                let hit = *hit;
-                let fingerprint = hit.metadata.fingerprint.clone();
-                for (id, slice) in state.worktrees.iter_mut() {
-                    let same_fingerprint_miss = matches!(
-                        &slice.ios_simulator_cache,
-                        crate::domain::native_cache::IosSimulatorCacheState::Miss {
-                            fingerprint: miss_fingerprint
-                        } if miss_fingerprint == &fingerprint
-                    );
-                    if id == &worktree_id || same_fingerprint_miss {
+        } => {
+            match result {
+                Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
+                    let hit = *hit;
+                    let fingerprint = hit.metadata.fingerprint.clone();
+                    for (id, slice) in state.worktrees.iter_mut() {
+                        let same_fingerprint_miss = matches!(
+                            &slice.ios_simulator_cache,
+                            crate::domain::native_cache::IosSimulatorCacheState::Miss {
+                                fingerprint: miss_fingerprint
+                            } if miss_fingerprint == &fingerprint
+                        );
+                        if id == &worktree_id || same_fingerprint_miss {
+                            slice.ios_simulator_cache =
+                                crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
+                                    hit.clone(),
+                                ));
+                        }
+                    }
+                }
+                Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        let existing_hit_for_same_fingerprint = slice
+                            .ios_simulator_cache
+                            .hit()
+                            .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
+                        if !existing_hit_for_same_fingerprint {
+                            slice.ios_simulator_cache =
+                                crate::domain::native_cache::IosSimulatorCacheState::Miss {
+                                    fingerprint,
+                                };
+                        }
+                    }
+                }
+                Err(message) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                         slice.ios_simulator_cache =
-                            crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
-                                hit.clone(),
-                            ));
+                            crate::domain::native_cache::IosSimulatorCacheState::Error(message);
                     }
                 }
             }
-            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    slice.ios_simulator_cache =
-                        crate::domain::native_cache::IosSimulatorCacheState::Miss { fingerprint };
-                }
-            }
-            Err(message) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    slice.ios_simulator_cache =
-                        crate::domain::native_cache::IosSimulatorCacheState::Error(message);
-                }
-            }
-        },
+            refresh_open_run_variant_picker_cache_flags(state, |spec| {
+                matches!(spec, CommandSpec::UmpRunIos { .. })
+            });
+        }
         Action::AndroidCacheLookupFinished {
             worktree_id,
             result,
-        } => match result {
-            Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
-                let hit = *hit;
-                let fingerprint = hit.metadata.fingerprint.clone();
-                for (id, slice) in state.worktrees.iter_mut() {
-                    let same_fingerprint_miss = matches!(
-                        &slice.android_cache,
-                        crate::domain::native_cache::AndroidCacheState::Miss {
-                            fingerprint: miss_fingerprint
-                        } if miss_fingerprint == &fingerprint
-                    );
-                    if id == &worktree_id || same_fingerprint_miss {
-                        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Hit(
-                            Box::new(hit.clone()),
+        } => {
+            match result {
+                Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
+                    let hit = *hit;
+                    let fingerprint = hit.metadata.fingerprint.clone();
+                    for (id, slice) in state.worktrees.iter_mut() {
+                        let same_fingerprint_miss = matches!(
+                            &slice.android_cache,
+                            crate::domain::native_cache::AndroidCacheState::Miss {
+                                fingerprint: miss_fingerprint
+                            } if miss_fingerprint == &fingerprint
                         );
+                        if id == &worktree_id || same_fingerprint_miss {
+                            slice.android_cache =
+                                crate::domain::native_cache::AndroidCacheState::Hit(Box::new(
+                                    hit.clone(),
+                                ));
+                        }
+                    }
+                }
+                Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        let existing_hit_for_same_fingerprint = slice
+                            .android_cache
+                            .hit()
+                            .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
+                        if !existing_hit_for_same_fingerprint {
+                            slice.android_cache =
+                                crate::domain::native_cache::AndroidCacheState::Miss { fingerprint };
+                        }
+                    }
+                }
+                Err(message) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        if slice.android_cache.hit().is_none() {
+                            slice.android_cache =
+                                crate::domain::native_cache::AndroidCacheState::Error(
+                                    message.clone(),
+                                );
+                        }
+                        slice
+                            .output
+                            .push_back(format!("[cached-android error] {message}"));
+                        while slice.output.len() > MAX_COMMAND_LINES {
+                            slice.output.pop_front();
+                        }
+                        slice.output_scroll = 0;
                     }
                 }
             }
-            Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    slice.android_cache =
-                        crate::domain::native_cache::AndroidCacheState::Miss { fingerprint };
-                }
-            }
-            Err(message) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    slice.android_cache =
-                        crate::domain::native_cache::AndroidCacheState::Error(message.clone());
-                    slice
-                        .output
-                        .push_back(format!("[cached-android error] {message}"));
-                    while slice.output.len() > MAX_COMMAND_LINES {
-                        slice.output.pop_front();
-                    }
-                    slice.output_scroll = 0;
-                }
-            }
-        },
+            refresh_open_run_variant_picker_cache_flags(state, |spec| {
+                matches!(spec, CommandSpec::UmpRunAndroid { .. })
+            });
+        }
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;

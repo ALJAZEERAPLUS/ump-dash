@@ -1856,6 +1856,195 @@ mod ump_run_dialog {
     }
 
     #[test]
+    fn android_cache_lookup_hit_updates_open_run_variant_picker_cached_flags() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let _ = update(&mut state, Action::EnterAndroidPalette);
+        let _ = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Android,
+                request_id: None,
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "emulator-5554".into(),
+                    name: "Pixel 9".into(),
+                }],
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                cached_variants: [false, false, false],
+                ..
+            })
+        ));
+
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Dev.label().into();
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-1".into()),
+                result: Ok(AndroidCacheLookup::Hit(Box::new(hit))),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                cached_variants: [false, true, false],
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn stale_android_cache_lookup_miss_does_not_clear_existing_hit_or_picker_flag() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        let fingerprint = hit.metadata.fingerprint.clone();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("active slice should exist")
+            .android_cache = AndroidCacheState::Hit(Box::new(hit.clone()));
+
+        let _ = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Android,
+                request_id: None,
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "emulator-5554".into(),
+                    name: "Pixel 9".into(),
+                }],
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                cached_variants: [true, false, false],
+                ..
+            })
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-1".into()),
+                result: Ok(AndroidCacheLookup::Miss { fingerprint }),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("slice should exist")
+                .android_cache
+                .hit(),
+            Some(&hit)
+        );
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                cached_variants: [true, false, false],
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn stale_android_cache_lookup_error_does_not_clear_existing_hit_or_picker_flag() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        let mut hit = cached_android_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("active slice should exist")
+            .android_cache = AndroidCacheState::Hit(Box::new(hit.clone()));
+
+        let _ = update(
+            &mut state,
+            Action::CommandRun(CommandSpec::UmpRunAndroid {
+                device_id: String::new(),
+                variant: None,
+            }),
+        );
+        let effects = update(
+            &mut state,
+            Action::DevicesEnumerated {
+                kind: DeviceKind::Android,
+                request_id: None,
+                devices: vec![crate::domain::command::DeviceInfo {
+                    id: "emulator-5554".into(),
+                    name: "Pixel 9".into(),
+                }],
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                cached_variants: [true, false, false],
+                ..
+            })
+        ));
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-1".into()),
+                result: Err("metadata read race".into()),
+            },
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state
+                .worktrees
+                .get(&WorktreeId("wt-1".into()))
+                .expect("slice should exist")
+                .android_cache
+                .hit(),
+            Some(&hit)
+        );
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::RunVariantPicker {
+                cached_variants: [true, false, false],
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn ios_physical_device_run_ignores_simulator_cache() {
         let mut state = base_state();
         seed_one_worktree(&mut state);
