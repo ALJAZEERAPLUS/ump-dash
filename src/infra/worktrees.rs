@@ -258,45 +258,178 @@ working directory).
 - Destructive tools (`shell`, `clean`, `reset_hard`) require `confirm=true`.
 "#;
 
-/// Best-effort provisioning of MCP-agent files into a freshly-created worktree
-/// (mirrors `seed_worktree_files`' log-on-error, non-fatal style):
-/// - `.mcp.json`: merged so the worktree points at the embedded MCP server
-///   while preserving any other servers already configured there. Always
-///   (re)written so the `ump-dash` endpoint stays current.
-/// - `.claude/skills/run-app/SKILL.md`: written only when absent (never
-///   clobbers a user's edits), mirroring `seed_worktree_files`.
-fn provision_worktree_agent_files(worktree_path: &Path, port: u16) {
-    // .mcp.json — merge-safe: read existing (if any), refresh only ump-dash.
-    let mcp_path = worktree_path.join(".mcp.json");
-    let existing = std::fs::read_to_string(&mcp_path).ok();
-    let content = agent_mcp_json(existing.as_deref(), port);
-    match std::fs::write(&mcp_path, content) {
-        Ok(_) => tracing::info!("provision_worktree_agent_files: wrote .mcp.json (port {port})"),
-        Err(e) => tracing::warn!("provision_worktree_agent_files: write .mcp.json failed: {e}"),
+/// Builds the `.codex/config.toml` content that registers the embedded MCP
+/// server with Codex. Merge-safe like `agent_mcp_json`: an existing config's
+/// other `[mcp_servers]` entries and unrelated sections are preserved; only the
+/// `ump-dash` server block is set/refreshed. Pure (no I/O).
+fn agent_codex_config(existing: Option<&str>, port: u16) -> String {
+    use toml::{Table, Value};
+
+    let mut doc: Table = existing
+        .and_then(|s| toml::from_str::<Table>(s).ok())
+        .unwrap_or_default();
+
+    let servers = doc
+        .entry("mcp_servers")
+        .or_insert_with(|| Value::Table(Table::new()));
+    if !servers.is_table() {
+        *servers = Value::Table(Table::new());
     }
 
-    // .claude/skills/run-app/SKILL.md — non-clobber (write only if missing).
-    let skill_path = worktree_path
-        .join(".claude")
-        .join("skills")
-        .join("run-app")
-        .join("SKILL.md");
-    if skill_path.exists() {
+    let mut entry = Table::new();
+    entry.insert(
+        "url".into(),
+        Value::String(format!("http://127.0.0.1:{port}/mcp")),
+    );
+    entry.insert("enabled".into(), Value::Boolean(true));
+    entry.insert("required".into(), Value::Boolean(false));
+    entry.insert("startup_timeout_sec".into(), Value::Integer(3));
+    entry.insert("tool_timeout_sec".into(), Value::Integer(900));
+
+    servers
+        .as_table_mut()
+        .expect("mcp_servers is a table")
+        .insert("ump-dash".into(), Value::Table(entry));
+
+    toml::to_string_pretty(&doc).unwrap_or_default()
+}
+
+/// Codex reads `.agents/skills/`, so the run-app skill is seeded there too with
+/// a richer, RN-specific body. Mirrors `RUN_SKILL_MD` in intent: drive the
+/// `ump-dash` MCP tools rather than hand-running Metro/yarn/native builds.
+const CODEX_RUN_SKILL_MD: &str = r#"---
+name: run-app
+description: Use when asked to run, launch, build, install, or start this React Native app on iOS or Android simulators/devices, including iPhone device requests such as Dafone. Always use the `ump-dash` MCP tools instead of running Metro, yarn, pod install, xcodebuild, react-native run-ios, or native build commands manually.
+---
+
+# Run this app via `ump-dash`
+
+This worktree is managed by the UMP dashboard. Use the `ump-dash` MCP tools for
+run/build tasks; do not hand-run Metro, dependency installs, CocoaPods, Xcode,
+Gradle, or React Native CLI commands.
+
+Every `ump-dash` tool call takes `worktree`, the absolute path of this worktree.
+
+## Workflow
+
+1. Call `list_devices` with `platform: "ios"` or `platform: "android"`.
+2. Pick the target device's `id`. Use the `id`, not the display name.
+3. Call `run_ios` or `run_android` with `worktree` and `device_id`.
+4. If the result includes a `task_id`, poll `get_task_status` until it finishes.
+   A cache hit can launch instantly without a task; use `get_logs` to confirm.
+
+## If `ump-dash` Is Missing
+
+If the `ump-dash` MCP tools are not available in the Codex tool surface, stop and
+report that the dashboard MCP is not registered for this session. Do not fall
+back to shell build commands. The expected Codex project config is
+`.codex/config.toml`, and a new Codex session may be required after config
+changes.
+
+## Notes
+
+- `build`, `sync_deps`, and `start_metro` are optional diagnostics and are
+  usually unnecessary before `run_ios` or `run_android`.
+- Destructive tools such as `shell`, `clean`, and `reset_hard` require explicit
+  confirmation.
+"#;
+
+/// Builds the Codex/OpenAI skill manifest (`agents/openai.yaml`) for the seeded
+/// `run-app` skill, pointing its MCP dependency at the embedded server.
+fn agent_openai_yaml(port: u16) -> String {
+    format!(
+        r#"interface:
+  display_name: "Run UMP App"
+  short_description: "Launch UMP through the dashboard MCP"
+  default_prompt: "Use $run-app to run this branch on my iPhone."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "ump-dash"
+      description: "UMP dashboard MCP server for worktree run and build tasks"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:{port}/mcp"
+
+policy:
+  allow_implicit_invocation: true
+"#
+    )
+}
+
+/// Writes `content` to `path` only when it does not already exist, creating
+/// parent dirs first. Best-effort and non-clobber (respects user edits),
+/// mirroring `seed_worktree_files`. `label` is for logging only.
+fn write_if_absent(path: &Path, content: &str, label: &str) {
+    if path.exists() {
         return;
     }
-    if let Some(parent) = skill_path.parent()
+    if let Some(parent) = path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
-        tracing::warn!(
-            "provision_worktree_agent_files: mkdir {} failed: {e}",
-            parent.display()
-        );
+        tracing::warn!("provision: mkdir {} failed: {e}", parent.display());
         return;
     }
-    match std::fs::write(&skill_path, RUN_SKILL_MD) {
-        Ok(_) => tracing::info!("provision_worktree_agent_files: wrote run-app skill"),
-        Err(e) => tracing::warn!("provision_worktree_agent_files: write skill failed: {e}"),
+    match std::fs::write(path, content) {
+        Ok(_) => tracing::info!("provision: wrote {label}"),
+        Err(e) => tracing::warn!("provision: write {label} failed: {e}"),
     }
+}
+
+/// Reads any existing file at `path`, runs `merge` to compute fresh content, and
+/// (re)writes it — so a merge-safe config keeps its `ump-dash` endpoint current
+/// while preserving the user's other entries. Best-effort, non-fatal.
+fn write_merged(path: &Path, label: &str, merge: impl FnOnce(Option<&str>) -> String) {
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!("provision: mkdir {} failed: {e}", parent.display());
+        return;
+    }
+    let existing = std::fs::read_to_string(path).ok();
+    let content = merge(existing.as_deref());
+    match std::fs::write(path, content) {
+        Ok(_) => tracing::info!("provision: wrote {label}"),
+        Err(e) => tracing::warn!("provision: write {label} failed: {e}"),
+    }
+}
+
+/// Best-effort provisioning of agent files into a freshly-created worktree
+/// (mirrors `seed_worktree_files`' log-on-error, non-fatal style). Seeds both
+/// Claude Code and Codex so an agent in either tool discovers the dashboard:
+/// - `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex): MCP server
+///   registration, merge-safe so other servers/sections are preserved and the
+///   `ump-dash` endpoint stays current.
+/// - `.claude/skills/run-app/SKILL.md`, `.agents/skills/run-app/SKILL.md`, and
+///   its `agents/openai.yaml` manifest (Codex): the run-app skill, written only
+///   when absent (never clobbers a user's edits).
+fn provision_worktree_agent_files(worktree_path: &Path, port: u16) {
+    // MCP server registration — merge-safe for both tools.
+    write_merged(&worktree_path.join(".mcp.json"), ".mcp.json", |existing| {
+        agent_mcp_json(existing, port)
+    });
+    write_merged(
+        &worktree_path.join(".codex/config.toml"),
+        ".codex/config.toml",
+        |existing| agent_codex_config(existing, port),
+    );
+
+    // run-app skill — non-clobber, seeded for Claude Code and Codex.
+    write_if_absent(
+        &worktree_path.join(".claude/skills/run-app/SKILL.md"),
+        RUN_SKILL_MD,
+        ".claude run-app skill",
+    );
+    write_if_absent(
+        &worktree_path.join(".agents/skills/run-app/SKILL.md"),
+        CODEX_RUN_SKILL_MD,
+        ".agents run-app skill",
+    );
+    write_if_absent(
+        &worktree_path.join(".agents/skills/run-app/agents/openai.yaml"),
+        &agent_openai_yaml(port),
+        ".agents run-app openai.yaml",
+    );
 }
 
 /// Creates a new worktree as a sibling directory of repo_root.
@@ -790,6 +923,96 @@ mod tests {
         assert!(
             !wt.path().join(".claude/skills/run-app/SKILL.md").exists(),
             "run-app skill must not be written when MCP is disabled"
+        );
+        assert!(
+            !wt.path().join(".codex/config.toml").exists(),
+            "codex config must not be written when MCP is disabled"
+        );
+        assert!(
+            !wt.path().join(".agents").exists(),
+            "codex .agents skill must not be written when MCP is disabled"
+        );
+    }
+
+    /// A fresh `.codex/config.toml` registers the `ump-dash` server with the
+    /// configured port and the expected Codex fields.
+    #[test]
+    fn agent_codex_config_fresh_has_url_and_port() {
+        let content = agent_codex_config(None, 8790);
+        let doc: toml::Table = toml::from_str(&content).unwrap();
+        let server = &doc["mcp_servers"]["ump-dash"];
+        assert_eq!(server["url"].as_str(), Some("http://127.0.0.1:8790/mcp"));
+        assert_eq!(server["enabled"].as_bool(), Some(true));
+        assert_eq!(server["required"].as_bool(), Some(false));
+        assert_eq!(server["tool_timeout_sec"].as_integer(), Some(900));
+    }
+
+    /// Merging into an existing Codex config preserves other servers and other
+    /// sections while refreshing only the `ump-dash` entry.
+    #[test]
+    fn agent_codex_config_merges_preserving_other() {
+        let existing = "\
+[mcp_servers.other]
+url = \"http://example/other\"
+
+[profile]
+name = \"me\"
+";
+        let content = agent_codex_config(Some(existing), 9000);
+        let doc: toml::Table = toml::from_str(&content).unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["other"]["url"].as_str(),
+            Some("http://example/other"),
+            "pre-existing server must be preserved"
+        );
+        assert_eq!(
+            doc["profile"]["name"].as_str(),
+            Some("me"),
+            "unrelated sections must survive"
+        );
+        assert_eq!(
+            doc["mcp_servers"]["ump-dash"]["url"].as_str(),
+            Some("http://127.0.0.1:9000/mcp")
+        );
+    }
+
+    /// Provisioning writes the Codex config, the `.agents` run-app skill, and the
+    /// openai.yaml manifest with the configured port.
+    #[test]
+    fn provision_writes_codex_files() {
+        let wt = TempDir::new("wt");
+
+        provision_worktree_agent_files(wt.path(), 8790);
+
+        let cfg = fs::read_to_string(wt.path().join(".codex/config.toml")).unwrap();
+        assert!(cfg.contains("http://127.0.0.1:8790/mcp"));
+        assert!(cfg.contains("ump-dash"));
+
+        let skill =
+            fs::read_to_string(wt.path().join(".agents/skills/run-app/SKILL.md")).unwrap();
+        assert!(skill.contains("name: run-app"), "codex skill frontmatter present");
+
+        let yaml = fs::read_to_string(
+            wt.path().join(".agents/skills/run-app/agents/openai.yaml"),
+        )
+        .unwrap();
+        assert!(yaml.contains("http://127.0.0.1:8790/mcp"), "manifest carries the port");
+    }
+
+    /// An existing Codex `.agents` run-app skill is never clobbered.
+    #[test]
+    fn provision_does_not_clobber_existing_codex_skill() {
+        let wt = TempDir::new("wt");
+        let skill_path = wt.path().join(".agents/skills/run-app/SKILL.md");
+        fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+        fs::write(&skill_path, b"USER EDITED").unwrap();
+
+        provision_worktree_agent_files(wt.path(), 8790);
+
+        assert_eq!(
+            fs::read(&skill_path).unwrap(),
+            b"USER EDITED",
+            "an existing codex skill file must be left untouched"
         );
     }
 }
