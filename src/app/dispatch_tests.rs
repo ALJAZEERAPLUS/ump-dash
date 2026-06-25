@@ -3652,7 +3652,7 @@ mod claude_tab {
                 command,
             } => {
                 assert_eq!(worktree, &std::path::PathBuf::from("/tmp/ump-dash"));
-                assert_eq!(name, "main-claude");
+                assert_eq!(name, "ump-dash-claude");
                 assert_eq!(command, "claude --dangerously-skip-permissions");
             }
             other => panic!("expected OpenInMultiplexer effect, got {other:?}"),
@@ -3678,7 +3678,7 @@ mod claude_tab {
                 },
             ] => {
                 assert_eq!(worktree, &std::path::PathBuf::from("/tmp/ump-dash"));
-                assert_eq!(name, "main-editor");
+                assert_eq!(name, "ump-dash-editor");
                 assert_eq!(command, "vim .");
             }
             other => panic!("expected OpenInMultiplexer effect, got {other:?}"),
