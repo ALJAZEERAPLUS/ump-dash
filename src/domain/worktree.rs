@@ -42,33 +42,25 @@ pub struct Worktree {
 }
 
 impl Worktree {
-    /// Returns the best available display name for this worktree, in priority order:
-    /// 1. JIRA ticket title (Phase 4+)
-    /// 2. Branch name (always available)
+    /// Returns the worktree directory name as the display name for this worktree.
+    /// Falls back to `"worktree"` when the path has no file-name component.
     ///
     /// Used for single-string contexts such as modal titles and status messages.
     /// The worktree list widget accesses fields directly for layout control.
     #[allow(dead_code)]
     pub fn display_name(&self) -> &str {
-        if let Some(title) = &self.jira_title {
-            return title.as_str();
-        }
-        self.branch.as_str()
+        self.path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("worktree")
     }
 
-    /// Returns the preferred display prefix for this worktree, in priority order:
-    /// 1. JIRA ticket key (e.g. "UMP-1234") -- short identifier, not full title
-    /// 2. Branch name
-    /// 3. Workspace directory name (fallback)
+    /// Returns the worktree directory name as the single source of truth for naming.
+    /// Falls back to `"worktree"` when the path has no file-name component.
     ///
-    /// Used as the single source of truth for naming: Claude tab name, metro pane title, etc.
+    /// Used as the prefix for tab names: Claude tab, shell tab, editor tab, etc.
+    /// e.g. `<dir>-claude`, `<dir>-shell`, `<dir>-editor`.
     pub fn preferred_prefix(&self) -> String {
-        if let Some(key) = &self.jira_key {
-            return key.clone();
-        }
-        if !self.branch.is_empty() && self.branch != "(unknown)" {
-            return self.branch.clone();
-        }
         self.path
             .file_name()
             .and_then(|n| n.to_str())
