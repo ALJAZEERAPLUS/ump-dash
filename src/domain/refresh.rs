@@ -7,7 +7,7 @@
 use super::command::CommandSpec;
 
 /// Which background refreshes a completed command requires.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RefreshSet {
     /// Re-enumerate worktrees (branch may have changed).
     pub worktrees: bool,
