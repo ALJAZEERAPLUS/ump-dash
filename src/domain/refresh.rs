@@ -40,29 +40,7 @@ impl RefreshSet {
 /// The CommandExited handler calls this instead of scattering refresh
 /// logic across individual match arms.
 pub fn refresh_needed(cmd: &CommandSpec) -> RefreshSet {
-    match cmd {
-        // Branch-changing git ops -> full reload + JIRA re-fetch
-        CommandSpec::GitResetHard
-        | CommandSpec::GitResetHardFetch => RefreshSet {
-            worktrees: true,
-            staleness: true,
-            jira_titles: true,
-        },
-        // Non-branch-changing git ops -> no refresh
-        CommandSpec::GitPull | CommandSpec::GitPush | CommandSpec::GitFetch => RefreshSet::none(),
-        // Install/clean -> staleness refresh only
-        CommandSpec::YarnInstall
-        | CommandSpec::YarnPodInstall
-        | CommandSpec::RmNodeModules
-        | CommandSpec::RnCleanAndroid
-        | CommandSpec::RnCleanCocoapods => RefreshSet {
-            worktrees: false,
-            staleness: true,
-            jira_titles: false,
-        },
-        // Everything else -> no refresh
-        _ => RefreshSet::none(),
-    }
+    cmd.meta().refresh
 }
 
 #[cfg(test)]
