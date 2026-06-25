@@ -804,45 +804,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
-        key: KeyCode::Char('b'),
-        label: "b",
-        short_desc: "checkout",
-        long_desc: "git checkout <branch>",
-        context: BindingContext::Palette(PaletteMode::Git),
-        action: |_| {
-            Some(Action::CommandRun(CommandSpec::GitCheckout {
-                branch: String::new(),
-            }))
-        },
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('c'),
-        label: "c",
-        short_desc: "checkout -b",
-        long_desc: "git checkout -b <branch>",
-        context: BindingContext::Palette(PaletteMode::Git),
-        action: |_| {
-            Some(Action::CommandRun(CommandSpec::GitCheckoutNew {
-                branch: String::new(),
-            }))
-        },
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Char('r'),
-        label: "r",
-        short_desc: "rebase",
-        long_desc: "git rebase <target>",
-        context: BindingContext::Palette(PaletteMode::Git),
-        action: |_| {
-            Some(Action::CommandRun(CommandSpec::GitRebase {
-                target: String::new(),
-            }))
-        },
-        visible: |_| true,
-    },
-    KeyBinding {
         key: KeyCode::Esc,
         label: "Esc",
         short_desc: "cancel",

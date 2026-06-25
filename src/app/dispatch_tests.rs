@@ -876,24 +876,12 @@ mod palette_resolution {
             handle_key(&state, key('X')),
             Some(Action::CommandRun(CommandSpec::GitResetHardFetch))
         );
-        match handle_key(&state, key('b')) {
-            Some(Action::CommandRun(CommandSpec::GitCheckout { branch })) => {
-                assert_eq!(branch, "");
-            }
-            other => panic!("git 'b' must produce GitCheckout with empty branch; got {other:?}"),
-        }
-        match handle_key(&state, key('c')) {
-            Some(Action::CommandRun(CommandSpec::GitCheckoutNew { branch })) => {
-                assert_eq!(branch, "");
-            }
-            other => panic!("git 'c' must produce GitCheckoutNew with empty branch; got {other:?}"),
-        }
-        match handle_key(&state, key('r')) {
-            Some(Action::CommandRun(CommandSpec::GitRebase { target })) => {
-                assert_eq!(target, "");
-            }
-            other => panic!("git 'r' must produce GitRebase with empty target; got {other:?}"),
-        }
+        // 'b' (checkout), 'c' (checkout -b), and 'r' (rebase) were removed from
+        // the git palette — they now fall through to ModalCancel like any other
+        // unmapped key.
+        assert_eq!(handle_key(&state, key('b')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('c')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('r')), Some(Action::ModalCancel));
 
         assert_eq!(
             handle_key(&state, key_code(KeyCode::Esc)),
@@ -1172,10 +1160,10 @@ mod modal_dismissal {
     fn text_input_modal_dismisses_on_esc() {
         let mut state = base_state();
         state.modal_stack.modal = Some(ModalState::TextInput {
-            prompt: "Branch:".into(),
+            prompt: "Jest filter:".into(),
             buffer: String::new(),
-            pending_template: Box::new(CommandSpec::GitCheckout {
-                branch: String::new(),
+            pending_template: Box::new(CommandSpec::YarnJest {
+                filter: String::new(),
             }),
         });
         assert_eq!(
@@ -1318,30 +1306,6 @@ mod modal_dismissal {
     }
 
     #[test]
-    fn git_checkout_new_still_prompts_for_new_branch_name_without_picker() {
-        let mut state = base_state();
-
-        let effects = update(
-            &mut state,
-            Action::CommandRun(CommandSpec::GitCheckoutNew {
-                branch: String::new(),
-            }),
-        );
-
-        assert!(effects.is_empty());
-        assert_eq!(
-            state.modal_stack.modal,
-            Some(ModalState::TextInput {
-                prompt: "New branch name:".into(),
-                buffer: String::new(),
-                pending_template: Box::new(CommandSpec::GitCheckoutNew {
-                    branch: String::new(),
-                }),
-            })
-        );
-    }
-
-    #[test]
     fn worktree_checkout_opens_branch_picker_before_creating_worktree() {
         let mut state = base_state();
 
@@ -1407,43 +1371,6 @@ mod modal_dismissal {
                 pending_template: Box::new(CommandSpec::GitPull),
             })
         );
-    }
-
-    #[test]
-    fn git_checkout_new_submit_dispatches_without_base_branch() {
-        let mut state = base_state();
-        seed_one_worktree(&mut state);
-        state.modal_stack.modal = Some(ModalState::TextInput {
-            prompt: "New branch name:".into(),
-            buffer: "feature/next".into(),
-            pending_template: Box::new(CommandSpec::GitCheckoutNew {
-                branch: String::new(),
-            }),
-        });
-
-        let effects = update(&mut state, Action::ModalInputSubmit);
-
-        assert_eq!(effects.len(), 1);
-        assert!(
-            matches!(
-                &effects[0],
-                Effect::SpawnTask {
-                    spec: CommandSpec::GitCheckoutNew { branch },
-                    ..
-                } if branch == "feature/next"
-            ),
-            "checkout-new submit should dispatch without selected base branch; got {effects:?}"
-        );
-
-        let wt_id = WorktreeId("wt-1".into());
-        let output = state
-            .worktrees
-            .get(&wt_id)
-            .expect("seeded worktree slice")
-            .output
-            .back()
-            .expect("dispatch output line");
-        assert_eq!(output, "$ git checkout -b feature/next");
     }
 
     #[test]

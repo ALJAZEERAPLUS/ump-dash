@@ -105,11 +105,8 @@ pub fn task_short_label(spec: &CommandSpec) -> &'static str {
         CommandSpec::GitPull               => "pull",
         CommandSpec::GitPush               => "push",
         CommandSpec::GitFetch              => "fetch",
-        CommandSpec::GitRebase { .. }      => "rebase",
         CommandSpec::GitResetHard          => "reset",
         CommandSpec::GitResetHardFetch     => "reset+f",
-        CommandSpec::GitCheckout { .. }    => "co",
-        CommandSpec::GitCheckoutNew { .. } => "co -b",
     }
 }
 
@@ -229,16 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn git_checkout_new_label() {
-        assert_eq!(
-            task_short_label(&CommandSpec::GitCheckoutNew {
-                branch: "x".into()
-            }),
-            "co -b"
-        );
-    }
-
-    #[test]
     fn reset_hard_fetch_label() {
         assert_eq!(task_short_label(&CommandSpec::GitResetHardFetch), "reset+f");
     }
@@ -255,7 +242,7 @@ mod tests {
 
     // --- task_short_label: drift-guard meta-test ---
 
-    /// Constructs one instance of all 22 CommandSpec variants, asserts count == 22,
+    /// Constructs one instance of all 19 CommandSpec variants, asserts count == 19,
     /// and asserts every label is non-empty. Mirrors `collision_policy_covers_every_variant`
     /// at src/domain/command.rs:501-562.
     #[test]
@@ -264,15 +251,6 @@ mod tests {
             CommandSpec::GitResetHard,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase {
-                target: "main".into(),
-            },
-            CommandSpec::GitCheckout {
-                branch: "feat".into(),
-            },
-            CommandSpec::GitCheckoutNew {
-                branch: "new-feat".into(),
-            },
             CommandSpec::RnCleanAndroid,
             CommandSpec::RnCleanCocoapods,
             CommandSpec::RmNodeModules,
@@ -303,8 +281,8 @@ mod tests {
 
         assert_eq!(
             variants.len(),
-            22,
-            "Expected 22 CommandSpec variants — update this test when adding a new variant"
+            19,
+            "Expected 19 CommandSpec variants — update this test when adding a new variant"
         );
 
         for v in &variants {

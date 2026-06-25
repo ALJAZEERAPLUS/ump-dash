@@ -42,10 +42,7 @@ impl RefreshSet {
 pub fn refresh_needed(cmd: &CommandSpec) -> RefreshSet {
     match cmd {
         // Branch-changing git ops -> full reload + JIRA re-fetch
-        CommandSpec::GitCheckout { .. }
-        | CommandSpec::GitCheckoutNew { .. }
-        | CommandSpec::GitRebase { .. }
-        | CommandSpec::GitResetHard
+        CommandSpec::GitResetHard
         | CommandSpec::GitResetHardFetch => RefreshSet {
             worktrees: true,
             staleness: true,
@@ -93,36 +90,6 @@ mod tests {
     #[test]
     fn git_reset_hard_triggers_full_refresh() {
         assert_eq!(refresh_needed(&CommandSpec::GitResetHard), full_refresh());
-    }
-
-    #[test]
-    fn git_checkout_triggers_full_refresh() {
-        assert_eq!(
-            refresh_needed(&CommandSpec::GitCheckout {
-                branch: "main".into()
-            }),
-            full_refresh()
-        );
-    }
-
-    #[test]
-    fn git_checkout_new_triggers_full_refresh() {
-        assert_eq!(
-            refresh_needed(&CommandSpec::GitCheckoutNew {
-                branch: "feat".into()
-            }),
-            full_refresh()
-        );
-    }
-
-    #[test]
-    fn git_rebase_triggers_full_refresh() {
-        assert_eq!(
-            refresh_needed(&CommandSpec::GitRebase {
-                target: "main".into()
-            }),
-            full_refresh()
-        );
     }
 
     #[test]

@@ -117,22 +117,13 @@ impl RunVariant {
 }
 
 /// All commands that can be dispatched from the dashboard command palettes.
-/// 22 variants total. Pure data — no I/O.
+/// 19 variants total. Pure data — no I/O.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CommandSpec {
-    // Git commands (6 variants)
+    // Git commands (3 variants)
     GitResetHard,
     GitPull,
     GitPush,
-    GitRebase {
-        target: String,
-    },
-    GitCheckout {
-        branch: String,
-    },
-    GitCheckoutNew {
-        branch: String,
-    },
 
     // React Native clean commands (3 variants)
     RnCleanAndroid,
@@ -200,15 +191,6 @@ impl CommandSpec {
             }
             CommandSpec::GitPull => vec!["git".into(), "pull".into()],
             CommandSpec::GitPush => vec!["git".into(), "push".into()],
-            CommandSpec::GitRebase { target } => {
-                vec!["git".into(), "rebase".into(), target.clone()]
-            }
-            CommandSpec::GitCheckout { branch } => {
-                vec!["git".into(), "checkout".into(), branch.clone()]
-            }
-            CommandSpec::GitCheckoutNew { branch } => {
-                vec!["git".into(), "checkout".into(), "-b".into(), branch.clone()]
-            }
 
             CommandSpec::RnCleanAndroid => vec![
                 "npx".into(),
@@ -336,9 +318,6 @@ impl CommandSpec {
                 | CommandSpec::GitResetHardFetch
                 | CommandSpec::GitPull
                 | CommandSpec::GitPush
-                | CommandSpec::GitRebase { .. }
-                | CommandSpec::GitCheckout { .. }
-                | CommandSpec::GitCheckoutNew { .. }
                 | CommandSpec::GitFetch
         )
     }
@@ -370,9 +349,6 @@ impl CommandSpec {
             | CommandSpec::GitResetHardFetch
             | CommandSpec::GitPull
             | CommandSpec::GitPush
-            | CommandSpec::GitRebase { .. }
-            | CommandSpec::GitCheckout { .. }
-            | CommandSpec::GitCheckoutNew { .. }
             | CommandSpec::GitFetch => CollisionPolicy::BlockNew,
 
             // Builds, tests, runs — "run THIS version NOW" semantics.
@@ -402,10 +378,7 @@ impl CommandSpec {
     /// review). Exhaustive conversion deferred to backlog per D-02.
     pub fn needs_text_input(&self) -> bool {
         match self {
-            CommandSpec::GitRebase { .. }
-            | CommandSpec::GitCheckout { .. }
-            | CommandSpec::GitCheckoutNew { .. }
-            | CommandSpec::YarnJest { .. } => true,
+            CommandSpec::YarnJest { .. } => true,
             CommandSpec::ShellCommand { command } => command.is_empty(),
             _ => false,
         }
@@ -445,9 +418,6 @@ impl CommandSpec {
             CommandSpec::GitResetHard => "git reset --hard HEAD",
             CommandSpec::GitPull => "git pull",
             CommandSpec::GitPush => "git push",
-            CommandSpec::GitRebase { .. } => "git rebase <target>",
-            CommandSpec::GitCheckout { .. } => "git checkout <branch>",
-            CommandSpec::GitCheckoutNew { .. } => "git checkout -b <branch>",
             CommandSpec::RnCleanAndroid => "Clean Android (react-native clean)",
             CommandSpec::RnCleanCocoapods => "Clean CocoaPods (react-native clean)",
             CommandSpec::RmNodeModules => "Remove node_modules",
@@ -686,15 +656,6 @@ mod tests {
             CommandSpec::GitResetHardFetch,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase {
-                target: "main".into(),
-            },
-            CommandSpec::GitCheckout {
-                branch: "main".into(),
-            },
-            CommandSpec::GitCheckoutNew {
-                branch: "main".into(),
-            },
             CommandSpec::GitFetch,
         ];
         for spec in &git_variants {
@@ -836,15 +797,6 @@ mod tests {
             CommandSpec::GitResetHardFetch,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase {
-                target: "main".into(),
-            },
-            CommandSpec::GitCheckout {
-                branch: "main".into(),
-            },
-            CommandSpec::GitCheckoutNew {
-                branch: "main".into(),
-            },
             CommandSpec::GitFetch,
         ];
         for spec in &git_variants {
@@ -869,15 +821,6 @@ mod tests {
             CommandSpec::GitResetHard,
             CommandSpec::GitPull,
             CommandSpec::GitPush,
-            CommandSpec::GitRebase {
-                target: "main".into(),
-            },
-            CommandSpec::GitCheckout {
-                branch: "main".into(),
-            },
-            CommandSpec::GitCheckoutNew {
-                branch: "main".into(),
-            },
             CommandSpec::RnCleanAndroid,
             CommandSpec::RnCleanCocoapods,
             CommandSpec::RmNodeModules,
@@ -908,9 +851,6 @@ mod tests {
                 | CommandSpec::GitResetHardFetch
                 | CommandSpec::GitPull
                 | CommandSpec::GitPush
-                | CommandSpec::GitRebase { .. }
-                | CommandSpec::GitCheckout { .. }
-                | CommandSpec::GitCheckoutNew { .. }
                 | CommandSpec::GitFetch
                 | CommandSpec::YarnInstall
                 | CommandSpec::YarnPodInstall => CollisionPolicy::BlockNew,
@@ -935,8 +875,8 @@ mod tests {
         }
         assert_eq!(
             variants.len(),
-            22,
-            "must enumerate all 22 CommandSpec variants"
+            19,
+            "must enumerate all 19 CommandSpec variants"
         );
     }
 }

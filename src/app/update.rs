@@ -2042,9 +2042,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             if spec.needs_text_input() {
                 let prompt = match &spec {
-                    CommandSpec::GitRebase { .. } => "Rebase onto:".to_string(),
-                    CommandSpec::GitCheckout { .. } => "Branch to checkout:".to_string(),
-                    CommandSpec::GitCheckoutNew { .. } => "New branch name:".to_string(),
                     CommandSpec::YarnJest { .. } => "Jest filter:".to_string(),
                     _ => "Input:".to_string(),
                 };
@@ -2506,15 +2503,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         } else {
                             // Build the real CommandSpec by filling in the text
                             let real_spec = match *pending_template {
-                                CommandSpec::GitRebase { .. } => {
-                                    CommandSpec::GitRebase { target: buffer }
-                                }
-                                CommandSpec::GitCheckout { .. } => {
-                                    CommandSpec::GitCheckout { branch: buffer }
-                                }
-                                CommandSpec::GitCheckoutNew { .. } => {
-                                    CommandSpec::GitCheckoutNew { branch: buffer }
-                                }
                                 CommandSpec::YarnJest { .. } => {
                                     CommandSpec::YarnJest { filter: buffer }
                                 }
