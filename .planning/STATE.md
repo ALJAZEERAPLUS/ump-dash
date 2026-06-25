@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260625-bow | Use worktree directory name (not branch/JIRA) as the single source of truth for Claude/shell/editor tab names | 2026-06-25 | 8c3f3b7 | [260625-bow-when-opening-a-new-terminal-claude-etc-u](./quick/260625-bow-when-opening-a-new-terminal-claude-etc-u/) |
 | 260623-k7w | Add existing-branch picker to worktree checkout command | 2026-06-23 | ffa5c48 | [260623-k7w-add-existing-branch-picker-to-worktree-c](./quick/260623-k7w-add-existing-branch-picker-to-worktree-c/) |
 | 260622-n7p | Fix Android build/run success without install by preserving fast task exit ownership | 2026-06-22 | 00dd78d | [260622-n7p-android-build-doesn-t-work-console-shows](./quick/260622-n7p-android-build-doesn-t-work-console-shows/) |
 | 260622-hrv | minor bug fix. after I press o and then any of the options, the menu doesn't go back to the root. it should and it should be the same for all the submenus | 2026-06-22 | 57d19bc | [260622-hrv-minor-bug-fix-after-i-press-o-and-then-a](./quick/260622-hrv-minor-bug-fix-after-i-press-o-and-then-a/) |
@@ -147,7 +148,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-06-23 - Completed quick task 260623-k7w: Add existing-branch picker to worktree checkout command
+Last activity: 2026-06-25 - Completed quick task 260625-bow: Use worktree directory name for Claude/shell/editor tab names
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
