@@ -414,7 +414,7 @@ fn ensure_metro_for_worktree(
         return;
     }
 
-    let deps = DependencyState::new(worktree_yarn_stale(state, &worktree_id), false, false);
+    let deps = DependencyState::new(worktree_yarn_stale(state, &worktree_id), false);
     let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
     if sequence.is_empty() {
         start_metro_for_worktree(state, effects, worktree_id);
@@ -756,7 +756,7 @@ fn agent_deps_for(state: &AppState, wt_id: &WorktreeId, is_ios: bool) -> Depende
     } else {
         false
     };
-    DependencyState::new(yarn_stale, pods_stale, is_ios)
+    DependencyState::new(yarn_stale, pods_stale)
 }
 
 fn agent_start_metro(
@@ -930,7 +930,7 @@ fn handle_agent_request(
                 android,
                 sync_after: false,
             };
-            let seq = Recipe::Clean(opts).expand(&DependencyState::new(false, false, false));
+            let seq = Recipe::Clean(opts).expand(&DependencyState::new(false, false));
             if seq.is_empty() {
                 return AgentOutcome::Error {
                     message: "no clean targets selected".into(),
@@ -1971,7 +1971,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         // Plan 13-09 (F-204 site 1): resolve() replaces
                         // the inline yarn/pod sequencing. Auto-sync fast path —
                         // skip the modal, expand the recipe, queue + dispatch.
-                        let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
+                        let deps = DependencyState::new(*yarn_stale, pods_stale);
                         let mut sequence = resolve(spec, &deps);
                         let first = sequence.remove(0);
 
@@ -2071,7 +2071,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Android release build: queue adb install to run after assembleRelease completes.
             if matches!(spec, CommandSpec::RnReleaseBuild) {
                 let mut sequence = Recipe::ReleaseBuildAndInstall
-                    .expand(&DependencyState::new(false, false, false));
+                    .expand(&DependencyState::new(false, false));
                 let first = sequence.remove(0);
 
                 // D-12: push to slice queue for the originating worktree.
@@ -2098,7 +2098,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Two-step — dispatch fetch, queue reset --hard origin/<branch>.
             if matches!(spec, CommandSpec::GitResetHardFetch) {
                 let mut sequence =
-                    Recipe::GitFetchThenReset.expand(&DependencyState::new(false, false, false));
+                    Recipe::GitFetchThenReset.expand(&DependencyState::new(false, false));
                 let first = sequence.remove(0);
 
                 // D-12: push to slice queue for the originating worktree.
@@ -2924,7 +2924,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     if let Some(path) = target_path {
                         state.metro_state.active_worktree_path = Some(path);
                     }
-                    let deps = DependencyState::new(true, false, false);
+                    let deps = DependencyState::new(true, false);
                     let mut sequence = Recipe::SyncThenStartMetro.expand(&deps);
                     if sequence.is_empty() {
                         effects.extend(update(
@@ -3161,7 +3161,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // sync_after appended (preserves the comment's hard ordering
                 // rule).
                 let mut cmds =
-                    Recipe::Clean(options).expand(&DependencyState::new(false, false, false));
+                    Recipe::Clean(options).expand(&DependencyState::new(false, false));
 
                 if cmds.is_empty() {
                     return effects;
@@ -3470,11 +3470,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // Plan 13-09 (F-204 site 7): resolve() expansion.
                 // The modal already encodes the staleness decision in
                 // (needs_yarn, needs_pods); rebuild a DependencyState that
-                // reproduces the same expansion. The is_ios_target flag is
-                // derived from needs_pods being meaningful — only iOS run
-                // commands ever set needs_pods=true at the modal-construction
-                // site (CommandRun stale check).
-                let deps = DependencyState::new(needs_yarn, needs_pods, needs_pods);
+                // reproduces the same expansion.
+                let deps = DependencyState::new(needs_yarn, needs_pods);
                 let mut sequence = resolve(*run_command, &deps);
 
                 // Guaranteed non-empty: we only get here from the modal which only
@@ -3548,9 +3545,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
 
                 // Plan 13-09 (F-204 site 9): Recipe::SyncThenStartMetro expansion.
-                // is_ios_target is irrelevant for SyncThenStartMetro (pods always
-                // included when stale per the metro-platform-agnostic rule).
-                let deps = DependencyState::new(needs_yarn, needs_pods, false);
+                let deps = DependencyState::new(needs_yarn, needs_pods);
                 let sequence = Recipe::SyncThenStartMetro.expand(&deps);
 
                 let mut sequence = sequence;

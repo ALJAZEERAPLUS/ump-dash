@@ -86,19 +86,16 @@ pub struct DependencyState {
     pub stale_yarn: bool,
     /// `Podfile.lock` is newer than `ios/Pods/Manifest.lock` (or missing).
     pub stale_pods: bool,
-    /// True if the target about to run is iOS (affects whether pod install runs).
-    pub is_ios_target: bool,
 }
 
 impl DependencyState {
     /// Convenience constructor for the call sites in `src/app/update.rs`.
     /// The data projection from `AppState` is small but repeated — this keeps
     /// the call-site noise low. Pure data — no I/O, callable from tests.
-    pub fn new(stale_yarn: bool, stale_pods: bool, is_ios_target: bool) -> Self {
+    pub fn new(stale_yarn: bool, stale_pods: bool) -> Self {
         Self {
             stale_yarn,
             stale_pods,
-            is_ios_target,
         }
     }
 }
@@ -173,7 +170,6 @@ mod tests {
         DependencyState {
             stale_yarn: false,
             stale_pods: false,
-            is_ios_target: false,
         }
     }
 
@@ -181,7 +177,6 @@ mod tests {
         DependencyState {
             stale_yarn: true,
             stale_pods: true,
-            is_ios_target: true,
         }
     }
 
@@ -189,7 +184,6 @@ mod tests {
         DependencyState {
             stale_yarn: true,
             stale_pods: true,
-            is_ios_target: false,
         }
     }
 
@@ -359,7 +353,7 @@ mod tests {
 
     #[test]
     fn resolve_ios_yarn_stale_pods_fresh_adds_only_yarn() {
-        let ctx = DependencyState::new(true, false, true);
+        let ctx = DependencyState::new(true, false);
         assert_eq!(resolve(ios_spec(), &ctx), vec![CommandSpec::YarnInstall, ios_spec()]);
     }
 
