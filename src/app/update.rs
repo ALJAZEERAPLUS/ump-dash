@@ -849,6 +849,93 @@ fn confirmation_required(spec_label: &str) -> AgentOutcome {
     }
 }
 
+fn valid_agent_branch_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    !trimmed.is_empty()
+        && !trimmed.starts_with('-')
+        && !Path::new(trimmed).is_absolute()
+        && !trimmed.contains('\\')
+        && !trimmed.contains("..")
+}
+
+fn worktree_op_already_in_flight(state: &AppState) -> Option<AgentOutcome> {
+    if state.worktree_browser.worktree_op_in_flight {
+        Some(AgentOutcome::Error {
+            message: "worktree operation already in flight".into(),
+        })
+    } else {
+        None
+    }
+}
+
+fn remove_worktree_for_agent(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    target_path: PathBuf,
+) -> AgentOutcome {
+    if target_path == state.app_config.repo_root {
+        return AgentOutcome::Error {
+            message: "Cannot remove the main worktree".into(),
+        };
+    }
+
+    let Some(wt) = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|wt| wt.path == target_path)
+        .cloned()
+    else {
+        return AgentOutcome::Error {
+            message: format!("Unknown target worktree: {}", target_path.display()),
+        };
+    };
+
+    if state
+        .worktrees
+        .get(&wt.id)
+        .map(|slice| slice.metro.is_running())
+        .unwrap_or(false)
+    {
+        state.metro_state.active_worktree_path = Some(wt.path.clone());
+        effects.extend(update(state, Action::MetroStop));
+    }
+
+    state.worktree_browser.worktrees.retain(|entry| entry.id != wt.id);
+    if state.worktree_browser.worktrees.is_empty() {
+        state.worktree_browser.worktree_table_state.select(None);
+        state.worktree_browser.selected_worktree_id = None;
+        state.metro_state.active_worktree_path = None;
+    } else {
+        let idx = state
+            .worktree_browser
+            .worktree_table_state
+            .selected()
+            .unwrap_or(0)
+            .min(state.worktree_browser.worktrees.len() - 1);
+        state
+            .worktree_browser
+            .worktree_table_state
+            .select(Some(idx));
+        state.worktree_browser.selected_worktree_id =
+            Some(state.worktree_browser.worktrees[idx].id.clone());
+        state.metro_state.active_worktree_path =
+            Some(state.worktree_browser.worktrees[idx].path.clone());
+    }
+
+    state.worktree_browser.worktree_op_in_flight = true;
+    let target = wt.path.to_string_lossy().to_string();
+    effects.push(Effect::RemoveWorktree {
+        repo_root: state.app_config.repo_root.clone(),
+        path: wt.path,
+    });
+
+    AgentOutcome::WorktreeOperationStarted {
+        operation: "delete_worktree".into(),
+        target,
+    }
+}
+
 /// Dispatch a resolved agent request against its worktree, returning the
 /// lock/block outcome and pushing any spawn/metro effects.
 fn handle_agent_request(
@@ -902,6 +989,60 @@ fn handle_agent_request(
                 vec![CommandSpec::ShellCommand { command }],
                 false,
             )
+        }
+        AgentRequest::CreateWorktree {
+            branch,
+            base_branch,
+            confirm,
+        } => {
+            if !confirm {
+                return confirmation_required("create worktree");
+            }
+            if let Some(outcome) = worktree_op_already_in_flight(state) {
+                return outcome;
+            }
+            let branch = branch.trim().to_string();
+            if !valid_agent_branch_name(&branch) {
+                return AgentOutcome::Error {
+                    message: "invalid branch name for worktree creation".into(),
+                };
+            }
+            state.worktree_browser.worktree_op_in_flight = true;
+            if let Some(base_branch) = base_branch {
+                let base_branch = base_branch.trim().to_string();
+                if !valid_agent_branch_name(&base_branch) {
+                    state.worktree_browser.worktree_op_in_flight = false;
+                    return AgentOutcome::Error {
+                        message: "invalid base branch name for worktree creation".into(),
+                    };
+                }
+                effects.push(Effect::AddWorktreeNewBranch {
+                    repo_root: state.app_config.repo_root.clone(),
+                    new: branch.clone(),
+                    base: base_branch,
+                });
+            } else {
+                effects.push(Effect::AddWorktree {
+                    repo_root: state.app_config.repo_root.clone(),
+                    branch: branch.clone(),
+                });
+            }
+            AgentOutcome::WorktreeOperationStarted {
+                operation: "create_worktree".into(),
+                target: branch,
+            }
+        }
+        AgentRequest::DeleteWorktree {
+            target_worktree,
+            confirm,
+        } => {
+            if !confirm {
+                return confirmation_required("delete worktree");
+            }
+            if let Some(outcome) = worktree_op_already_in_flight(state) {
+                return outcome;
+            }
+            remove_worktree_for_agent(state, effects, PathBuf::from(target_worktree))
         }
         AgentRequest::ResetHard { confirm } => {
             if !confirm {

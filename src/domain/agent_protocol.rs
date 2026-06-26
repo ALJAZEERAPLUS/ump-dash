@@ -83,6 +83,20 @@ pub enum AgentRequest {
     ResetHard { confirm: bool },
     /// `rm -rf node_modules`. Destructive — requires `confirm`.
     RmNodeModules { confirm: bool },
+    /// Create a worktree. With `base_branch`, `branch` is created as a new
+    /// branch from that base; without it, `branch` is checked out directly.
+    /// Requires `confirm` because it mutates local git worktree state.
+    CreateWorktree {
+        branch: String,
+        base_branch: Option<String>,
+        confirm: bool,
+    },
+    /// Delete an explicitly named worktree path. Destructive — requires
+    /// `confirm`, and `update()` refuses the main repo root.
+    DeleteWorktree {
+        target_worktree: String,
+        confirm: bool,
+    },
     /// Read-only: full pre-flight picture of the worktree.
     GetWorktreeStatus,
     /// Read-only: running task + queued specs.
@@ -120,6 +134,10 @@ pub enum AgentOutcome {
     Cancelled { spec_label: String },
     /// Nothing was running to cancel.
     NothingToCancel,
+    /// A worktree create/delete request was accepted and dispatched as an async
+    /// worktree effect. The final result surfaces through the dashboard's
+    /// normal worktree refresh/error state.
+    WorktreeOperationStarted { operation: String, target: String },
     /// The request could not be processed (e.g. unknown worktree).
     Error { message: String },
 }
@@ -203,6 +221,15 @@ mod tests {
                 command: "ls".into(),
                 confirm: true,
             },
+            AgentRequest::CreateWorktree {
+                branch: "feature/fresh".into(),
+                base_branch: Some("main".into()),
+                confirm: true,
+            },
+            AgentRequest::DeleteWorktree {
+                target_worktree: "/tmp/wt-2".into(),
+                confirm: true,
+            },
             AgentRequest::GetLogs { tail: Some(20) },
             AgentRequest::Cancel,
         ];
@@ -232,6 +259,10 @@ mod tests {
             AgentOutcome::MetroStarting { port: Some(8081) },
             AgentOutcome::MetroAlready { port: 8082 },
             AgentOutcome::NothingToCancel,
+            AgentOutcome::WorktreeOperationStarted {
+                operation: "create_worktree".into(),
+                target: "feature/fresh".into(),
+            },
             AgentOutcome::Error {
                 message: "unknown worktree".into(),
             },

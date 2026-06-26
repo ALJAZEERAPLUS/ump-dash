@@ -255,7 +255,12 @@ working directory).
 
 - To build without launching, use `build`. To force a dependency sync, use
   `sync_deps` — both are usually unnecessary.
-- Destructive tools (`shell`, `clean`, `reset_hard`) require `confirm=true`.
+- To create or delete dashboard-managed worktrees when explicitly asked, use
+  `create_worktree` or `delete_worktree`. Both require `confirm=true`; deletion
+  also requires an explicit `target_worktree` absolute path and refuses the main
+  repo root.
+- Destructive tools (`shell`, `clean`, `reset_hard`, `delete_worktree`) require
+  `confirm=true`.
 "#;
 
 /// Builds the `.codex/config.toml` content that registers the embedded MCP
@@ -330,8 +335,11 @@ changes.
 
 - `build`, `sync_deps`, and `start_metro` are optional diagnostics and are
   usually unnecessary before `run_ios` or `run_android`.
-- Destructive tools such as `shell`, `clean`, and `reset_hard` require explicit
-  confirmation.
+- When explicitly asked to manage worktrees, use `create_worktree` or
+  `delete_worktree`; both require `confirm=true`, and deletion requires an
+  explicit `target_worktree` absolute path.
+- Destructive tools such as `shell`, `clean`, `reset_hard`, and
+  `delete_worktree` require explicit confirmation.
 "#;
 
 /// Builds the Codex/OpenAI skill manifest (`agents/openai.yaml`) for the seeded

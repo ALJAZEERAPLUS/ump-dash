@@ -184,6 +184,31 @@ struct ConfirmArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct CreateWorktreeArgs {
+    /// Absolute path of your current worktree. Used to authorize the request
+    /// against the dashboard's known worktree set.
+    worktree: String,
+    /// Branch to check out. If base_branch is set, this is the new branch name.
+    branch: String,
+    /// Optional base branch name for creating a new branch worktree. Use names
+    /// like "main" or "rc-10.0.0", not "origin/main".
+    base_branch: Option<String>,
+    /// Must be true — worktree creation mutates local git state.
+    confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct DeleteWorktreeArgs {
+    /// Absolute path of your current worktree. Used to authorize the request
+    /// against the dashboard's known worktree set.
+    worktree: String,
+    /// Absolute path of the worktree to delete. The main repo root is refused.
+    target_worktree: String,
+    /// Must be true — deletion runs `git worktree remove --force`.
+    confirm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct DevicesArgs {
     /// "ios" or "android".
     platform: String,
@@ -376,6 +401,43 @@ impl McpToolServer {
                 .request(
                     a.worktree,
                     AgentRequest::RmNodeModules {
+                        confirm: a.confirm.unwrap_or(false),
+                    },
+                )
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Create a git worktree. Pass branch to check out an existing branch; include base_branch (without origin/) to create branch from that base. Requires confirm=true."
+    )]
+    async fn create_worktree(&self, Parameters(a): Parameters<CreateWorktreeArgs>) -> String {
+        json(
+            &self
+                .gateway
+                .request(
+                    a.worktree,
+                    AgentRequest::CreateWorktree {
+                        branch: a.branch,
+                        base_branch: a.base_branch,
+                        confirm: a.confirm.unwrap_or(false),
+                    },
+                )
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Delete a git worktree by absolute path using `git worktree remove --force`. Requires target_worktree and confirm=true; refuses the main repo root."
+    )]
+    async fn delete_worktree(&self, Parameters(a): Parameters<DeleteWorktreeArgs>) -> String {
+        json(
+            &self
+                .gateway
+                .request(
+                    a.worktree,
+                    AgentRequest::DeleteWorktree {
+                        target_worktree: a.target_worktree,
                         confirm: a.confirm.unwrap_or(false),
                     },
                 )

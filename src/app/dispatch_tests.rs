@@ -5051,6 +5051,202 @@ mod agent_requests {
     }
 
     #[test]
+    fn create_worktree_without_confirm_is_blocked() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::CreateWorktree {
+                    branch: "feature/new-dashboard".into(),
+                    base_branch: None,
+                    confirm: false,
+                },
+            ),
+        );
+
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::Blocked {
+                reason: BlockReason::ConfirmationRequired { .. }
+            }
+        ));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::AddWorktree { .. }))
+        );
+    }
+
+    #[test]
+    fn create_worktree_for_existing_branch_dispatches_add_worktree() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::CreateWorktree {
+                    branch: "feature/existing".into(),
+                    base_branch: None,
+                    confirm: true,
+                },
+            ),
+        );
+
+        assert!(state.worktree_browser.worktree_op_in_flight);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::AddWorktree { branch, .. },
+                    Effect::AgentReply {
+                        outcome: AgentOutcome::WorktreeOperationStarted { operation, target },
+                        ..
+                    }
+                ] if branch == "feature/existing"
+                    && operation == "create_worktree"
+                    && target == "feature/existing"
+            ),
+            "expected create worktree effect and started reply, got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn create_worktree_from_base_dispatches_new_branch_effect() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::CreateWorktree {
+                    branch: "feature/fresh".into(),
+                    base_branch: Some("main".into()),
+                    confirm: true,
+                },
+            ),
+        );
+
+        assert!(state.worktree_browser.worktree_op_in_flight);
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::AddWorktreeNewBranch { new, base, .. },
+                    Effect::AgentReply {
+                        outcome: AgentOutcome::WorktreeOperationStarted { operation, target },
+                        ..
+                    }
+                ] if new == "feature/fresh"
+                    && base == "main"
+                    && operation == "create_worktree"
+                    && target == "feature/fresh"
+            ),
+            "expected new-branch worktree effect and started reply, got {effects:?}"
+        );
+    }
+
+    #[test]
+    fn delete_worktree_requires_confirm() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-1", "wt-2");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::DeleteWorktree {
+                    target_worktree: "/tmp/wt-2".into(),
+                    confirm: false,
+                },
+            ),
+        );
+
+        assert!(matches!(
+            outcome(&effects),
+            AgentOutcome::Blocked {
+                reason: BlockReason::ConfirmationRequired { .. }
+            }
+        ));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RemoveWorktree { .. }))
+        );
+    }
+
+    #[test]
+    fn delete_worktree_blocks_main_repo_root() {
+        let mut state = base_state();
+        state.app_config.repo_root = std::path::PathBuf::from("/tmp/wt-1");
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::DeleteWorktree {
+                    target_worktree: "/tmp/wt-1".into(),
+                    confirm: true,
+                },
+            ),
+        );
+
+        assert!(matches!(outcome(&effects), AgentOutcome::Error { .. }));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::RemoveWorktree { .. }))
+        );
+    }
+
+    #[test]
+    fn delete_worktree_dispatches_remove_for_explicit_target() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-1", "wt-2");
+
+        let effects = update(
+            &mut state,
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::DeleteWorktree {
+                    target_worktree: "/tmp/wt-2".into(),
+                    confirm: true,
+                },
+            ),
+        );
+
+        assert!(state.worktree_browser.worktree_op_in_flight);
+        assert!(
+            state
+                .worktree_browser
+                .worktrees
+                .iter()
+                .all(|wt| wt.path != std::path::Path::new("/tmp/wt-2"))
+        );
+        assert!(
+            matches!(
+                effects.as_slice(),
+                [
+                    Effect::RemoveWorktree { path, .. },
+                    Effect::AgentReply {
+                        outcome: AgentOutcome::WorktreeOperationStarted { operation, target },
+                        ..
+                    }
+                ] if path == &std::path::PathBuf::from("/tmp/wt-2")
+                    && operation == "delete_worktree"
+                    && target == "/tmp/wt-2"
+            ),
+            "expected remove worktree effect and started reply, got {effects:?}"
+        );
+    }
+
+    #[test]
     fn run_ios_requires_device_id() {
         let mut state = base_state();
         seed_one_worktree_id(&mut state, "wt-1");
