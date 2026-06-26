@@ -24,7 +24,7 @@ use crate::domain::command::{
     CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant, android_avd_name,
     android_boot_avd_command,
 };
-use crate::domain::pipeline::{DependencyState, Recipe};
+use crate::domain::pipeline::{resolve, DependencyState, Recipe};
 use crate::domain::ports::device_port::DeviceKind;
 use crate::domain::review::{PullRequest, PullRequestFilter};
 use crate::domain::task::ExitStatus;
@@ -940,7 +940,7 @@ fn handle_agent_request(
         }
         AgentRequest::Build { install } => {
             let deps = agent_deps_for(state, wt_id, false);
-            let mut seq = Recipe::SyncThenRun(CommandSpec::RnReleaseBuild).expand(&deps);
+            let mut seq = resolve(CommandSpec::RnReleaseBuild, &deps);
             if install {
                 seq.push(CommandSpec::AdbInstallApk);
             }
@@ -1262,7 +1262,7 @@ fn dispatch_run(
         _ => (false, String::new()),
     };
     let deps = agent_deps_for(state, wt_id, is_ios);
-    let mut seq = Recipe::SyncThenRun(spec).expand(&deps);
+    let mut seq = resolve(spec, &deps);
     // Cold-boot a stopped emulator before the run (parity with the UI).
     if !is_ios && let Some(avd) = android_avd_name(&device_id) {
         let boot = CommandSpec::ShellCommand {
@@ -1972,7 +1972,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         // the inline yarn/pod sequencing. Auto-sync fast path —
                         // skip the modal, expand the recipe, queue + dispatch.
                         let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
-                        let mut sequence = Recipe::SyncThenRun(spec).expand(&deps);
+                        let mut sequence = resolve(spec, &deps);
                         let first = sequence.remove(0);
 
                         // D-12: push to slice queue for the originating worktree.
@@ -3475,7 +3475,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // commands ever set needs_pods=true at the modal-construction
                 // site (CommandRun stale check).
                 let deps = DependencyState::new(needs_yarn, needs_pods, needs_pods);
-                let mut sequence = Recipe::SyncThenRun(*run_command).expand(&deps);
+                let mut sequence = resolve(*run_command, &deps);
 
                 // Guaranteed non-empty: we only get here from the modal which only
                 // appears when needs_yarn || needs_pods, so sequence has ≥2 elements.
