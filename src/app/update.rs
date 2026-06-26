@@ -41,7 +41,7 @@ use std::path::{Path, PathBuf};
 // queue-drain action), and direct `active_worktree_path` updates respectively.
 //
 // Site → Recipe variant mapping:
-//   SyncBeforeRunAccept (auto-sync fast path + modal accept) → Recipe::SyncThenRun
+//   SyncBeforeRunAccept (auto-sync fast path + modal accept) → resolve()
 //   SyncBeforeMetroAccept (modal accept) + WorktreeSwitch auto-sync → Recipe::SyncThenStartMetro
 //   CleanConfirm                                                    → Recipe::Clean
 //   RnReleaseBuild dispatch                                         → Recipe::ReleaseBuildAndInstall
@@ -555,7 +555,7 @@ fn dispatch_command_for_worktree(
 // MCP agent request handling (Action::Agent).
 //
 // Pure — reuses the same dispatch primitives the keyboard path uses
-// (`dispatch_command_for_worktree` collision gate, `Recipe::SyncThenRun`,
+// (`dispatch_command_for_worktree` collision gate, `resolve()`,
 // `ensure_metro_for_worktree`) so every collision / dependency / lock decision
 // is shared. Unlike the keyboard path these are worktree-TARGETED (the agent's
 // own worktree, not the UI selection) and orphan-safe: a request that arrives
@@ -1968,7 +1968,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         .as_ref()
                         .is_some_and(|c| c.auto_sync)
                     {
-                        // Plan 13-09 (F-204 site 1): Recipe::SyncThenRun replaces
+                        // Plan 13-09 (F-204 site 1): resolve() replaces
                         // the inline yarn/pod sequencing. Auto-sync fast path —
                         // skip the modal, expand the recipe, queue + dispatch.
                         let deps = DependencyState::new(*yarn_stale, pods_stale, is_ios);
@@ -3467,7 +3467,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 needs_pods,
             }) = state.modal_stack.modal.take()
             {
-                // Plan 13-09 (F-204 site 7): Recipe::SyncThenRun expansion.
+                // Plan 13-09 (F-204 site 7): resolve() expansion.
                 // The modal already encodes the staleness decision in
                 // (needs_yarn, needs_pods); rebuild a DependencyState that
                 // reproduces the same expansion. The is_ios_target flag is

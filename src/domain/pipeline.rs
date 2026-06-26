@@ -37,7 +37,8 @@ impl CommandSpec {
             CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild => vec![Prerequisite::MetroRunning],
-            // Sync prerequisites come from Recipe::SyncThenRun — not per-variant.
+            // Sync prerequisites come from the dependency graph (`deps()` +
+            // `resolve()`), not from this metro-only prerequisite list.
             _ => vec![],
         }
     }
@@ -66,9 +67,6 @@ pub enum Recipe {
     Sequence(Vec<CommandSpec>),
     /// Clean palette expansion — honours CleanOptions toggles + optional sync_after.
     Clean(CleanOptions),
-    /// Front-load yarn/pod sync steps if stale, then run the given command.
-    /// iOS-only for pods per F-204 rule.
-    SyncThenRun(CommandSpec),
     /// Front-load yarn if stale, then start metro.
     /// Native pods are handled by native run/build recipes, not Metro.
     SyncThenStartMetro,
@@ -131,17 +129,6 @@ impl Recipe {
                 }
                 v
             }
-            Recipe::SyncThenRun(cmd) => {
-                let mut v = Vec::new();
-                if deps.stale_yarn {
-                    v.push(CommandSpec::YarnInstall);
-                }
-                if deps.stale_pods && deps.is_ios_target {
-                    v.push(CommandSpec::YarnPodInstall);
-                }
-                v.push(cmd.clone());
-                v
-            }
             Recipe::SyncThenStartMetro => {
                 let mut v = Vec::new();
                 if deps.stale_yarn {
@@ -161,7 +148,8 @@ impl Recipe {
 
 /// Flatten `goal` and its unsatisfied transitive prerequisites into the order
 /// they must run: dependencies first (post-order), de-duplicated, with the goal
-/// last. Pure — no I/O. Replaces `Recipe::SyncThenRun` for run/build commands.
+/// last. Pure — no I/O. This is how run/build commands front-load their yarn/pod
+/// sync steps.
 pub fn resolve(goal: CommandSpec, ctx: &DependencyState) -> Vec<CommandSpec> {
     fn collect(cmd: &CommandSpec, ctx: &DependencyState, out: &mut Vec<CommandSpec>) {
         for dep in cmd.meta().deps {
@@ -247,44 +235,6 @@ mod tests {
         assert_eq!(
             Recipe::Clean(CleanOptions::default()).expand(&fresh_deps()),
             Vec::<CommandSpec>::new()
-        );
-    }
-
-    #[test]
-    fn test_sync_then_run_stale_ios_adds_yarn_and_pods() {
-        let run_cmd = CommandSpec::UmpRunIos {
-            device_id: "udid-1".into(),
-            variant: Some(crate::domain::command::RunVariant::Local),
-        };
-        assert_eq!(
-            Recipe::SyncThenRun(run_cmd.clone()).expand(&stale_deps_ios()),
-            vec![
-                CommandSpec::YarnInstall,
-                CommandSpec::YarnPodInstall,
-                run_cmd
-            ]
-        );
-    }
-
-    #[test]
-    fn test_sync_then_run_stale_android_only_yarn() {
-        // Pods are skipped on Android (is_ios_target = false) — F-204 rule.
-        let run_cmd = CommandSpec::UmpRunAndroid {
-            device_id: "emulator-5554".into(),
-            variant: Some(crate::domain::command::RunVariant::Local),
-        };
-        assert_eq!(
-            Recipe::SyncThenRun(run_cmd.clone()).expand(&stale_deps_android()),
-            vec![CommandSpec::YarnInstall, run_cmd]
-        );
-    }
-
-    #[test]
-    fn test_sync_then_run_fresh_passes_through() {
-        let run_cmd = CommandSpec::YarnLint;
-        assert_eq!(
-            Recipe::SyncThenRun(run_cmd.clone()).expand(&fresh_deps()),
-            vec![run_cmd]
         );
     }
 
@@ -413,22 +363,4 @@ mod tests {
         assert_eq!(resolve(ios_spec(), &ctx), vec![CommandSpec::YarnInstall, ios_spec()]);
     }
 
-    #[test]
-    fn resolve_equivalent_to_sync_then_run_across_combos() {
-        for (y, p) in [(false, false), (true, false), (false, true), (true, true)] {
-            // iOS call sites pass is_ios_target=true; android pass false.
-            let ctx_ios = DependencyState::new(y, p, true);
-            assert_eq!(
-                resolve(ios_spec(), &ctx_ios),
-                Recipe::SyncThenRun(ios_spec()).expand(&ctx_ios),
-                "ios mismatch at stale_yarn={y} stale_pods={p}"
-            );
-            let ctx_android = DependencyState::new(y, p, false);
-            assert_eq!(
-                resolve(android_spec(), &ctx_android),
-                Recipe::SyncThenRun(android_spec()).expand(&ctx_android),
-                "android mismatch at stale_yarn={y} stale_pods={p}"
-            );
-        }
-    }
 }
