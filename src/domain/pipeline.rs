@@ -37,8 +37,8 @@ impl CommandSpec {
             CommandSpec::UmpRunAndroid { .. }
             | CommandSpec::UmpRunIos { .. }
             | CommandSpec::RnReleaseBuild => vec![Prerequisite::MetroRunning],
-            // Sync prerequisites come from the dependency graph (`deps()` +
-            // `resolve()`), not from this metro-only prerequisite list.
+            // Sync prerequisites come from the dependency graph (`meta().deps`
+            // + `resolve()`), not from this metro-only prerequisite list.
             _ => vec![],
         }
     }
