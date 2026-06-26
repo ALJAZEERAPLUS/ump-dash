@@ -41,6 +41,17 @@ impl CommandSpec {
             _ => vec![],
         }
     }
+
+    /// True when this command is already satisfied for the given worktree state,
+    /// so it can be skipped when it appears as a prerequisite. Goals (run/build)
+    /// are never "satisfied" — they always run.
+    pub fn is_satisfied(&self, ctx: &DependencyState) -> bool {
+        match self {
+            CommandSpec::YarnInstall => !ctx.stale_yarn,
+            CommandSpec::YarnPodInstall => !ctx.stale_pods,
+            _ => false,
+        }
+    }
 }
 
 /// A single-command or multi-step dispatch unit. The dispatcher reads `Recipe`
@@ -146,6 +157,24 @@ impl Recipe {
             }
         }
     }
+}
+
+/// Flatten `goal` and its unsatisfied transitive prerequisites into the order
+/// they must run: dependencies first (post-order), de-duplicated, with the goal
+/// last. Pure — no I/O. Replaces `Recipe::SyncThenRun` for run/build commands.
+pub fn resolve(goal: CommandSpec, ctx: &DependencyState) -> Vec<CommandSpec> {
+    fn collect(cmd: &CommandSpec, ctx: &DependencyState, out: &mut Vec<CommandSpec>) {
+        for dep in cmd.meta().deps {
+            collect(dep, ctx, out);
+            if !dep.is_satisfied(ctx) && !out.contains(dep) {
+                out.push(dep.clone());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    collect(&goal, ctx, &mut out);
+    out.push(goal);
+    out
 }
 
 #[cfg(test)]
@@ -333,5 +362,73 @@ mod tests {
             CommandSpec::GitFetch.prerequisites(),
             Vec::<Prerequisite>::new()
         );
+    }
+
+    fn ios_spec() -> CommandSpec {
+        CommandSpec::UmpRunIos {
+            device_id: "d".into(),
+            variant: Some(crate::domain::command::RunVariant::Local),
+        }
+    }
+
+    fn android_spec() -> CommandSpec {
+        CommandSpec::UmpRunAndroid {
+            device_id: "e".into(),
+            variant: Some(crate::domain::command::RunVariant::Local),
+        }
+    }
+
+    #[test]
+    fn resolve_ios_stale_matches_sync_then_run() {
+        assert_eq!(
+            resolve(ios_spec(), &stale_deps_ios()),
+            vec![CommandSpec::YarnInstall, CommandSpec::YarnPodInstall, ios_spec()]
+        );
+    }
+
+    #[test]
+    fn resolve_android_stale_skips_pods() {
+        assert_eq!(
+            resolve(android_spec(), &stale_deps_android()),
+            vec![CommandSpec::YarnInstall, android_spec()]
+        );
+    }
+
+    #[test]
+    fn resolve_release_build_stale_adds_yarn() {
+        assert_eq!(
+            resolve(CommandSpec::RnReleaseBuild, &stale_deps_android()),
+            vec![CommandSpec::YarnInstall, CommandSpec::RnReleaseBuild]
+        );
+    }
+
+    #[test]
+    fn resolve_fresh_is_goal_only() {
+        assert_eq!(resolve(ios_spec(), &fresh_deps()), vec![ios_spec()]);
+    }
+
+    #[test]
+    fn resolve_ios_yarn_stale_pods_fresh_adds_only_yarn() {
+        let ctx = DependencyState::new(true, false, true);
+        assert_eq!(resolve(ios_spec(), &ctx), vec![CommandSpec::YarnInstall, ios_spec()]);
+    }
+
+    #[test]
+    fn resolve_equivalent_to_sync_then_run_across_combos() {
+        for (y, p) in [(false, false), (true, false), (false, true), (true, true)] {
+            // iOS call sites pass is_ios_target=true; android pass false.
+            let ctx_ios = DependencyState::new(y, p, true);
+            assert_eq!(
+                resolve(ios_spec(), &ctx_ios),
+                Recipe::SyncThenRun(ios_spec()).expand(&ctx_ios),
+                "ios mismatch at stale_yarn={y} stale_pods={p}"
+            );
+            let ctx_android = DependencyState::new(y, p, false);
+            assert_eq!(
+                resolve(android_spec(), &ctx_android),
+                Recipe::SyncThenRun(android_spec()).expand(&ctx_android),
+                "android mismatch at stale_yarn={y} stale_pods={p}"
+            );
+        }
     }
 }
