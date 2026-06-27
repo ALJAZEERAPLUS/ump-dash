@@ -71,6 +71,7 @@ async fn run_command(
     let mut child = match tokio::process::Command::new(&program)
         .args(&args)
         .current_dir(&worktree_path)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         // CRITICAL: process_group(0) makes the spawned child its own process-group
@@ -299,5 +300,54 @@ mod tests {
         );
         assert!(status.success(), "expected shell success, got {status:?}");
         assert!(saw_output, "expected to stream command output before exit");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_command_does_not_inherit_dashboard_stdin() {
+        let runner = TokioCommandRunner;
+        let mut rx = runner.spawn(
+            CommandSpec::ShellCommand {
+                command: "read -r _ignored; echo after-read".into(),
+            },
+            std::env::temp_dir(),
+            "main".into(),
+        );
+
+        let pid = match rx.recv().await.expect("at least one event") {
+            CommandEvent::ProcessStarted { pid } => pid,
+            other => panic!("expected ProcessStarted first, got {other:?}"),
+        };
+
+        let mut saw_after_read = false;
+        let exited = tokio::time::timeout(std::time::Duration::from_millis(750), async {
+            loop {
+                match rx
+                    .recv()
+                    .await
+                    .expect("channel should stay open until exit")
+                {
+                    CommandEvent::ProcessStarted { .. } => {
+                        panic!("ProcessStarted must be emitted exactly once");
+                    }
+                    CommandEvent::OutputLine(line) => {
+                        if line == "after-read" {
+                            saw_after_read = true;
+                        }
+                    }
+                    CommandEvent::Exited(status) => return status,
+                }
+            }
+        })
+        .await;
+
+        unsafe {
+            let _ = libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+
+        let status = exited.expect(
+            "runner should null stdin so background process groups cannot stop on terminal reads",
+        );
+        assert!(status.success(), "expected shell success, got {status:?}");
+        assert!(saw_after_read, "expected command to continue after stdin EOF");
     }
 }
