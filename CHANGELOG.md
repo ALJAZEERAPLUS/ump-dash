@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-06-30
+
+### New
+- **Agent worktree MCP tools** - agents can now create/delete worktrees, run confirmed shell and clean/reset commands, inspect status/logs, and cancel tasks through the dashboard's normal orchestration path.
+- **Codex agent seeding** - newly created worktrees now receive Codex MCP and skill setup alongside Claude setup, so Codex agents can discover dashboard tools automatically.
+
+### Fixed
+- Worktree creation now supports local-only base branches instead of requiring every base branch to resolve through `origin/`.
+- Command tasks now detach stdin from spawned processes, avoiding hangs when child commands inherit the dashboard terminal.
+
+### Improved
+- Run, build, sync, and agent-triggered commands now share one dependency resolver, keeping prerequisite ordering consistent across keyboard and MCP flows.
+- Worktree terminal tab and pane names now use the worktree directory name directly for shorter, predictable labels.
+
 ## [1.7.0] - 2026-06-23
 
 ### New
