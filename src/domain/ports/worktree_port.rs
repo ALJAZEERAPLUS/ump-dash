@@ -28,8 +28,9 @@ pub trait WorktreePort: Send + Sync {
     /// branch checkout if `-b` fails because the branch already exists.
     async fn add(&self, repo_root: &Path, branch_name: &str) -> anyhow::Result<PathBuf>;
 
-    /// Creates a worktree with a new branch based on `base_branch` (remote
-    /// tracking `origin/<base_branch>`).
+    /// Creates a worktree with a new branch based on `base_branch`.
+    /// Implementations may prefer a remote-tracking branch when available, but
+    /// local-only base branches are valid.
     async fn add_new_branch(
         &self,
         repo_root: &Path,

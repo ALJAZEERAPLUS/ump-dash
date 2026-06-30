@@ -518,8 +518,30 @@ pub async fn list_remote_branches(repo_root: &Path) -> anyhow::Result<Vec<String
     Ok(branches)
 }
 
+async fn resolve_worktree_base_ref(repo_root: &Path, base_branch: &str) -> anyhow::Result<String> {
+    let candidates = [
+        format!("refs/remotes/origin/{base_branch}"),
+        format!("refs/heads/{base_branch}"),
+    ];
+
+    for candidate in candidates {
+        let output = tokio::process::Command::new("git")
+            .args(["show-ref", "--verify", "--quiet", &candidate])
+            .current_dir(repo_root)
+            .output()
+            .await?;
+        if output.status.success() {
+            return Ok(candidate);
+        }
+    }
+
+    anyhow::bail!(
+        "Base branch not found: {base_branch} (checked origin/{base_branch} and local {base_branch})"
+    );
+}
+
 /// Creates a worktree with a new branch based on a given base branch.
-/// Runs `git worktree add -b <new_branch> <path> origin/<base_branch>`.
+/// Prefers `origin/<base_branch>` when present; falls back to a local branch.
 /// Returns the created worktree path on success. Seeding of gitignored local
 /// files happens at the `WorktreePort` boundary (`GitWorktreeAdapter`), not here.
 pub async fn add_worktree_new_branch(
@@ -534,16 +556,10 @@ pub async fn add_worktree_new_branch(
     if worktree_path.exists() {
         anyhow::bail!("Directory already exists: {}", worktree_path.display());
     }
+    let base_ref = resolve_worktree_base_ref(repo_root, base_branch).await?;
     let path_str = worktree_path.to_string_lossy().to_string();
     let output = tokio::process::Command::new("git")
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            new_branch,
-            &path_str,
-            &format!("origin/{base_branch}"),
-        ])
+        .args(["worktree", "add", "-b", new_branch, &path_str, &base_ref])
         .current_dir(repo_root)
         .output()
         .await?;
@@ -771,6 +787,49 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn run_git(repo: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {} failed\nstdout:\n{}\nstderr:\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn add_new_branch_uses_local_base_branch_when_no_origin_ref() {
+        let root = TempDir::new("local-base");
+        let repo = root.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+
+        run_git(&repo, &["init"]);
+        run_git(&repo, &["config", "user.email", "test@example.com"]);
+        run_git(&repo, &["config", "user.name", "Test User"]);
+        fs::write(repo.join("README.md"), b"root\n").unwrap();
+        run_git(&repo, &["add", "README.md"]);
+        run_git(&repo, &["commit", "-m", "initial"]);
+        run_git(&repo, &["switch", "-c", "UMP-6831"]);
+        fs::write(repo.join("feature.txt"), b"feature\n").unwrap();
+        run_git(&repo, &["add", "feature.txt"]);
+        run_git(&repo, &["commit", "-m", "feature"]);
+
+        let worktree_path = add_worktree_new_branch(&repo, "branch-test", "UMP-6831")
+            .await
+            .unwrap();
+
+        assert_eq!(worktree_path, root.path().join("branch-test"));
+        assert!(
+            worktree_path.join("feature.txt").exists(),
+            "new worktree should be based on the local-only branch"
+        );
     }
 
     /// Seeds a flat file present in the repo root but absent in the worktree.
