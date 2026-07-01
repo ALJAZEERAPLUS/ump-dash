@@ -7,6 +7,15 @@ use super::refresh::RefreshSet;
 
 const ANDROID_AVD_PREFIX: &str = "avd:";
 
+pub const PREFERRED_NEW_BRANCH_BASE: &str = "origin/rc-trunk";
+
+pub fn preferred_new_branch_base_index(branches: &[String]) -> usize {
+    branches
+        .iter()
+        .position(|branch| branch.as_str() == PREFERRED_NEW_BRANCH_BASE)
+        .unwrap_or(0)
+}
+
 pub fn android_avd_name(device_id: &str) -> Option<&str> {
     device_id
         .strip_prefix(ANDROID_AVD_PREFIX)

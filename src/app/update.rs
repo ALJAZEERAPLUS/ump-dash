@@ -22,7 +22,7 @@ use crate::domain::agent_protocol::{
 };
 use crate::domain::command::{
     CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant, android_avd_name,
-    android_boot_avd_command,
+    android_boot_avd_command, preferred_new_branch_base_index,
 };
 use crate::domain::pipeline::{resolve, DependencyState, Recipe};
 use crate::domain::ports::device_port::DeviceKind;
@@ -3885,9 +3885,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::BranchesLoaded(branches) => {
+            let selected = if state.modal_stack.pending_new_branch_worktree {
+                preferred_new_branch_base_index(&branches)
+            } else {
+                0
+            };
             state.modal_stack.modal = Some(ModalState::BranchPicker {
                 branches,
-                selected: 0,
+                selected,
                 filter: String::new(),
             });
         }
