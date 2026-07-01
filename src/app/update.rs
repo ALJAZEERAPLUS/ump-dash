@@ -3830,6 +3830,12 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::WorktreeRemoved(path_str) => {
             tracing::info!("worktree removed: {}", path_str);
             state.worktree_browser.worktree_op_in_flight = false;
+            // Delete any native build caches (iOS + Android) this worktree
+            // produced, now that git removal has confirmed. Cached artifacts
+            // otherwise leak under ~/.cache/ump-dash/native-builds/.
+            effects.push(Effect::PruneNativeCache {
+                worktree_path: PathBuf::from(&path_str),
+            });
             // Refresh the worktree list to reflect the removal
             effects.push(Effect::ListWorktrees {
                 repo_root: state.app_config.repo_root.clone(),

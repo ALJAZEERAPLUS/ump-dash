@@ -450,6 +450,28 @@ impl EffectRunner {
                 });
             }
 
+            Effect::PruneNativeCache { worktree_path } => {
+                let native_cache = self.adapters.native_cache.clone();
+                tokio::spawn(async move {
+                    match native_cache.prune_worktree(worktree_path.clone()).await {
+                        Ok(removed) if !removed.is_empty() => {
+                            tracing::info!(
+                                path = %worktree_path.display(),
+                                count = removed.len(),
+                                "pruned native build caches for deleted worktree"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                path = %worktree_path.display(),
+                                "failed to prune native build caches: {e}"
+                            );
+                        }
+                    }
+                });
+            }
+
             Effect::AddWorktree { repo_root, branch } => {
                 let wt = self.adapters.worktrees.clone();
                 let tx = self.action_tx.clone();
@@ -1146,6 +1168,10 @@ mod tests {
                 panic!("expected LookupIos script");
             };
             scripted_result(result)
+        }
+
+        async fn prune_worktree(&self, _worktree_path: PathBuf) -> anyhow::Result<Vec<PathBuf>> {
+            Ok(Vec::new())
         }
 
         async fn store_ios_simulator(
