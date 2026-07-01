@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260701-sq9 | Default new-branch worktree base picker to origin/rc-trunk | 2026-07-01 | 84f618c | [260701-sq9-when-creating-a-new-branch-default-base-](./quick/260701-sq9-when-creating-a-new-branch-default-base-/) |
 | 260630-de7 | Fix dashboard worktree creation when base branch is local-only and not on origin | 2026-06-30 | 8442487 | [260630-de7-fix-dashboard-worktree-creation-when-bas](./quick/260630-de7-fix-dashboard-worktree-creation-when-bas/) |
 | 260626-gp1 | Add MCP tools to create and delete worktrees | 2026-06-26 | 5abd72d | [260626-gp1-carefully-add-ability-to-mcp-to-modify-w](./quick/260626-gp1-carefully-add-ability-to-mcp-to-modify-w/) |
 | 260625-bow | Use worktree directory name (not branch/JIRA) as the single source of truth for Claude/shell/editor tab names | 2026-06-25 | 8c3f3b7 | [260625-bow-when-opening-a-new-terminal-claude-etc-u](./quick/260625-bow-when-opening-a-new-terminal-claude-etc-u/) |
@@ -150,7 +151,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-06-30 - Completed quick task 260630-de7: Fix dashboard worktree creation when base branch is local-only and not on origin
+Last activity: 2026-07-01 - Completed quick task 260701-sq9: Default new-branch worktree base picker to origin/rc-trunk
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
