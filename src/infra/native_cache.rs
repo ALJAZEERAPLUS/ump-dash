@@ -586,6 +586,65 @@ pub fn store_android_reference_in_root(
     })
 }
 
+/// Minimal projection of cache metadata used for pruning: we only need to know
+/// which worktree produced an entry, regardless of platform (iOS/Android
+/// metadata both carry `source_worktree`).
+#[derive(Deserialize)]
+struct PrunableEntryMetadata {
+    source_worktree: String,
+}
+
+/// Removes every native cache entry whose recorded `source_worktree` matches
+/// `worktree_path`, across both the iOS and Android platform directories.
+///
+/// Cache entries are keyed by dependency fingerprint, not by worktree, so a
+/// surviving worktree can share a fingerprint with a deleted one. Matching on
+/// the exact `source_worktree` string (the last worktree to store the entry)
+/// keeps this safe: if a surviving worktree owns the entry, its path is what is
+/// recorded and the deleted path will not match. When the deleted worktree owns
+/// the entry we remove it; any surviving sibling simply rebuilds and re-caches.
+///
+/// Best-effort: entries with missing/unreadable/malformed metadata are skipped,
+/// and a failure to remove one entry does not abort pruning the rest. Returns
+/// the entry directories that were removed.
+pub fn prune_worktree_in_root(root: &Path, worktree_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let target = worktree_path.display().to_string();
+    let mut removed = Vec::new();
+    for platform in [IOS_SIMULATOR_PLATFORM, ANDROID_PLATFORM] {
+        prune_platform_dir(&root.join(platform), &target, &mut removed);
+    }
+    Ok(removed)
+}
+
+fn prune_platform_dir(platform_dir: &Path, target: &str, removed: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(platform_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let entry_dir = entry.path();
+        if !entry_dir.is_dir() {
+            continue;
+        }
+        let metadata_path = entry_dir.join("metadata.json");
+        let Ok(bytes) = std::fs::read(&metadata_path) else {
+            continue;
+        };
+        let Ok(metadata) = serde_json::from_slice::<PrunableEntryMetadata>(&bytes) else {
+            continue;
+        };
+        if metadata.source_worktree != target {
+            continue;
+        }
+        match std::fs::remove_dir_all(&entry_dir) {
+            Ok(()) => removed.push(entry_dir),
+            Err(e) => tracing::warn!(
+                path = %entry_dir.display(),
+                "prune_worktree: failed to remove cache entry: {e}"
+            ),
+        }
+    }
+}
+
 fn has_valid_artifact_digest(algorithm: &str, digest: &str) -> bool {
     algorithm == ARTIFACT_DIGEST_ALGORITHM && !digest.trim().is_empty()
 }
@@ -1081,6 +1140,10 @@ impl NativeCachePort for LocalNativeCache {
         worktree_path: PathBuf,
     ) -> anyhow::Result<IosSimulatorCacheLookup> {
         lookup_ios_simulator_in_root(&self.root(), worktree_path)
+    }
+
+    async fn prune_worktree(&self, worktree_path: PathBuf) -> anyhow::Result<Vec<PathBuf>> {
+        prune_worktree_in_root(&self.root(), &worktree_path)
     }
 
     async fn store_ios_simulator(
@@ -2182,5 +2245,78 @@ mod tests {
             message.contains("launch stderr: launch stderr detail"),
             "unexpected message: {message}"
         );
+    }
+
+    fn seed_cache_entry(root: &Path, platform: &str, name: &str, source_worktree: &str) -> PathBuf {
+        let entry = root.join(platform).join(name);
+        fs::create_dir_all(&entry).unwrap();
+        fs::write(
+            entry.join("metadata.json"),
+            format!("{{\"source_worktree\":\"{source_worktree}\"}}"),
+        )
+        .unwrap();
+        fs::write(entry.join("artifact.bin"), "artifact").unwrap();
+        entry
+    }
+
+    #[test]
+    fn prune_removes_ios_and_android_entries_for_matching_worktree() -> anyhow::Result<()> {
+        let root = TempTree::new("prune-match")?;
+        let target = "/tmp/worktrees/feature-a";
+        let ios = seed_cache_entry(root.path(), IOS_SIMULATOR_PLATFORM, "fp-ios", target);
+        let android = seed_cache_entry(root.path(), ANDROID_PLATFORM, "fp-android", target);
+
+        let removed = prune_worktree_in_root(root.path(), Path::new(target))?;
+
+        assert!(!ios.exists(), "ios entry should be removed");
+        assert!(!android.exists(), "android entry should be removed");
+        assert_eq!(removed.len(), 2);
+        assert!(removed.contains(&ios));
+        assert!(removed.contains(&android));
+        Ok(())
+    }
+
+    #[test]
+    fn prune_keeps_entries_owned_by_other_worktrees() -> anyhow::Result<()> {
+        let root = TempTree::new("prune-other")?;
+        let target = "/tmp/worktrees/feature-a";
+        // Same fingerprint dir name, but last stored by a different (surviving)
+        // worktree — its source_worktree does not match the deleted path.
+        let other = seed_cache_entry(
+            root.path(),
+            ANDROID_PLATFORM,
+            "shared-fp",
+            "/tmp/worktrees/feature-b",
+        );
+        let mine = seed_cache_entry(root.path(), IOS_SIMULATOR_PLATFORM, "fp-ios", target);
+
+        let removed = prune_worktree_in_root(root.path(), Path::new(target))?;
+
+        assert!(other.exists(), "other worktree's entry must be kept");
+        assert!(!mine.exists(), "target worktree's entry should be removed");
+        assert_eq!(removed, vec![mine]);
+        Ok(())
+    }
+
+    #[test]
+    fn prune_ignores_missing_dirs_and_malformed_metadata() -> anyhow::Result<()> {
+        let root = TempTree::new("prune-malformed")?;
+        // No platform dirs exist at all -> no error, nothing removed.
+        assert!(prune_worktree_in_root(root.path(), Path::new("/tmp/none"))?.is_empty());
+
+        // Entry with malformed metadata is skipped, not removed or errored.
+        let bad = root.path().join(ANDROID_PLATFORM).join("bad");
+        fs::create_dir_all(&bad)?;
+        fs::write(bad.join("metadata.json"), "not json")?;
+        // Entry with no metadata at all is skipped.
+        let empty = root.path().join(IOS_SIMULATOR_PLATFORM).join("empty");
+        fs::create_dir_all(&empty)?;
+
+        let removed = prune_worktree_in_root(root.path(), Path::new("/tmp/worktrees/feature-a"))?;
+
+        assert!(removed.is_empty());
+        assert!(bad.exists());
+        assert!(empty.exists());
+        Ok(())
     }
 }
