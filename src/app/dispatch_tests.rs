@@ -1430,6 +1430,47 @@ fn new_branch_base_picker_enter_defaults_to_origin_rc_trunk() {
     );
 }
 
+#[test]
+fn new_branch_base_picker_defaults_to_rc_trunk_from_loaded_remote_names() {
+    let mut state = AppState::default();
+
+    let effects = update(&mut state, Action::WorktreeAddNewBranch);
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListRemoteBranches { .. }]),
+        "new-branch worktree flow should load remote branches first; got {effects:?}"
+    );
+
+    let effects = update(
+        &mut state,
+        Action::BranchesLoaded(vec!["main".into(), "rc-trunk".into(), "release".into()]),
+    );
+    assert!(effects.is_empty());
+    assert_eq!(
+        state.modal_stack.modal,
+        Some(ModalState::BranchPicker {
+            branches: vec!["main".into(), "rc-trunk".into(), "release".into()],
+            selected: 1,
+            filter: String::new(),
+        })
+    );
+
+    let effects = update(&mut state, Action::BranchPickerConfirm);
+
+    assert!(effects.is_empty());
+    assert_eq!(
+        state.modal_stack.pending_new_branch_base,
+        Some("rc-trunk".into())
+    );
+    assert_eq!(
+        state.modal_stack.modal,
+        Some(ModalState::TextInput {
+            prompt: "New branch name:".into(),
+            buffer: String::new(),
+            pending_template: Box::new(CommandSpec::GitPull),
+        })
+    );
+}
+
 mod ump_run_dialog {
     use super::*;
     use crate::domain::ports::device_port::DeviceKind;
