@@ -263,16 +263,20 @@ working directory).
   `confirm=true`.
 "#;
 
-/// Builds the `.codex/config.toml` content that registers the embedded MCP
-/// server with Codex. Merge-safe like `agent_mcp_json`: an existing config's
-/// other `[mcp_servers]` entries and unrelated sections are preserved; only the
-/// `ump-dash` server block is set/refreshed. Pure (no I/O).
-fn agent_codex_config(existing: Option<&str>, port: u16) -> String {
-    use toml::{Table, Value};
+fn codex_dashboard_block(port: u16) -> String {
+    format!(
+        r#"[mcp_servers.ump-dash]
+url = "http://127.0.0.1:{port}/mcp"
+enabled = true
+required = false
+startup_timeout_sec = 3
+tool_timeout_sec = 900
+"#
+    )
+}
 
-    let mut doc: Table = existing
-        .and_then(|s| toml::from_str::<Table>(s).ok())
-        .unwrap_or_default();
+fn upsert_codex_dashboard_table(doc: &mut toml::Table, port: u16) {
+    use toml::{Table, Value};
 
     let servers = doc
         .entry("mcp_servers")
@@ -295,8 +299,93 @@ fn agent_codex_config(existing: Option<&str>, port: u16) -> String {
         .as_table_mut()
         .expect("mcp_servers is a table")
         .insert("ump-dash".into(), Value::Table(entry));
+}
 
-    toml::to_string_pretty(&doc).unwrap_or_default()
+fn serialize_codex_with_dashboard(mut doc: toml::Table, port: u16) -> String {
+    upsert_codex_dashboard_table(&mut doc, port);
+    let mut output = toml::to_string_pretty(&doc).unwrap_or_default();
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+/// Locates a canonical dashboard table, including the quoted form Codex may
+/// write, and returns its byte range through (but not including) the next TOML
+/// table header.
+fn codex_dashboard_section_range(config: &str) -> Option<(usize, usize)> {
+    let mut offset = 0;
+    let mut start = None;
+
+    for line in config.split_inclusive('\n') {
+        let trimmed = line.trim();
+        if let Some(section_start) = start {
+            if trimmed.starts_with('[') {
+                return Some((section_start, offset));
+            }
+        } else if matches!(
+            trimmed,
+            "[mcp_servers.ump-dash]" | "[mcp_servers.\"ump-dash\"]"
+        ) {
+            start = Some(offset);
+        }
+        offset += line.len();
+    }
+
+    start.map(|section_start| (section_start, config.len()))
+}
+
+fn append_codex_dashboard_block(existing: &str, block: &str) -> String {
+    let mut output = existing.to_string();
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    if !output.is_empty() && !output.ends_with("\n\n") {
+        output.push('\n');
+    }
+    output.push_str(block);
+    output
+}
+
+/// Builds the `.codex/config.toml` content that registers the embedded MCP
+/// server with Codex. Valid authored config is inspected semantically but kept
+/// byte-for-byte: a dashboard block is appended or only its existing canonical
+/// table is replaced. Invalid/non-table/non-canonical forms recover through the
+/// parsed-table serializer. Pure (no I/O).
+fn agent_codex_config(existing: Option<&str>, port: u16) -> String {
+    let block = codex_dashboard_block(port);
+    let Some(existing) = existing else {
+        return block;
+    };
+    let Ok(doc) = toml::from_str::<toml::Table>(existing) else {
+        return block;
+    };
+
+    let Some(servers) = doc.get("mcp_servers") else {
+        return append_codex_dashboard_block(existing, &block);
+    };
+    let Some(servers) = servers.as_table() else {
+        return serialize_codex_with_dashboard(doc, port);
+    };
+
+    if !servers.contains_key("ump-dash") {
+        return append_codex_dashboard_block(existing, &block);
+    }
+    let Some((start, end)) = codex_dashboard_section_range(existing) else {
+        return serialize_codex_with_dashboard(doc, port);
+    };
+
+    let mut output = String::with_capacity(existing.len() + block.len());
+    output.push_str(&existing[..start]);
+    output.push_str(&block);
+    if end < existing.len() {
+        output.push('\n');
+        output.push_str(&existing[end..]);
+    }
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
 }
 
 /// Codex reads `.agents/skills/`, so the run-app skill is seeded there too with
@@ -396,6 +485,9 @@ fn write_merged(path: &Path, label: &str, merge: impl FnOnce(Option<&str>) -> St
     }
     let existing = std::fs::read_to_string(path).ok();
     let content = merge(existing.as_deref());
+    if existing.as_deref() == Some(content.as_str()) {
+        return;
+    }
     match std::fs::write(path, content) {
         Ok(_) => tracing::info!("provision: wrote {label}"),
         Err(e) => tracing::warn!("provision: write {label} failed: {e}"),
@@ -405,9 +497,9 @@ fn write_merged(path: &Path, label: &str, merge: impl FnOnce(Option<&str>) -> St
 /// Best-effort provisioning of agent files into a freshly-created worktree
 /// (mirrors `seed_worktree_files`' log-on-error, non-fatal style). Seeds both
 /// Claude Code and Codex so an agent in either tool discovers the dashboard:
-/// - `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex): MCP server
-///   registration, merge-safe so other servers/sections are preserved and the
-///   `ump-dash` endpoint stays current.
+/// - `.mcp.json` (Claude Code): semantic merge preserves team server values.
+/// - `.codex/config.toml` (Codex): valid authored text, comments, team servers,
+///   and unrelated sections are preserved while the endpoint stays current.
 /// - `.claude/skills/run-app/SKILL.md`, `.agents/skills/run-app/SKILL.md`, and
 ///   its `agents/openai.yaml` manifest (Codex): the run-app skill, written only
 ///   when absent (never clobbers a user's edits).
@@ -1213,29 +1305,31 @@ name = \"me\"
     /// team server tables, comments, and following sections remain authored.
     #[test]
     fn agent_codex_config_refreshes_ump_dash_only() {
-        let existing = format!(
-            "{TEAM_CODEX_CONFIG}\n[mcp_servers.\"ump-dash\"]\nurl = \"http://127.0.0.1:7000/mcp\"\nenabled = false\nrequired = true\nstartup_timeout_sec = 99\ntool_timeout_sec = 1\n\n[profile]\nname = \"me\"\n"
-        );
-        let before: toml::Table = toml::from_str(&existing).unwrap();
-        let content = agent_codex_config(Some(&existing), 8790);
-        let after: toml::Table = toml::from_str(&content).unwrap();
-
-        for name in TEAM_SERVER_NAMES {
-            assert_eq!(
-                after["mcp_servers"][name], before["mcp_servers"][name],
-                "team server {name} must remain unchanged"
+        for header in ["[mcp_servers.ump-dash]", "[mcp_servers.\"ump-dash\"]"] {
+            let existing = format!(
+                "{TEAM_CODEX_CONFIG}\n{header}\nurl = \"http://127.0.0.1:7000/mcp\"\nenabled = false\nrequired = true\nstartup_timeout_sec = 99\ntool_timeout_sec = 1\n\n[profile]\nname = \"me\"\n"
             );
-        }
-        assert_eq!(after["profile"], before["profile"]);
-        assert!(content.contains("# Per-user OAuth: `codex mcp login atlassian`"));
-        assert_eq!(content.matches("ump-dash").count(), 1);
+            let before: toml::Table = toml::from_str(&existing).unwrap();
+            let content = agent_codex_config(Some(&existing), 8790);
+            let after: toml::Table = toml::from_str(&content).unwrap();
 
-        let dashboard = &after["mcp_servers"]["ump-dash"];
-        assert_eq!(dashboard["url"].as_str(), Some("http://127.0.0.1:8790/mcp"));
-        assert_eq!(dashboard["enabled"].as_bool(), Some(true));
-        assert_eq!(dashboard["required"].as_bool(), Some(false));
-        assert_eq!(dashboard["startup_timeout_sec"].as_integer(), Some(3));
-        assert_eq!(dashboard["tool_timeout_sec"].as_integer(), Some(900));
+            for name in TEAM_SERVER_NAMES {
+                assert_eq!(
+                    after["mcp_servers"][name], before["mcp_servers"][name],
+                    "team server {name} must remain unchanged"
+                );
+            }
+            assert_eq!(after["profile"], before["profile"]);
+            assert!(content.contains("# Per-user OAuth: `codex mcp login atlassian`"));
+            assert_eq!(content.matches("ump-dash").count(), 1);
+
+            let dashboard = &after["mcp_servers"]["ump-dash"];
+            assert_eq!(dashboard["url"].as_str(), Some("http://127.0.0.1:8790/mcp"));
+            assert_eq!(dashboard["enabled"].as_bool(), Some(true));
+            assert_eq!(dashboard["required"].as_bool(), Some(false));
+            assert_eq!(dashboard["startup_timeout_sec"].as_integer(), Some(3));
+            assert_eq!(dashboard["tool_timeout_sec"].as_integer(), Some(900));
+        }
     }
 
     #[test]
@@ -1256,6 +1350,24 @@ name = \"me\"
             doc["mcp_servers"]["ump-dash"]["url"].as_str(),
             Some("http://127.0.0.1:8790/mcp")
         );
+    }
+
+    #[test]
+    fn agent_codex_config_recovers_noncanonical_ump_dash_entry() {
+        let existing = r#"mcp_servers = { "ump-dash" = { url = "http://127.0.0.1:7000/mcp", enabled = false }, other = { url = "http://example/other" } }
+"#;
+        let content = agent_codex_config(Some(existing), 8790);
+        let doc: toml::Table = toml::from_str(&content).unwrap();
+
+        assert_eq!(
+            doc["mcp_servers"]["ump-dash"]["url"].as_str(),
+            Some("http://127.0.0.1:8790/mcp")
+        );
+        assert_eq!(
+            doc["mcp_servers"]["other"]["url"].as_str(),
+            Some("http://example/other")
+        );
+        assert_eq!(content.matches("ump-dash").count(), 1);
     }
 
     /// Provisioning writes the Codex config, the `.agents` run-app skill, and the
