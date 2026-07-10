@@ -767,6 +767,80 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    const TEAM_MCP_JSON: &str = r#"{
+  "mcpServers": {
+    "sauce-api-mcp-core": {
+      "command": "./scripts/mcp-with-env.sh",
+      "args": ["uvx", "--from", "sauce-api-mcp==1.2.2", "sauce-api-mcp"]
+    },
+    "sauce-api-mcp-rdc": {
+      "command": "./scripts/mcp-with-env.sh",
+      "args": ["uvx", "--from", "sauce-api-mcp==1.2.2", "sauce-api-mcp-rdc"]
+    },
+    "atlassian": {
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/mcp"
+    },
+    "bugsnag": {
+      "command": "./scripts/mcp-with-env.sh",
+      "args": ["npx", "-y", "@smartbear/mcp@0.25.1"]
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "amplitude": {
+      "type": "http",
+      "url": "https://mcp.amplitude.com/mcp"
+    }
+  }
+}"#;
+
+    const TEAM_CODEX_CONFIG: &str = r#"# Project-scoped Codex MCP config (read for trusted projects; shared between
+# the Codex CLI and IDE extension). Mirrors .mcp.json, the Claude Code
+# equivalent — keep the two in sync. See docs/mcp-setup.md.
+
+# Sauce Labs (one PyPI package, two entry points). Credentials come from the
+# gitignored .env via the wrapper. First launch downloads the package via uvx,
+# which can exceed the default startup timeout.
+[mcp_servers.sauce-api-mcp-core]
+command = "./scripts/mcp-with-env.sh"
+args = ["uvx", "--from", "sauce-api-mcp==1.2.2", "sauce-api-mcp"]
+startup_timeout_sec = 60
+
+[mcp_servers.sauce-api-mcp-rdc]
+command = "./scripts/mcp-with-env.sh"
+args = ["uvx", "--from", "sauce-api-mcp==1.2.2", "sauce-api-mcp-rdc"]
+startup_timeout_sec = 60
+
+# Per-user OAuth: `codex mcp login atlassian`
+[mcp_servers.atlassian]
+url = "https://mcp.atlassian.com/v1/mcp"
+
+[mcp_servers.bugsnag]
+command = "./scripts/mcp-with-env.sh"
+args = ["npx", "-y", "@smartbear/mcp@0.25.1"]
+
+# Disabled until design seats are provisioned — mirrors disabledMcpjsonServers
+# in .claude/settings.json. Once enabled: `codex mcp login figma`.
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+enabled = false
+
+# Per-user OAuth: `codex mcp login amplitude`
+[mcp_servers.amplitude]
+url = "https://mcp.amplitude.com/mcp"
+"#;
+
+    const TEAM_SERVER_NAMES: [&str; 6] = [
+        "sauce-api-mcp-core",
+        "sauce-api-mcp-rdc",
+        "atlassian",
+        "bugsnag",
+        "figma",
+        "amplitude",
+    ];
+
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
     /// Unique temp dir per call; removed when the returned guard drops.
@@ -929,7 +1003,64 @@ mod tests {
             "pre-existing server must be preserved"
         );
         assert_eq!(v["someOtherKey"], 42, "other top-level keys must survive");
-        assert_eq!(v["mcpServers"]["ump-dash"]["url"], "http://127.0.0.1:9000/mcp");
+        assert_eq!(
+            v["mcpServers"]["ump-dash"]["url"],
+            "http://127.0.0.1:9000/mcp"
+        );
+    }
+
+    /// The tracked team config introduced by UMP PR #3992 keeps every shared
+    /// server unchanged while gaining the local dashboard endpoint.
+    #[test]
+    fn agent_mcp_json_merges_pr_3992_team_servers() {
+        let before: serde_json::Value = serde_json::from_str(TEAM_MCP_JSON).unwrap();
+        let content = agent_mcp_json(Some(TEAM_MCP_JSON), 8790);
+        let after: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        for name in TEAM_SERVER_NAMES {
+            assert_eq!(
+                after["mcpServers"][name], before["mcpServers"][name],
+                "team server {name} must remain unchanged"
+            );
+        }
+        assert_eq!(after["mcpServers"].as_object().unwrap().len(), 7);
+        assert_eq!(after["mcpServers"]["ump-dash"]["type"], "http");
+        assert_eq!(
+            after["mcpServers"]["ump-dash"]["url"],
+            "http://127.0.0.1:8790/mcp"
+        );
+    }
+
+    /// Refreshing an existing endpoint changes only `ump-dash`; the PR #3992
+    /// siblings and unrelated top-level values survive.
+    #[test]
+    fn agent_mcp_json_refreshes_ump_dash_only() {
+        let mut before: serde_json::Value = serde_json::from_str(TEAM_MCP_JSON).unwrap();
+        before["mcpServers"]["ump-dash"] = serde_json::json!({
+            "type": "http",
+            "url": "http://127.0.0.1:7000/mcp",
+            "legacy": true
+        });
+        before["someOtherKey"] = serde_json::json!(42);
+
+        let input = serde_json::to_string_pretty(&before).unwrap();
+        let content = agent_mcp_json(Some(&input), 8790);
+        let after: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        for name in TEAM_SERVER_NAMES {
+            assert_eq!(
+                after["mcpServers"][name], before["mcpServers"][name],
+                "team server {name} must remain unchanged"
+            );
+        }
+        assert_eq!(after["someOtherKey"], 42);
+        assert_eq!(
+            after["mcpServers"]["ump-dash"],
+            serde_json::json!({
+                "type": "http",
+                "url": "http://127.0.0.1:8790/mcp"
+            })
+        );
     }
 
     /// Non-JSON existing content is replaced by a fresh, valid document.
@@ -937,7 +1068,10 @@ mod tests {
     fn agent_mcp_json_replaces_invalid_existing() {
         let content = agent_mcp_json(Some("not json {"), 8790);
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(v["mcpServers"]["ump-dash"]["url"], "http://127.0.0.1:8790/mcp");
+        assert_eq!(
+            v["mcpServers"]["ump-dash"]["url"],
+            "http://127.0.0.1:8790/mcp"
+        );
     }
 
     /// Provisioning writes both the `.mcp.json` and the run-app skill.
@@ -950,10 +1084,7 @@ mod tests {
         let mcp = fs::read_to_string(wt.path().join(".mcp.json")).unwrap();
         assert!(mcp.contains("http://127.0.0.1:8790/mcp"));
 
-        let skill = fs::read_to_string(
-            wt.path().join(".claude/skills/run-app/SKILL.md"),
-        )
-        .unwrap();
+        let skill = fs::read_to_string(wt.path().join(".claude/skills/run-app/SKILL.md")).unwrap();
         assert!(skill.contains("name: run-app"), "skill frontmatter present");
     }
 
@@ -1043,6 +1174,90 @@ name = \"me\"
         );
     }
 
+    /// The tracked Codex config from UMP PR #3992 retains every team setting
+    /// and its setup guidance while gaining the local dashboard endpoint.
+    #[test]
+    fn agent_codex_config_merges_pr_3992_team_servers_and_comments() {
+        let before: toml::Table = toml::from_str(TEAM_CODEX_CONFIG).unwrap();
+        let content = agent_codex_config(Some(TEAM_CODEX_CONFIG), 8790);
+        let after: toml::Table = toml::from_str(&content).unwrap();
+
+        for name in TEAM_SERVER_NAMES {
+            assert_eq!(
+                after["mcp_servers"][name], before["mcp_servers"][name],
+                "team server {name} must remain unchanged"
+            );
+        }
+        let dashboard = &after["mcp_servers"]["ump-dash"];
+        assert_eq!(dashboard["url"].as_str(), Some("http://127.0.0.1:8790/mcp"));
+        assert_eq!(dashboard["enabled"].as_bool(), Some(true));
+        assert_eq!(dashboard["required"].as_bool(), Some(false));
+        assert_eq!(dashboard["startup_timeout_sec"].as_integer(), Some(3));
+        assert_eq!(dashboard["tool_timeout_sec"].as_integer(), Some(900));
+
+        for comment in [
+            "# Project-scoped Codex MCP config (read for trusted projects; shared between",
+            "# Sauce Labs (one PyPI package, two entry points). Credentials come from the",
+            "# Per-user OAuth: `codex mcp login atlassian`",
+            "# Disabled until design seats are provisioned — mirrors disabledMcpjsonServers",
+            "# Per-user OAuth: `codex mcp login amplitude`",
+        ] {
+            assert!(
+                content.contains(comment),
+                "missing authored comment: {comment}"
+            );
+        }
+    }
+
+    /// Refreshing a canonical dashboard section changes that section only;
+    /// team server tables, comments, and following sections remain authored.
+    #[test]
+    fn agent_codex_config_refreshes_ump_dash_only() {
+        let existing = format!(
+            "{TEAM_CODEX_CONFIG}\n[mcp_servers.\"ump-dash\"]\nurl = \"http://127.0.0.1:7000/mcp\"\nenabled = false\nrequired = true\nstartup_timeout_sec = 99\ntool_timeout_sec = 1\n\n[profile]\nname = \"me\"\n"
+        );
+        let before: toml::Table = toml::from_str(&existing).unwrap();
+        let content = agent_codex_config(Some(&existing), 8790);
+        let after: toml::Table = toml::from_str(&content).unwrap();
+
+        for name in TEAM_SERVER_NAMES {
+            assert_eq!(
+                after["mcp_servers"][name], before["mcp_servers"][name],
+                "team server {name} must remain unchanged"
+            );
+        }
+        assert_eq!(after["profile"], before["profile"]);
+        assert!(content.contains("# Per-user OAuth: `codex mcp login atlassian`"));
+        assert_eq!(content.matches("ump-dash").count(), 1);
+
+        let dashboard = &after["mcp_servers"]["ump-dash"];
+        assert_eq!(dashboard["url"].as_str(), Some("http://127.0.0.1:8790/mcp"));
+        assert_eq!(dashboard["enabled"].as_bool(), Some(true));
+        assert_eq!(dashboard["required"].as_bool(), Some(false));
+        assert_eq!(dashboard["startup_timeout_sec"].as_integer(), Some(3));
+        assert_eq!(dashboard["tool_timeout_sec"].as_integer(), Some(900));
+    }
+
+    #[test]
+    fn agent_codex_config_replaces_invalid_existing() {
+        let content = agent_codex_config(Some("not valid toml = ["), 8790);
+        let doc: toml::Table = toml::from_str(&content).unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["ump-dash"]["url"].as_str(),
+            Some("http://127.0.0.1:8790/mcp")
+        );
+    }
+
+    #[test]
+    fn agent_codex_config_normalizes_non_table_mcp_servers() {
+        let content = agent_codex_config(Some("mcp_servers = \"invalid\"\n"), 8790);
+        let doc: toml::Table = toml::from_str(&content).unwrap();
+        assert_eq!(
+            doc["mcp_servers"]["ump-dash"]["url"].as_str(),
+            Some("http://127.0.0.1:8790/mcp")
+        );
+    }
+
     /// Provisioning writes the Codex config, the `.agents` run-app skill, and the
     /// openai.yaml manifest with the configured port.
     #[test]
@@ -1055,15 +1270,18 @@ name = \"me\"
         assert!(cfg.contains("http://127.0.0.1:8790/mcp"));
         assert!(cfg.contains("ump-dash"));
 
-        let skill =
-            fs::read_to_string(wt.path().join(".agents/skills/run-app/SKILL.md")).unwrap();
-        assert!(skill.contains("name: run-app"), "codex skill frontmatter present");
+        let skill = fs::read_to_string(wt.path().join(".agents/skills/run-app/SKILL.md")).unwrap();
+        assert!(
+            skill.contains("name: run-app"),
+            "codex skill frontmatter present"
+        );
 
-        let yaml = fs::read_to_string(
-            wt.path().join(".agents/skills/run-app/agents/openai.yaml"),
-        )
-        .unwrap();
-        assert!(yaml.contains("http://127.0.0.1:8790/mcp"), "manifest carries the port");
+        let yaml = fs::read_to_string(wt.path().join(".agents/skills/run-app/agents/openai.yaml"))
+            .unwrap();
+        assert!(
+            yaml.contains("http://127.0.0.1:8790/mcp"),
+            "manifest carries the port"
+        );
     }
 
     /// An existing Codex `.agents` run-app skill is never clobbered.
