@@ -978,6 +978,7 @@ mod palette_resolution {
 
         assert_eq!(handle_key(&state, key('c')), Some(Action::OpenClaudeCode));
         assert_eq!(handle_key(&state, key('e')), Some(Action::OpenEditor));
+        assert_eq!(handle_key(&state, key('f')), Some(Action::OpenFinder));
         assert_eq!(handle_key(&state, key('t')), Some(Action::OpenShellTab));
         assert_eq!(
             handle_key(&state, key('j')),
@@ -985,6 +986,7 @@ mod palette_resolution {
         );
         assert_eq!(handle_key(&state, key('C')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('E')), Some(Action::ModalCancel));
+        assert_eq!(handle_key(&state, key('F')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('T')), Some(Action::ModalCancel));
         assert_eq!(handle_key(&state, key('J')), Some(Action::ModalCancel));
         assert_eq!(
@@ -1045,6 +1047,7 @@ mod palette_resolution {
         for action in [
             Action::OpenClaudeCode,
             Action::OpenEditor,
+            Action::OpenFinder,
             Action::OpenShellTab,
             Action::MetroSendDebugger,
         ] {
@@ -1067,6 +1070,7 @@ mod palette_resolution {
 
         assert!(hints.contains(&("c", "claude")));
         assert!(hints.contains(&("e", "editor")));
+        assert!(hints.contains(&("f", "finder")));
         assert!(hints.contains(&("t", "shell tab")));
         assert!(hints.contains(&("j", "debugger")));
     }
@@ -3737,6 +3741,45 @@ mod claude_tab {
         assert_eq!(
             state.error_state.as_ref().map(|e| e.message.as_str()),
             Some("Cannot open editor: configure the editor setting first")
+        );
+    }
+
+    #[test]
+    fn open_finder_emits_exact_selected_path_without_configuration() {
+        let mut state = base_state();
+        state.modal_stack.palette_mode = Some(PaletteMode::Open);
+        state.app_config.editor.clear();
+        state.app_config.multiplexer_available = false;
+        seed_one_worktree_id(&mut state, "ump dash");
+
+        let effects = update(&mut state, Action::OpenFinder);
+
+        assert!(state.modal_stack.palette_mode.is_none());
+        match &effects[..] {
+            [Effect::OpenInFinder { path }] => {
+                assert_eq!(path, &std::path::PathBuf::from("/tmp/ump dash"));
+            }
+            other => panic!("expected OpenInFinder effect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn open_finder_failure_shows_finder_specific_error() {
+        let mut state = base_state();
+
+        let effects = update(
+            &mut state,
+            Action::OpenFinderFailed("Finder is only available on macOS".into()),
+        );
+
+        assert!(effects.is_empty());
+        assert_eq!(
+            state.error_state.as_ref().map(|e| e.message.as_str()),
+            Some("Cannot open Finder: Finder is only available on macOS")
+        );
+        assert_eq!(
+            state.error_state.as_ref().map(|e| e.can_retry),
+            Some(false)
         );
     }
 }
