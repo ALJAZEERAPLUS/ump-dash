@@ -3214,6 +3214,19 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 can_retry: false,
             });
         }
+        Action::OpenFinder => {
+            state.modal_stack.palette_mode = None;
+            let Some(wt) = selected_worktree_snapshot(state) else {
+                return effects;
+            };
+            effects.push(Effect::OpenInFinder { path: wt.path });
+        }
+        Action::OpenFinderFailed(message) => {
+            state.error_state = Some(ErrorState {
+                message: format!("Cannot open Finder: {message}"),
+                can_retry: false,
+            });
+        }
 
         // --- Phase 4: JIRA title fetch results ---
         Action::JiraTitlesFetched(titles) => {

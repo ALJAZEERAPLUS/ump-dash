@@ -132,6 +132,9 @@ pub enum Effect {
     OpenExternalEditor {
         command: String,
     },
+    OpenInFinder {
+        path: PathBuf,
+    },
 
     // JIRA
     FetchJiraTitles {
@@ -324,9 +327,10 @@ mod tests {
                 Effect::StoreAndroidCache { .. } => 20,
                 Effect::InstallAndLaunchCachedAndroid { .. } => 21,
                 Effect::OpenExternalEditor { .. } => 22,
-                Effect::AddReviewWorktree { .. } => 23,
-                Effect::ListPullRequests { .. } => 24,
-                Effect::AgentReply { .. } => 25,
+                Effect::OpenInFinder { .. } => 23,
+                Effect::AddReviewWorktree { .. } => 24,
+                Effect::ListPullRequests { .. } => 25,
+                Effect::AgentReply { .. } => 26,
             }
         }
         let e = Effect::ListWorktrees {

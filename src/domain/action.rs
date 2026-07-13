@@ -103,6 +103,8 @@ pub enum Action {
     OpenShellTab,             // o>t on worktree — open shell in new terminal surface
     OpenEditor,               // o>e on worktree — open configured editor
     OpenEditorFailed(String), // background: external editor launch failed
+    OpenFinder,               // o>f on worktree — open worktree in macOS Finder
+    OpenFinderFailed(String), // background: Finder launch failed
 
     // Phase 5.1: Command queue
     CommandQueuePush(crate::domain::command::CommandSpec), // enqueue without running immediately

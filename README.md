@@ -132,7 +132,7 @@ cargo run
 | y | Open yarn palette |
 | i | Open iOS palette |
 | a | Open Android palette |
-| o | Open palette (`c` Claude Code, `e` editor, `t` shell tab, `j` Metro debugger) |
+| o | Open palette (`c` Claude Code, `e` editor, `f` Finder, `t` shell tab, `j` Metro debugger) |
 | q | Quit |
 | ? | Toggle help overlay |
 | j / k or arrows | Navigate worktree list |

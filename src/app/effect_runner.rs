@@ -37,6 +37,7 @@
 //!   RecordSimUsed(udid)                            → spawn_blocking infra::sim_history::record_sim_used  (F-111 deferred)
 //!   OpenInMultiplexer { worktree, name, command }  → adapters.multiplexer.as_ref()?.new_window(...)
 //!   OpenExternalEditor { command }                 → adapters.external_command.run_shell_command(...)
+//!   OpenInFinder { path }                          → adapters.external_command.open_in_finder(...)
 //!
 //! G-01 carve-out (whitelisted in `Makefile` arch-lint): the two
 //! persistence variants (SaveJiraCache, RecordSimUsed) still
@@ -614,6 +615,15 @@ impl EffectRunner {
                     }
                 });
             }
+            Effect::OpenInFinder { path } => {
+                let external_command = self.adapters.external_command.clone();
+                let tx = self.action_tx.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = external_command.open_in_finder(&path) {
+                        let _ = tx.send(Action::OpenFinderFailed(e.to_string()));
+                    }
+                });
+            }
 
             // Plan 14-06 / Plan 15-03: per-task spawn chokepoint (D-10, D-20, Q1, Q2, Q3 + TASK-04, TASK-06).
             //
@@ -1099,6 +1109,30 @@ mod tests {
         fn run_shell_command(&self, _command: &str) -> anyhow::Result<()> {
             Ok(())
         }
+
+        fn open_in_finder(&self, _path: &Path) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct RecordingExternalCommand {
+        paths: Arc<Mutex<Vec<PathBuf>>>,
+        failure: Option<String>,
+    }
+
+    impl ExternalCommandPort for RecordingExternalCommand {
+        fn run_shell_command(&self, _command: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        fn open_in_finder(&self, path: &Path) -> anyhow::Result<()> {
+            self.paths.lock().unwrap().push(path.to_path_buf());
+            if let Some(message) = &self.failure {
+                anyhow::bail!(message.clone());
+            }
+            Ok(())
+        }
     }
 
     enum NativeScript {
@@ -1249,11 +1283,63 @@ mod tests {
         (runner, action_rx)
     }
 
+    fn runner_with_external_command(
+        external_command: Arc<dyn ExternalCommandPort>,
+    ) -> (EffectRunner, UnboundedReceiver<Action>) {
+        let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (handle_tx, _handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (task_handle_tx, _task_handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let runner = EffectRunner::new(
+            Adapters {
+                command_runner: Arc::new(NoopCommandRunner),
+                metro: Arc::new(NoopMetro),
+                port_probe: Arc::new(NoopProbe),
+                worktrees: Arc::new(NoopWorktrees),
+                devices: Arc::new(NoopDevices),
+                native_cache: Arc::new(ScriptedNativeCache::new(NativeScript::LookupAndroid(Ok(
+                    AndroidCacheLookup::Miss {
+                        fingerprint: "unused".into(),
+                    },
+                )))),
+                external_command,
+                review: Arc::new(NoopReview),
+                jira: None,
+                multiplexer: None,
+                mcp_server: None,
+            },
+            action_tx,
+            handle_tx,
+            task_handle_tx,
+        );
+        (runner, action_rx)
+    }
+
     async fn receive_action(action_rx: &mut UnboundedReceiver<Action>) -> Action {
         tokio::time::timeout(Duration::from_secs(1), action_rx.recv())
             .await
             .expect("native cache effect should send an action")
             .expect("action channel should stay open")
+    }
+
+    #[tokio::test]
+    async fn open_finder_forwards_exact_path_and_dispatches_failure() {
+        let paths = Arc::new(Mutex::new(Vec::new()));
+        let external_command = Arc::new(RecordingExternalCommand {
+            paths: paths.clone(),
+            failure: Some("launch failed".into()),
+        });
+        let (runner, mut action_rx) = runner_with_external_command(external_command);
+        let path = PathBuf::from("/tmp/ump dash");
+
+        runner
+            .run_effects(vec![Effect::OpenInFinder { path: path.clone() }])
+            .await;
+
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::OpenFinderFailed("launch failed".into())
+        );
+        assert_eq!(*paths.lock().unwrap(), vec![path]);
     }
 
     #[tokio::test]

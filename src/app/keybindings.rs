@@ -869,6 +869,15 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| true,
     },
     KeyBinding {
+        key: KeyCode::Char('f'),
+        label: "f",
+        short_desc: "finder",
+        long_desc: "Open selected worktree in Finder",
+        context: BindingContext::Palette(PaletteMode::Open),
+        action: |_| Some(Action::OpenFinder),
+        visible: |_| true,
+    },
+    KeyBinding {
         key: KeyCode::Char('t'),
         label: "t",
         short_desc: "shell tab",
