@@ -126,6 +126,7 @@ None.
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260713-6rt | Add `o>f` to open the selected worktree in macOS Finder | 2026-07-13 | a8f0a4c | [260713-6rt-add-a-open-in-f-inder-under-o-pen](./quick/260713-6rt-add-a-open-in-f-inder-under-o-pen/) |
 | 260701-sq9 | Default new-branch worktree base picker to origin/rc-trunk | 2026-07-01 | 84f618c | [260701-sq9-when-creating-a-new-branch-default-base-](./quick/260701-sq9-when-creating-a-new-branch-default-base-/) |
 | 260630-de7 | Fix dashboard worktree creation when base branch is local-only and not on origin | 2026-06-30 | 8442487 | [260630-de7-fix-dashboard-worktree-creation-when-bas](./quick/260630-de7-fix-dashboard-worktree-creation-when-bas/) |
 | 260626-gp1 | Add MCP tools to create and delete worktrees | 2026-06-26 | 5abd72d | [260626-gp1-carefully-add-ability-to-mcp-to-modify-w](./quick/260626-gp1-carefully-add-ability-to-mcp-to-modify-w/) |
@@ -151,7 +152,7 @@ None.
 
 ## Session Continuity
 
-Last activity: 2026-07-01 - Completed quick task 260701-sq9: Default new-branch worktree base picker to origin/rc-trunk
+Last activity: 2026-07-13 - Completed quick task 260713-6rt: Add `o>f` to open the selected worktree in macOS Finder
 Last session: 2026-05-21T22:57:15.421Z
 Stopped at: Phase 16 context gathered
 Resume file: None
