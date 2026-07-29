@@ -50,11 +50,7 @@ fn key_code(code: KeyCode) -> KeyEvent {
     }
 }
 
-/// `AppState` focused on `WorktreeTable` — matches the pre-condition for
-/// palette-key interpretation (`handle_key` pre-checks).
-///
-/// `AppState::default()` already sets `focused_panel` to `WorktreeTable`,
-/// so no further reassignment is needed here.
+/// Default app state — the worktree table is the primary interaction surface.
 fn base_state() -> AppState {
     AppState::default()
 }
@@ -202,13 +198,94 @@ fn slice_queue_len(state: &AppState, id: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// Snapshot of slice output lines for the named worktree.
-fn slice_output(state: &AppState, id: &str) -> Vec<String> {
+/// Snapshot of retained log lines for the named worktree.
+fn slice_logs(state: &AppState, id: &str) -> Vec<String> {
     state
         .worktrees
         .get(&WorktreeId(id.into()))
-        .map(|s| s.output.iter().cloned().collect())
+        .map(|s| s.logs.iter().cloned().collect())
         .unwrap_or_default()
+}
+
+mod command_logs_modal {
+    use super::*;
+
+    #[test]
+    fn l_opens_logs_for_the_selected_worktree() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+        state
+            .worktree_browser
+            .worktree_table_state
+            .select(Some(1));
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .unwrap()
+            .append_log("selected worktree output");
+
+        assert_eq!(handle_key(&state, key('l')), Some(Action::OpenCommandLogs));
+        let _ = update(&mut state, Action::OpenCommandLogs);
+
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::CommandLogs {
+                ref worktree_id,
+                scroll_from_bottom: 0,
+            }) if worktree_id == &WorktreeId("wt-B".into())
+        ));
+        assert!(footer_hints_for(&state).contains(&("j/k", "scroll")));
+    }
+
+    #[test]
+    fn log_modal_scrolls_and_l_closes_it() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        for index in 0..20 {
+            state
+                .worktrees
+                .get_mut(&WorktreeId("wt-1".into()))
+                .unwrap()
+                .append_log(format!("line-{index}"));
+        }
+        let _ = update(&mut state, Action::OpenCommandLogs);
+
+        assert_eq!(
+            handle_key(&state, key('k')),
+            Some(Action::CommandLogsScrollUp)
+        );
+        let _ = update(&mut state, Action::CommandLogsScrollUp);
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::CommandLogs {
+                scroll_from_bottom: 1,
+                ..
+            })
+        ));
+
+        let _ = update(&mut state, Action::CommandLogsScrollDown);
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::CommandLogs {
+                scroll_from_bottom: 0,
+                ..
+            })
+        ));
+
+        let _ = update(&mut state, Action::CommandLogsScrollUp);
+        let _ = update(&mut state, Action::CommandLogsScrollBottom);
+        assert!(matches!(
+            state.modal_stack.modal,
+            Some(ModalState::CommandLogs {
+                scroll_from_bottom: 0,
+                ..
+            })
+        ));
+
+        assert_eq!(handle_key(&state, key('l')), Some(Action::ModalCancel));
+        let _ = update(&mut state, Action::ModalCancel);
+        assert!(state.modal_stack.modal.is_none());
+    }
 }
 
 mod review_flow {
@@ -404,7 +481,7 @@ mod review_flow {
 }
 
 #[test]
-fn cached_ios_launch_result_appends_to_selected_slice_output() {
+fn cached_ios_launch_result_appends_to_selected_slice_logs() {
     let mut state = base_state();
     seed_one_worktree(&mut state);
 
@@ -420,29 +497,22 @@ fn cached_ios_launch_result_appends_to_selected_slice_output() {
     );
 
     assert!(effects.is_empty());
-    let output = slice_output(&state, "wt-1");
+    let logs = slice_logs(&state, "wt-1");
     assert!(
-        output
-            .iter()
+        logs.iter()
             .any(|line| line.contains("installed and launched")),
-        "expected success summary in output; got {output:?}"
+        "expected success summary in logs; got {logs:?}"
     );
     assert!(
-        output.iter().any(|line| line.contains("Metro port 8093")),
-        "expected metro port line in output; got {output:?}"
+        logs.iter().any(|line| line.contains("Metro port 8093")),
+        "expected metro port line in logs; got {logs:?}"
     );
 }
 
 #[test]
-fn cached_ios_launch_failure_appends_error_and_resets_scroll() {
+fn cached_ios_launch_failure_appends_error_log() {
     let mut state = base_state();
     seed_one_worktree(&mut state);
-    state
-        .worktrees
-        .get_mut(&WorktreeId("wt-1".into()))
-        .expect("slice should exist")
-        .output_scroll = 12;
-
     let effects = update(
         &mut state,
         Action::CachedIosLaunchFinished {
@@ -458,13 +528,12 @@ fn cached_ios_launch_failure_appends_error_and_resets_scroll() {
         .expect("slice should exist");
     assert!(
         slice
-            .output
+            .logs
             .iter()
             .any(|line| line == "[cached-ios error] install failed"),
-        "expected cached iOS error in output; got {:?}",
-        slice.output
+        "expected cached iOS error in logs; got {:?}",
+        slice.logs
     );
-    assert_eq!(slice.output_scroll, 0);
 }
 
 #[test]
@@ -503,12 +572,11 @@ fn invalid_cached_ios_artifact_falls_back_to_normal_run_for_origin_worktree() {
         )),
         "invalid cached iOS artifact should fall back to the normal iOS run; got {effects:?}"
     );
-    let output = slice_output(&state, "wt-1");
+    let logs = slice_logs(&state, "wt-1");
     assert!(
-        output
-            .iter()
+        logs.iter()
             .any(|line| line.contains("cached .app digest mismatch")),
-        "expected invalid artifact message in output; got {output:?}"
+        "expected invalid artifact message in logs; got {logs:?}"
     );
     assert!(matches!(
         state
@@ -557,12 +625,11 @@ fn invalid_cached_android_artifact_falls_back_to_normal_run_for_origin_worktree(
         )),
         "invalid cached Android artifact should fall back to the normal Android run; got {effects:?}"
     );
-    let output = slice_output(&state, "wt-1");
+    let logs = slice_logs(&state, "wt-1");
     assert!(
-        output
-            .iter()
+        logs.iter()
             .any(|line| line.contains("cached APK digest mismatch")),
-        "expected invalid artifact message in output; got {output:?}"
+        "expected invalid artifact message in logs; got {logs:?}"
     );
     assert!(matches!(
         state
@@ -940,6 +1007,7 @@ mod palette_resolution {
                 ("i", "ios"),
                 ("a", "android"),
                 ("o", "open"),
+                ("l", "logs"),
                 ("q", "quit"),
                 ("?/F1", "help"),
             ]
@@ -1662,7 +1730,7 @@ mod ump_run_dialog {
     }
 
     #[test]
-    fn android_cache_lookup_failure_appends_error_output() {
+    fn android_cache_lookup_failure_appends_error_log() {
         let worktree_id = WorktreeId("wt-1".into());
         let mut state = base_state();
         seed_one_worktree(&mut state);
@@ -1676,19 +1744,18 @@ mod ump_run_dialog {
         );
 
         assert!(effects.is_empty());
-        let output = state
+        let logs = state
             .worktrees
             .get(&worktree_id)
             .expect("slice should exist")
-            .output
+            .logs
             .iter()
             .cloned()
             .collect::<Vec<_>>();
         assert!(
-            output
-                .iter()
+            logs.iter()
                 .any(|line| line == "[cached-android error] missing application id"),
-            "expected visible Android cache error in output; got {output:?}"
+            "expected visible Android cache error in logs; got {logs:?}"
         );
     }
 
@@ -3118,7 +3185,7 @@ mod ump_run_dialog {
         assert!(effects.is_empty());
         assert!(state.modal_stack.pending_cached_ios_run.is_none());
         assert_eq!(
-            slice_output(&state, "wt-1").last().map(String::as_str),
+            slice_logs(&state, "wt-1").last().map(String::as_str),
             Some("[error] no iOS simulators found for cached run")
         );
     }
@@ -3148,7 +3215,7 @@ mod ump_run_dialog {
         assert!(effects.is_empty());
         assert!(state.modal_stack.pending_cached_android_run.is_none());
         assert_eq!(
-            slice_output(&state, "wt-1").last().map(String::as_str),
+            slice_logs(&state, "wt-1").last().map(String::as_str),
             Some("[error] no Android devices found for cached run")
         );
     }
@@ -3777,10 +3844,7 @@ mod claude_tab {
             state.error_state.as_ref().map(|e| e.message.as_str()),
             Some("Cannot open Finder: Finder is only available on macOS")
         );
-        assert_eq!(
-            state.error_state.as_ref().map(|e| e.can_retry),
-            Some(false)
-        );
+        assert_eq!(state.error_state.as_ref().map(|e| e.can_retry), Some(false));
     }
 }
 
@@ -4207,11 +4271,11 @@ mod parallelism {
         assert!(slice.pending_cached_ios_launch.is_none());
         assert!(
             slice
-                .output
+                .logs
                 .iter()
                 .any(|line| line == "[cached-ios error] Metro exited before cached launch"),
-            "expected cached-ios Metro exit error in origin output; got {:?}",
-            slice.output
+            "expected cached-ios Metro exit error in origin logs; got {:?}",
+            slice.logs
         );
 
         state
@@ -4263,11 +4327,11 @@ mod parallelism {
         assert!(slice.pending_cached_android_launch.is_none());
         assert!(
             slice
-                .output
+                .logs
                 .iter()
                 .any(|line| line == "[cached-android error] Metro exited before cached launch"),
-            "expected cached-android Metro exit error in origin output; got {:?}",
-            slice.output
+            "expected cached-android Metro exit error in origin logs; got {:?}",
+            slice.logs
         );
 
         state
@@ -4325,11 +4389,11 @@ mod parallelism {
         assert!(effects.is_empty());
         assert!(slice.pending_cached_android_launch.is_none());
         assert!(
-            slice.output.iter().any(
+            slice.logs.iter().any(
                 |line| line == "[cached-android error] Metro failed to start: port unavailable"
             ),
-            "expected cached-android Metro spawn error in origin output; got {:?}",
-            slice.output
+            "expected cached-android Metro spawn error in origin logs; got {:?}",
+            slice.logs
         );
         assert!(state.error_state.is_some());
     }
@@ -4342,10 +4406,10 @@ mod parallelism {
 mod routing {
     use super::*;
 
-    /// TASK-03 / D-08: CommandOutputLine routes to the slice that owns the
+    /// TASK-03 / D-08: CommandLogLine routes to the slice that owns the
     /// task_id, regardless of which worktree is currently selected in the UI.
     #[test]
-    fn command_output_line_routes_to_correct_slice_regardless_of_active_worktree() {
+    fn command_log_line_routes_to_correct_slice_regardless_of_active_worktree() {
         let mut state = base_state();
         seed_two_worktrees(&mut state, "wt-A", "wt-B");
 
@@ -4362,25 +4426,25 @@ mod routing {
 
         let _ = update(
             &mut state,
-            Action::CommandOutputLine {
+            Action::CommandLogLine {
                 task_id: crate::domain::task::TaskId(5),
                 line: "from-A".into(),
             },
         );
 
-        let a_out = slice_output(&state, "wt-A");
-        let b_out = slice_output(&state, "wt-B");
+        let a_logs = slice_logs(&state, "wt-A");
+        let b_logs = slice_logs(&state, "wt-B");
         assert!(
-            a_out.iter().any(|l| l == "from-A"),
+            a_logs.iter().any(|l| l == "from-A"),
             "D-08: line must land in slice_A (task owner); A={:?} B={:?}",
-            a_out,
-            b_out
+            a_logs,
+            b_logs
         );
         assert!(
-            !b_out.iter().any(|l| l == "from-A"),
+            !b_logs.iter().any(|l| l == "from-A"),
             "D-08: line must NOT land in slice_B (not task owner); A={:?} B={:?}",
-            a_out,
-            b_out
+            a_logs,
+            b_logs
         );
     }
 
@@ -4443,39 +4507,39 @@ mod routing {
 mod stale_drop {
     use super::*;
 
-    /// P-3 / D-08: a CommandOutputLine for a task that no slice owns is
-    /// silently dropped — it must not contaminate any slice's output buffer.
+    /// P-3 / D-08: a CommandLogLine for a task that no slice owns is
+    /// silently dropped — it must not contaminate any slice's logs.
     ///
     /// This guards the fast-cancel+respawn race: late stdout from the dead
     /// process arrives AFTER the slice cleared its task. Since no slice has
     /// `task.id == 99`, the line should not appear anywhere in `state.worktrees`.
     #[test]
-    fn late_command_output_line_for_cancelled_task_is_silently_dropped() {
+    fn late_command_log_line_for_cancelled_task_is_silently_dropped() {
         let mut state = base_state();
         seed_one_worktree_id(&mut state, "wt-A");
         // No task on slice_A — task_id 99 belongs to nobody.
 
         let _ = update(
             &mut state,
-            Action::CommandOutputLine {
+            Action::CommandLogLine {
                 task_id: crate::domain::task::TaskId(99),
                 line: "stale".into(),
             },
         );
 
-        // P-3 contract: the stale line must not land in any slice's output.
+        // P-3 contract: the stale line must not land in any slice's logs.
         let any_slice_has_it = state
             .worktrees
             .values()
-            .any(|s| s.output.iter().any(|l| l == "stale"));
+            .any(|s| s.logs.iter().any(|l| l == "stale"));
         assert!(
             !any_slice_has_it,
-            "P-3: stale output line must not contaminate any slice; \
+            "P-3: stale log line must not contaminate any slice; \
              slices = {:?}",
             state
                 .worktrees
                 .iter()
-                .map(|(k, v)| (k, v.output.len()))
+                .map(|(k, v)| (k, v.logs.len()))
                 .collect::<Vec<_>>()
         );
     }
@@ -4500,11 +4564,11 @@ mod collision {
         // Seed a running YarnInstall task on the slice.
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(100, CommandSpec::YarnInstall));
-        let output_before: Vec<String> = state
+        let logs_before: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
@@ -4529,24 +4593,24 @@ mod collision {
             "BlockNew must preserve the original task_id"
         );
 
-        // (c) slice.output is unchanged — no $ argv line, no [cancelled ...] line.
-        let output_after: Vec<String> = state
+        // (c) slice logs are unchanged — no $ argv line, no [cancelled ...] line.
+        let logs_after: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
         assert_eq!(
-            output_before, output_after,
-            "BlockNew must not write any output line; before={output_before:?} after={output_after:?}"
+            logs_before, logs_after,
+            "BlockNew must not write any log line; before={logs_before:?} after={logs_after:?}"
         );
     }
 
     /// CollisionPolicy::CancelPrevious path — existing YarnJest task is aborted
     /// and replaced by the NEW dispatch. SpawnTask emitted with the NEW filter;
-    /// `[cancelled by new dispatch]` appears in output.
+    /// `[cancelled by new dispatch]` appears in the logs.
     ///
     /// NOTE: `Action::CommandRun(YarnJest { .. })` routes through the TextInput
     /// modal before reaching `dispatch_command`. To exercise the gate directly
@@ -4599,18 +4663,18 @@ mod collision {
             "CancelPrevious must take the existing record from slice.task"
         );
 
-        // (c) slice.output contains [cancelled by new dispatch].
-        let output: Vec<String> = state
+        // (c) Slice logs contain [cancelled by new dispatch].
+        let logs: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
         assert!(
-            output.iter().any(|l| l == "[cancelled by new dispatch]"),
-            "CancelPrevious must push [cancelled by new dispatch]; output={output:?}"
+            logs.iter().any(|l| l == "[cancelled by new dispatch]"),
+            "CancelPrevious must push [cancelled by new dispatch]; logs={logs:?}"
         );
     }
 
@@ -4646,17 +4710,17 @@ mod collision {
         );
 
         // (b) No [cancelled by new dispatch] line — gate did not fire.
-        let output: Vec<String> = state
+        let logs: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
         assert!(
-            !output.iter().any(|l| l == "[cancelled by new dispatch]"),
-            "no [cancelled by new dispatch] line when discriminants differ; output={output:?}"
+            !logs.iter().any(|l| l == "[cancelled by new dispatch]"),
+            "no [cancelled by new dispatch] line when discriminants differ; logs={logs:?}"
         );
 
         // (c) SpawnTask Effect emitted for the new YarnLint (different discriminant
@@ -4677,7 +4741,7 @@ mod collision {
     }
 
     /// Q-4 honor: git → BlockNew. Existing GitPull task keeps running; second
-    /// GitPull dispatch is silently dropped. No SpawnTask, no output change.
+    /// GitPull dispatch is silently dropped. No SpawnTask, no log change.
     #[test]
     fn collision_git_pull_block_new() {
         let mut state = base_state();
@@ -4687,11 +4751,11 @@ mod collision {
         // Seed a running GitPull task.
         state.worktrees.get_mut(&wid).unwrap().task =
             Some(synthetic_task_record(400, CommandSpec::GitPull));
-        let output_before: Vec<String> = state
+        let logs_before: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
@@ -4716,18 +4780,18 @@ mod collision {
             "original GitPull task_id must be preserved"
         );
 
-        // (c) Output unchanged.
-        let output_after: Vec<String> = state
+        // (c) Logs unchanged.
+        let logs_after: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
         assert_eq!(
-            output_before, output_after,
-            "git BlockNew must not write any output line"
+            logs_before, logs_after,
+            "git BlockNew must not write any log line"
         );
     }
 }
@@ -4740,7 +4804,7 @@ mod cancellation_guard {
     use super::*;
 
     /// 15-RESEARCH §Pitfall 5: CommandCancel on a running git task is a NO-OP.
-    /// The record is re-inserted into the slice; queue and output are unchanged.
+    /// The record is re-inserted into the slice; queue and logs are unchanged.
     #[test]
     fn cancel_on_git_pull_is_noop_record_reinserted() {
         let mut state = base_state();
@@ -4757,11 +4821,11 @@ mod cancellation_guard {
             .unwrap()
             .queue
             .push_back(CommandSpec::YarnInstall);
-        let output_before: Vec<String> = state
+        let logs_before: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
@@ -4787,21 +4851,21 @@ mod cancellation_guard {
             "non-cancellable: queue must NOT be cleared"
         );
 
-        // (c) Output does NOT contain [cancelled] line.
-        let output_after: Vec<String> = state
+        // (c) Logs do NOT contain [cancelled] line.
+        let logs_after: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
         assert_eq!(
-            output_before, output_after,
-            "non-cancellable: no [cancelled] line written; before={output_before:?} after={output_after:?}"
+            logs_before, logs_after,
+            "non-cancellable: no [cancelled] line written; before={logs_before:?} after={logs_after:?}"
         );
         assert!(
-            !output_after.iter().any(|l| l == "[cancelled]"),
+            !logs_after.iter().any(|l| l == "[cancelled]"),
             "non-cancellable: explicit no-[cancelled] check"
         );
     }
@@ -4839,19 +4903,66 @@ mod cancellation_guard {
             "cancellable: queue must be cleared"
         );
 
-        // (c) Output contains [cancelled].
-        let output: Vec<String> = state
+        // (c) Logs contain [cancelled].
+        let logs: Vec<String> = state
             .worktrees
             .get(&wid)
             .unwrap()
-            .output
+            .logs
             .iter()
             .cloned()
             .collect();
         assert!(
-            output.iter().any(|l| l == "[cancelled]"),
-            "cancellable: output must contain [cancelled]; got {output:?}"
+            logs.iter().any(|l| l == "[cancelled]"),
+            "cancellable: logs must contain [cancelled]; got {logs:?}"
         );
+    }
+}
+
+mod table_cancellation {
+    use super::*;
+
+    #[test]
+    fn selected_cancellable_task_exposes_and_dispatches_cancel() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .task = Some(synthetic_task_record(700, CommandSpec::YarnLint));
+
+        assert_eq!(handle_key(&state, key('X')), Some(Action::CommandCancel));
+        assert!(footer_hints_for(&state).contains(&("X", "cancel")));
+    }
+
+    #[test]
+    fn selected_non_cancellable_task_hides_and_ignores_cancel() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist")
+            .task = Some(synthetic_task_record(701, CommandSpec::GitPull));
+
+        assert_eq!(handle_key(&state, key('X')), None);
+        assert!(!footer_hints_for(&state).contains(&("X", "cancel")));
+    }
+
+    #[test]
+    fn task_in_an_unselected_worktree_does_not_expose_cancel() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-A", "wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-B".into()))
+            .expect("slice should exist")
+            .task = Some(synthetic_task_record(702, CommandSpec::YarnLint));
+        state.worktree_browser.worktree_table_state.select(Some(0));
+
+        assert_eq!(handle_key(&state, key('X')), None);
+        assert!(!footer_hints_for(&state).contains(&("X", "cancel")));
     }
 }
 
@@ -4901,7 +5012,9 @@ mod agent_requests {
     }
 
     fn has_spawn_metro(effects: &[Effect]) -> bool {
-        effects.iter().any(|e| matches!(e, Effect::SpawnMetro { .. }))
+        effects
+            .iter()
+            .any(|e| matches!(e, Effect::SpawnMetro { .. }))
     }
 
     #[test]
@@ -4943,6 +5056,31 @@ mod agent_requests {
     }
 
     #[test]
+    fn get_logs_returns_the_requested_tail_in_original_order() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        let slice = state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("slice should exist");
+        slice.append_log("first");
+        slice.append_log("second");
+        slice.append_log("third");
+
+        let effects = update(
+            &mut state,
+            agent_action("/tmp/wt-1", AgentRequest::GetLogs { tail: Some(2) }),
+        );
+
+        assert_eq!(
+            outcome(&effects),
+            AgentOutcome::Logs {
+                lines: vec!["second".into(), "third".into()]
+            }
+        );
+    }
+
+    #[test]
     fn sync_deps_dispatches_yarn_install_and_queues_pods() {
         let mut state = base_state();
         seed_one_worktree_id(&mut state, "wt-1");
@@ -4971,10 +5109,18 @@ mod agent_requests {
 
         let effects = update(
             &mut state,
-            agent_action("/tmp/wt-1", AgentRequest::SyncDeps { include_pods: false }),
+            agent_action(
+                "/tmp/wt-1",
+                AgentRequest::SyncDeps {
+                    include_pods: false,
+                },
+            ),
         );
 
-        assert!(spawned_specs(&effects).is_empty(), "must not spawn a 2nd install");
+        assert!(
+            spawned_specs(&effects).is_empty(),
+            "must not spawn a 2nd install"
+        );
         assert!(matches!(
             outcome(&effects),
             AgentOutcome::Blocked {
@@ -5079,7 +5225,10 @@ mod agent_requests {
         seed_one_worktree_id(&mut state, "wt-1");
         register_ready_metro(&mut state, "wt-1", 8099);
 
-        let effects = update(&mut state, agent_action("/tmp/wt-1", AgentRequest::StartMetro));
+        let effects = update(
+            &mut state,
+            agent_action("/tmp/wt-1", AgentRequest::StartMetro),
+        );
         assert!(matches!(
             outcome(&effects),
             AgentOutcome::MetroAlready { port: 8099 }
@@ -5612,7 +5761,10 @@ mod agent_requests {
             state
                 .worktrees
                 .get(&WorktreeId("wt-1".into()))
-                .map(|s| s.queue.iter().any(|c| matches!(c, CommandSpec::UmpRunAndroid { .. })))
+                .map(|s| s
+                    .queue
+                    .iter()
+                    .any(|c| matches!(c, CommandSpec::UmpRunAndroid { .. })))
                 .unwrap_or(false),
             "the UmpRun must be queued behind the boot"
         );

@@ -88,6 +88,7 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
             | ModalState::SyncBeforeRun { .. }
             | ModalState::SyncBeforeMetro { .. }
             | ModalState::ExternalMetroConflict { .. }
+            | ModalState::CommandLogs { .. }
             | ModalState::Info { .. } => { /* no-op */ }
         }
     }

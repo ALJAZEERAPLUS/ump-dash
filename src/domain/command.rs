@@ -505,6 +505,13 @@ pub enum ModalState {
         search: String,
         filter: crate::domain::review::PullRequestFilter,
     },
+    /// Scrollable retained command logs for one worktree.
+    CommandLogs {
+        worktree_id: crate::domain::worktree::WorktreeId,
+        /// Number of lines the viewport is held above the newest output.
+        /// Zero means follow the bottom as new output arrives.
+        scroll_from_bottom: usize,
+    },
     /// Non-error informational prompt.
     Info { message: String },
 }

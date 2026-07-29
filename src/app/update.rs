@@ -13,8 +13,8 @@
 
 use super::effect::Effect;
 use super::state::{
-    AppState, ErrorState, FocusedPanel, MAX_COMMAND_LINES, PaletteMode, PendingCachedAndroidRun,
-    PendingCachedIosRun, active_output, active_worktree_id,
+    AppState, ErrorState, PaletteMode, PendingCachedAndroidRun, PendingCachedIosRun,
+    active_worktree_id,
 };
 use crate::domain::action::Action;
 use crate::domain::agent_protocol::{
@@ -24,7 +24,7 @@ use crate::domain::command::{
     CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant, android_avd_name,
     android_boot_avd_command, preferred_new_branch_base_index,
 };
-use crate::domain::pipeline::{resolve, DependencyState, Recipe};
+use crate::domain::pipeline::{DependencyState, Recipe, resolve};
 use crate::domain::ports::device_port::DeviceKind;
 use crate::domain::review::{PullRequest, PullRequestFilter};
 use crate::domain::task::ExitStatus;
@@ -514,16 +514,13 @@ fn dispatch_command_for_worktree(
             record.handle.abort();
         }
         slice.queue.clear();
-        slice.output.push_back("[cancelled by new dispatch]".into());
-        while slice.output.len() > MAX_COMMAND_LINES {
-            slice.output.pop_front();
-        }
+        slice.append_log("[cancelled by new dispatch]");
     }
 
     let task_id = crate::domain::task::TaskId::next();
     let argv_line = format!("$ {}", spec.to_argv().join(" "));
 
-    // Slice-local output. Defensive insertion in case the merge_slices pass
+    // Slice-local logs. Defensive insertion in case the merge_slices pass
     // hasn't run yet (e.g., during early startup before first WorktreesLoaded).
     let slice = state.worktrees.entry(wt_id.clone()).or_insert_with(|| {
         crate::domain::worktree_slice::WorktreeSlice {
@@ -531,11 +528,7 @@ fn dispatch_command_for_worktree(
             ..Default::default()
         }
     });
-    slice.output.push_back(argv_line);
-    while slice.output.len() > MAX_COMMAND_LINES {
-        slice.output.pop_front();
-    }
-    slice.output_scroll = 0;
+    slice.append_log(argv_line);
 
     // D-10 / D-20: the spawn chokepoint.
     // Plan 15-03 / TASK-06: `repo_root` is propagated so effect_runner can
@@ -826,10 +819,7 @@ fn agent_cancel(state: &mut AppState, wt_id: &WorktreeId) -> AgentOutcome {
             record.handle.abort();
             slice.queue.clear();
             slice.post_drain = None;
-            slice.output.push_back("[cancelled by agent]".into());
-            while slice.output.len() > MAX_COMMAND_LINES {
-                slice.output.pop_front();
-            }
+            slice.append_log("[cancelled by agent]");
             return AgentOutcome::Cancelled { spec_label: label };
         }
         // Non-cancellable git porcelain — reinsert and refuse.
@@ -901,7 +891,10 @@ fn remove_worktree_for_agent(
         effects.extend(update(state, Action::MetroStop));
     }
 
-    state.worktree_browser.worktrees.retain(|entry| entry.id != wt.id);
+    state
+        .worktree_browser
+        .worktrees
+        .retain(|entry| entry.id != wt.id);
     if state.worktree_browser.worktrees.is_empty() {
         state.worktree_browser.worktree_table_state.select(None);
         state.worktree_browser.selected_worktree_id = None;
@@ -945,9 +938,7 @@ fn handle_agent_request(
     request: AgentRequest,
 ) -> AgentOutcome {
     match request {
-        AgentRequest::GetWorktreeStatus => {
-            AgentOutcome::Status(agent_status_report(state, wt_id))
-        }
+        AgentRequest::GetWorktreeStatus => AgentOutcome::Status(agent_status_report(state, wt_id)),
         AgentRequest::GetTaskStatus => {
             let slice = state.worktrees.get(wt_id);
             AgentOutcome::TaskStatus(TaskStatusReport {
@@ -961,11 +952,7 @@ fn handle_agent_request(
             let lines = state
                 .worktrees
                 .get(wt_id)
-                .map(|s| {
-                    let total = s.output.len();
-                    let n = tail.unwrap_or(total).min(total);
-                    s.output.iter().skip(total - n).cloned().collect::<Vec<_>>()
-                })
+                .map(|s| s.log_tail(tail))
                 .unwrap_or_default();
             AgentOutcome::Logs { lines }
         }
@@ -1054,7 +1041,13 @@ fn handle_agent_request(
             if !confirm {
                 return confirmation_required(CommandSpec::RmNodeModules.label());
             }
-            agent_enqueue(state, effects, wt_id, vec![CommandSpec::RmNodeModules], false)
+            agent_enqueue(
+                state,
+                effects,
+                wt_id,
+                vec![CommandSpec::RmNodeModules],
+                false,
+            )
         }
         AgentRequest::Clean {
             node_modules,
@@ -1087,10 +1080,7 @@ fn handle_agent_request(
             }
             agent_enqueue(state, effects, wt_id, seq, false)
         }
-        AgentRequest::RunIos {
-            device_id,
-            variant,
-        } => {
+        AgentRequest::RunIos { device_id, variant } => {
             if device_id.is_empty() {
                 return AgentOutcome::Error {
                     message: "device_id required (use list_devices to enumerate targets)".into(),
@@ -1103,10 +1093,7 @@ fn handle_agent_request(
                 CommandSpec::UmpRunIos { device_id, variant },
             )
         }
-        AgentRequest::RunAndroid {
-            device_id,
-            variant,
-        } => {
+        AgentRequest::RunAndroid { device_id, variant } => {
             if device_id.is_empty() {
                 return AgentOutcome::Error {
                     message: "device_id required (use list_devices to enumerate targets)".into(),
@@ -1570,36 +1557,8 @@ fn begin_cached_android_launch(
 pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
     let mut effects: Vec<Effect> = Vec::new();
 
-    // Clear pending_g on any action except SetPendingG
-    if !matches!(action, Action::SetPendingG) {
-        state.modal_stack.pending_g = false;
-    }
-
     match action {
         // Phase 1 actions
-        Action::FocusNext => state.focused_panel = state.focused_panel.next(),
-        Action::FocusPrev => state.focused_panel = state.focused_panel.prev(),
-        Action::FocusUp => {
-            if state.focused_panel == FocusedPanel::CommandOutput
-                && let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id)
-            {
-                slice.output_scroll = slice.output_scroll.saturating_sub(1);
-            }
-        }
-        Action::FocusDown => {
-            if state.focused_panel == FocusedPanel::CommandOutput {
-                let max = active_output(state).len();
-                if let Some(id) = active_worktree_id(state)
-                    && let Some(slice) = state.worktrees.get_mut(&id)
-                    && slice.output_scroll < max
-                {
-                    slice.output_scroll += 1;
-                }
-            }
-        }
-        Action::FocusLeft => {}
-        Action::FocusRight => {}
         Action::Search => {
             // Phase 4+: stub
         }
@@ -1708,19 +1667,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 let had_pending_cached_android_launch =
                     slice.pending_cached_android_launch.take().is_some();
                 if had_pending_cached_launch {
-                    slice
-                        .output
-                        .push_back("[cached-ios error] Metro exited before cached launch".into());
+                    slice.append_log("[cached-ios error] Metro exited before cached launch");
                 }
                 if had_pending_cached_android_launch {
-                    slice.output.push_back(
-                        "[cached-android error] Metro exited before cached launch".into(),
-                    );
-                }
-                if had_pending_cached_launch || had_pending_cached_android_launch {
-                    while slice.output.len() > MAX_COMMAND_LINES {
-                        slice.output.pop_front();
-                    }
+                    slice.append_log("[cached-android error] Metro exited before cached launch");
                 }
                 slice.metro.clear();
             }
@@ -1760,19 +1710,14 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     slice.pending_cached_android_launch.take().is_some();
                 slice.metro.clear();
                 if had_pending_cached_launch {
-                    slice.output.push_back(format!(
+                    slice.append_log(format!(
                         "[cached-ios error] Metro failed to start: {message}"
                     ));
                 }
                 if had_pending_cached_android_launch {
-                    slice.output.push_back(format!(
+                    slice.append_log(format!(
                         "[cached-android error] Metro failed to start: {message}"
                     ));
-                }
-                if had_pending_cached_launch || had_pending_cached_android_launch {
-                    while slice.output.len() > MAX_COMMAND_LINES {
-                        slice.output.pop_front();
-                    }
                 }
             }
             state.metro_state.pending_restart = false;
@@ -2211,8 +2156,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Plan 13-09 (F-204 site 3): RnReleaseBuild → Recipe::ReleaseBuildAndInstall
             // Android release build: queue adb install to run after assembleRelease completes.
             if matches!(spec, CommandSpec::RnReleaseBuild) {
-                let mut sequence = Recipe::ReleaseBuildAndInstall
-                    .expand(&DependencyState::new(false, false));
+                let mut sequence =
+                    Recipe::ReleaseBuildAndInstall.expand(&DependencyState::new(false, false));
                 let first = sequence.remove(0);
 
                 // D-12: push to slice queue for the originating worktree.
@@ -2268,8 +2213,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
         }
 
-        // --- Phase 3: Command output events ---
-        Action::CommandOutputLine { task_id, line } => {
+        // --- Phase 3: Command log events ---
+        Action::CommandLogLine { task_id, line } => {
             // D-08: route by task_id. Late stdout from a cancelled task lands
             // here with no matching slice → silently dropped.
             if let Some(slice) = state
@@ -2277,10 +2222,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 .values_mut()
                 .find(|s| s.task.as_ref().map(|t| t.id) == Some(task_id))
             {
-                slice.output.push_back(line);
-                if slice.output.len() > MAX_COMMAND_LINES {
-                    slice.output.pop_front();
-                }
+                slice.append_log(line);
             }
         }
 
@@ -2392,15 +2334,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
         }
 
-        Action::CommandOutputClear => {
-            if let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id)
-            {
-                slice.output.clear();
-                slice.output_scroll = 0;
-            }
-        }
-
         Action::CommandCancel => {
             let active_id = active_worktree_id(state);
 
@@ -2417,14 +2350,11 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     record.handle.abort();
                     slice.queue.clear();
                     slice.post_drain = None;
-                    slice.output.push_back("[cancelled]".into());
-                    if slice.output.len() > MAX_COMMAND_LINES {
-                        slice.output.pop_front();
-                    }
+                    slice.append_log("[cancelled]");
                 } else {
                     // Non-cancellable variants (all 8 git porcelain commands):
                     // CommandCancel is a no-op. Re-insert the record so the
-                    // running task continues to completion. Queue and output
+                    // running task continues to completion. Queue and logs
                     // are also untouched.
                     slice.task = Some(record);
                 }
@@ -2452,6 +2382,48 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         // --- Phase 3: Modal actions ---
+        Action::OpenCommandLogs => {
+            if let Some(worktree_id) = active_worktree_id(state) {
+                state.modal_stack.modal = Some(ModalState::CommandLogs {
+                    worktree_id,
+                    scroll_from_bottom: 0,
+                });
+            }
+        }
+
+        Action::CommandLogsScrollUp => {
+            if let Some(ModalState::CommandLogs {
+                worktree_id,
+                scroll_from_bottom,
+            }) = state.modal_stack.modal.as_mut()
+            {
+                let retained_lines = state
+                    .worktrees
+                    .get(worktree_id)
+                    .map(|slice| slice.logs.len())
+                    .unwrap_or(0);
+                *scroll_from_bottom = scroll_from_bottom.saturating_add(1).min(retained_lines);
+            }
+        }
+
+        Action::CommandLogsScrollDown => {
+            if let Some(ModalState::CommandLogs {
+                scroll_from_bottom, ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                *scroll_from_bottom = scroll_from_bottom.saturating_sub(1);
+            }
+        }
+
+        Action::CommandLogsScrollBottom => {
+            if let Some(ModalState::CommandLogs {
+                scroll_from_bottom, ..
+            }) = state.modal_stack.modal.as_mut()
+            {
+                *scroll_from_bottom = 0;
+            }
+        }
+
         Action::ModalConfirm => {
             // Check for pending worktree removal BEFORE falling through to normal confirm
             if let Some((wt_id, wt_path, _branch)) =
@@ -2560,6 +2532,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 | Some(ModalState::ExternalMetroConflict { .. })
                 | Some(ModalState::BranchPicker { .. })
                 | Some(ModalState::PullRequestPicker { .. })
+                | Some(ModalState::CommandLogs { .. })
                 | Some(ModalState::Info { .. })
                 | None => { /* no-op */ }
             }
@@ -2589,6 +2562,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 | Some(ModalState::ExternalMetroConflict { .. })
                 | Some(ModalState::BranchPicker { .. })
                 | Some(ModalState::PullRequestPicker { .. })
+                | Some(ModalState::CommandLogs { .. })
                 | Some(ModalState::Info { .. })
                 | None => { /* no-op */ }
             }
@@ -2878,12 +2852,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 id: pending_run.worktree_id,
                                 ..Default::default()
                             });
-                        slice
-                            .output
-                            .push_back("[error] no iOS simulators found for cached run".into());
-                        while slice.output.len() > MAX_COMMAND_LINES {
-                            slice.output.pop_front();
-                        }
+                        slice.append_log("[error] no iOS simulators found for cached run");
                     }
                     1 => {
                         begin_cached_ios_launch(
@@ -2937,12 +2906,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                                 id: pending_run.worktree_id,
                                 ..Default::default()
                             });
-                        slice
-                            .output
-                            .push_back("[error] no Android devices found for cached run".into());
-                        while slice.output.len() > MAX_COMMAND_LINES {
-                            slice.output.pop_front();
-                        }
+                        slice.append_log("[error] no Android devices found for cached run");
                     }
                     1 => {
                         begin_cached_android_launch(
@@ -2976,10 +2940,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         if let Some(id) = active_worktree_id(state)
                             && let Some(slice) = state.worktrees.get_mut(&id)
                         {
-                            slice.output.push_back("[error] no devices found".into());
-                            if slice.output.len() > MAX_COMMAND_LINES {
-                                slice.output.pop_front();
-                            }
+                            slice.append_log("[error] no devices found");
                         }
                     }
                     1 => {
@@ -3314,8 +3275,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // Recipe::expand: react-native clean first, node_modules last,
                 // sync_after appended (preserves the comment's hard ordering
                 // rule).
-                let mut cmds =
-                    Recipe::Clean(options).expand(&DependencyState::new(false, false));
+                let mut cmds = Recipe::Clean(options).expand(&DependencyState::new(false, false));
 
                 if cmds.is_empty() {
                     return effects;
@@ -3343,17 +3303,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
             }
         }
-        Action::ToggleFullscreen => {
-            if state.worktree_browser.fullscreen_panel.is_some() {
-                state.worktree_browser.fullscreen_panel = None;
-                state.focused_panel = state.focused_panel.next();
-            } else {
-                // Only CommandOutput can be fullscreened
-                if state.focused_panel == FocusedPanel::CommandOutput {
-                    state.worktree_browser.fullscreen_panel = Some(state.focused_panel);
-                }
-            }
-        }
         Action::StartShellCommand => {
             state.modal_stack.modal = Some(ModalState::TextInput {
                 prompt: "Shell command:".to_string(),
@@ -3370,102 +3319,89 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::IosSimulatorCacheLookupFinished {
             worktree_id,
             result,
-        } => {
-            match result {
-                Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
-                    let hit = *hit;
-                    let fingerprint = hit.metadata.fingerprint.clone();
-                    for (id, slice) in state.worktrees.iter_mut() {
-                        let same_fingerprint_miss = matches!(
-                            &slice.ios_simulator_cache,
-                            crate::domain::native_cache::IosSimulatorCacheState::Miss {
-                                fingerprint: miss_fingerprint
-                            } if miss_fingerprint == &fingerprint
-                        );
-                        if id == &worktree_id || same_fingerprint_miss {
-                            slice.ios_simulator_cache =
-                                crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
-                                    hit.clone(),
-                                ));
-                        }
-                    }
-                }
-                Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
-                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                        let existing_hit_for_same_fingerprint = slice
-                            .ios_simulator_cache
-                            .hit()
-                            .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
-                        if !existing_hit_for_same_fingerprint {
-                            slice.ios_simulator_cache =
-                                crate::domain::native_cache::IosSimulatorCacheState::Miss {
-                                    fingerprint,
-                                };
-                        }
-                    }
-                }
-                Err(message) => {
-                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+        } => match result {
+            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
+                let hit = *hit;
+                let fingerprint = hit.metadata.fingerprint.clone();
+                for (id, slice) in state.worktrees.iter_mut() {
+                    let same_fingerprint_miss = matches!(
+                        &slice.ios_simulator_cache,
+                        crate::domain::native_cache::IosSimulatorCacheState::Miss {
+                            fingerprint: miss_fingerprint
+                        } if miss_fingerprint == &fingerprint
+                    );
+                    if id == &worktree_id || same_fingerprint_miss {
                         slice.ios_simulator_cache =
-                            crate::domain::native_cache::IosSimulatorCacheState::Error(message);
+                            crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
+                                hit.clone(),
+                            ));
                     }
                 }
             }
-        }
+            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    let existing_hit_for_same_fingerprint = slice
+                        .ios_simulator_cache
+                        .hit()
+                        .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
+                    if !existing_hit_for_same_fingerprint {
+                        slice.ios_simulator_cache =
+                            crate::domain::native_cache::IosSimulatorCacheState::Miss {
+                                fingerprint,
+                            };
+                    }
+                }
+            }
+            Err(message) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    slice.ios_simulator_cache =
+                        crate::domain::native_cache::IosSimulatorCacheState::Error(message);
+                }
+            }
+        },
         Action::AndroidCacheLookupFinished {
             worktree_id,
             result,
-        } => {
-            match result {
-                Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
-                    let hit = *hit;
-                    let fingerprint = hit.metadata.fingerprint.clone();
-                    for (id, slice) in state.worktrees.iter_mut() {
-                        let same_fingerprint_miss = matches!(
-                            &slice.android_cache,
-                            crate::domain::native_cache::AndroidCacheState::Miss {
-                                fingerprint: miss_fingerprint
-                            } if miss_fingerprint == &fingerprint
+        } => match result {
+            Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
+                let hit = *hit;
+                let fingerprint = hit.metadata.fingerprint.clone();
+                for (id, slice) in state.worktrees.iter_mut() {
+                    let same_fingerprint_miss = matches!(
+                        &slice.android_cache,
+                        crate::domain::native_cache::AndroidCacheState::Miss {
+                            fingerprint: miss_fingerprint
+                        } if miss_fingerprint == &fingerprint
+                    );
+                    if id == &worktree_id || same_fingerprint_miss {
+                        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Hit(
+                            Box::new(hit.clone()),
                         );
-                        if id == &worktree_id || same_fingerprint_miss {
-                            slice.android_cache =
-                                crate::domain::native_cache::AndroidCacheState::Hit(Box::new(
-                                    hit.clone(),
-                                ));
-                        }
-                    }
-                }
-                Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
-                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                        let existing_hit_for_same_fingerprint = slice
-                            .android_cache
-                            .hit()
-                            .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
-                        if !existing_hit_for_same_fingerprint {
-                            slice.android_cache =
-                                crate::domain::native_cache::AndroidCacheState::Miss { fingerprint };
-                        }
-                    }
-                }
-                Err(message) => {
-                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                        if slice.android_cache.hit().is_none() {
-                            slice.android_cache =
-                                crate::domain::native_cache::AndroidCacheState::Error(
-                                    message.clone(),
-                                );
-                        }
-                        slice
-                            .output
-                            .push_back(format!("[cached-android error] {message}"));
-                        while slice.output.len() > MAX_COMMAND_LINES {
-                            slice.output.pop_front();
-                        }
-                        slice.output_scroll = 0;
                     }
                 }
             }
-        }
+            Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    let existing_hit_for_same_fingerprint = slice
+                        .android_cache
+                        .hit()
+                        .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
+                    if !existing_hit_for_same_fingerprint {
+                        slice.android_cache =
+                            crate::domain::native_cache::AndroidCacheState::Miss { fingerprint };
+                    }
+                }
+            }
+            Err(message) => {
+                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                    if slice.android_cache.hit().is_none() {
+                        slice.android_cache =
+                            crate::domain::native_cache::AndroidCacheState::Error(message.clone());
+                    }
+                    slice.append_log(format!("[cached-android error] {message}"));
+                }
+            }
+        },
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;
@@ -3524,26 +3460,20 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                 match result {
                     crate::domain::native_cache::CachedIosLaunchResult::Success(lines) => {
-                        slice
-                            .output
-                            .push_back("[cached-ios] installed and launched cached app".into());
+                        slice.append_log("[cached-ios] installed and launched cached app");
                         for line in lines {
-                            slice.output.push_back(format!("[cached-ios] {line}"));
+                            slice.append_log(format!("[cached-ios] {line}"));
                         }
                     }
                     crate::domain::native_cache::CachedIosLaunchResult::Failure(message) => {
-                        slice
-                            .output
-                            .push_back(format!("[cached-ios error] {message}"));
+                        slice.append_log(format!("[cached-ios error] {message}"));
                     }
                     crate::domain::native_cache::CachedIosLaunchResult::InvalidArtifact {
                         message,
                         device_id,
                         variant,
                     } => {
-                        slice
-                            .output
-                            .push_back(format!("[cached-ios stale] {message}"));
+                        slice.append_log(format!("[cached-ios stale] {message}"));
                         slice.ios_simulator_cache =
                             crate::domain::native_cache::IosSimulatorCacheState::Error(
                                 message.clone(),
@@ -3554,10 +3484,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         });
                     }
                 }
-                while slice.output.len() > MAX_COMMAND_LINES {
-                    slice.output.pop_front();
-                }
-                slice.output_scroll = 0;
             }
             if let Some(spec) = fallback_spec {
                 remember_ump_run_config(state, &worktree_id, &spec);
@@ -3574,26 +3500,20 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
                 match result {
                     crate::domain::native_cache::CachedAndroidLaunchResult::Success(lines) => {
-                        slice
-                            .output
-                            .push_back("[cached-android] installed and launched cached app".into());
+                        slice.append_log("[cached-android] installed and launched cached app");
                         for line in lines {
-                            slice.output.push_back(format!("[cached-android] {line}"));
+                            slice.append_log(format!("[cached-android] {line}"));
                         }
                     }
                     crate::domain::native_cache::CachedAndroidLaunchResult::Failure(message) => {
-                        slice
-                            .output
-                            .push_back(format!("[cached-android error] {message}"));
+                        slice.append_log(format!("[cached-android error] {message}"));
                     }
                     crate::domain::native_cache::CachedAndroidLaunchResult::InvalidArtifact {
                         message,
                         device_id,
                         variant,
                     } => {
-                        slice
-                            .output
-                            .push_back(format!("[cached-android stale] {message}"));
+                        slice.append_log(format!("[cached-android stale] {message}"));
                         slice.android_cache =
                             crate::domain::native_cache::AndroidCacheState::Error(message.clone());
                         fallback_spec = Some(CommandSpec::UmpRunAndroid {
@@ -3602,10 +3522,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                         });
                     }
                 }
-                while slice.output.len() > MAX_COMMAND_LINES {
-                    slice.output.pop_front();
-                }
-                slice.output_scroll = 0;
             }
             if let Some(spec) = fallback_spec {
                 remember_ump_run_config(state, &worktree_id, &spec);
@@ -3744,47 +3660,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // WorktreeSwitchToSelected call site (no pending_switch_path).
                 let worktree_id = active_metro_slice_id(state);
                 effects.extend(update(state, Action::MetroStartForWorktree { worktree_id }));
-            }
-        }
-
-        // --- Phase 5.2: Universal scroll ---
-        Action::ScrollToTop => {
-            if state.focused_panel == FocusedPanel::CommandOutput
-                && let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id)
-            {
-                slice.output_scroll = 0;
-            }
-        }
-
-        Action::ScrollToBottom => {
-            if state.focused_panel == FocusedPanel::CommandOutput
-                && let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id)
-            {
-                slice.output_scroll = slice.output.len();
-            }
-        }
-
-        Action::SetPendingG => {
-            state.modal_stack.pending_g = true;
-        }
-
-        Action::CommandOutputScrollUp => {
-            if let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id)
-            {
-                slice.output_scroll = slice.output_scroll.saturating_sub(1);
-            }
-        }
-
-        Action::CommandOutputScrollDown => {
-            let max = active_output(state).len();
-            if let Some(id) = active_worktree_id(state)
-                && let Some(slice) = state.worktrees.get_mut(&id)
-                && slice.output_scroll < max
-            {
-                slice.output_scroll += 1;
             }
         }
 
@@ -4325,7 +4200,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_ios_launch_finished_appends_output_without_mutating_cache_state() {
+    fn cached_ios_launch_finished_appends_logs_without_mutating_cache_state() {
         let worktree_id = WorktreeId("wt-a".into());
         let existing_hit = cache_hit();
         let pending = PendingCachedIosLaunch {
@@ -4345,7 +4220,6 @@ mod tests {
                 id: worktree_id.clone(),
                 ios_simulator_cache: IosSimulatorCacheState::Checking,
                 pending_cached_ios_launch: Some(pending.clone()),
-                output_scroll: 7,
                 ..Default::default()
             },
         );
@@ -4367,11 +4241,10 @@ mod tests {
         assert_eq!(slice.pending_cached_ios_launch, Some(pending.clone()));
         assert!(
             slice
-                .output
+                .logs
                 .iter()
                 .any(|line| line == "[cached-ios error] launch failed")
         );
-        assert_eq!(slice.output_scroll, 0);
         let error_state = state
             .error_state
             .as_ref()

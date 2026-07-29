@@ -2,8 +2,8 @@
 //!
 //! Plan 13-10 (F-209) regrouped AppState's ~30 pub fields into 6 sub-structs
 //! by domain concern: MetroState, WorktreeBrowserState, ModalStackState,
-//! JiraState, AppConfigState. The 4 cross-cutting fields
-//! (focused_panel, show_help, error_state, should_quit) stay at the root.
+//! JiraState, AppConfigState. Cross-cutting overlay and lifecycle fields stay
+//! at the root.
 //! Metro runtime state lives in each per-worktree `WorktreeSlice`.
 //!
 //! Plan 14-09: `CommandRunnerState` struct deleted — all 5 of its fields have
@@ -11,32 +11,6 @@
 //!
 //! See AUDIT.md F-209 (lines 545-576) and 13-PATTERNS.md:741-793 for the
 //! design rationale.
-
-/// Maximum number of command output lines retained in memory.
-pub(crate) const MAX_COMMAND_LINES: usize = 1000;
-
-/// Which panel currently has keyboard focus.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum FocusedPanel {
-    #[default]
-    WorktreeTable,
-    CommandOutput,
-}
-
-impl FocusedPanel {
-    pub fn next(self) -> Self {
-        match self {
-            Self::WorktreeTable => Self::CommandOutput,
-            Self::CommandOutput => Self::WorktreeTable,
-        }
-    }
-    pub fn prev(self) -> Self {
-        match self {
-            Self::WorktreeTable => Self::CommandOutput,
-            Self::CommandOutput => Self::WorktreeTable,
-        }
-    }
-}
 
 /// Error state shown in the error overlay. Phase 2+ will set this from real command failures.
 #[derive(Debug, Clone)]
@@ -90,7 +64,6 @@ pub struct WorktreeBrowserState {
     pub worktrees: Vec<crate::domain::worktree::Worktree>,
     pub worktree_table_state: ratatui::widgets::TableState,
     pub selected_worktree_id: Option<crate::domain::worktree::WorktreeId>,
-    pub fullscreen_panel: Option<FocusedPanel>,
     /// Guard against periodic refresh during worktree mutations.
     pub worktree_op_in_flight: bool,
 }
@@ -103,7 +76,6 @@ impl Default for WorktreeBrowserState {
             worktrees: Vec::new(),
             worktree_table_state,
             selected_worktree_id: None,
-            fullscreen_panel: None,
             worktree_op_in_flight: false,
         }
     }
@@ -135,9 +107,6 @@ pub struct ModalStackState {
 
     /// Command palette mode — Some when user pressed 'a'/'i'/'y'/'g'/'w' in WorktreeList.
     pub palette_mode: Option<PaletteMode>,
-
-    /// First 'g' press sets this true; second 'g' triggers ScrollToTop. Cleared on any other action.
-    pub pending_g: bool,
 
     /// Pending device command — stored while async device enumeration is in flight.
     pub pending_device_command: Option<crate::domain::command::CommandSpec>,
@@ -247,7 +216,6 @@ impl Default for AppConfigState {
 #[derive(Debug, Default)]
 pub struct AppState {
     // --- Cross-cutting / top-level UI concerns ---
-    pub focused_panel: FocusedPanel,
     pub show_help: bool,
     pub error_state: Option<ErrorState>,
     pub should_quit: bool,
@@ -269,7 +237,7 @@ pub struct AppState {
 }
 
 // ---------------------------------------------------------------------------
-// Per-worktree output accessor helpers (used by panels.rs)
+// Per-worktree accessor helpers
 // ---------------------------------------------------------------------------
 
 /// Returns the WorktreeId for the currently selected worktree, or None if list is empty.
@@ -286,32 +254,6 @@ pub fn active_worktree_id(state: &AppState) -> Option<crate::domain::worktree::W
     Some(state.worktree_browser.worktrees[idx].id.clone())
 }
 
-/// Returns a reference to the active worktree's command output deque (empty if none selected).
-///
-/// Plan 14-09: reads from `state.worktrees` slice (was `CommandRunnerState.command_output_by_worktree`).
-pub fn active_output(state: &AppState) -> &std::collections::VecDeque<String> {
-    static EMPTY: std::sync::LazyLock<std::collections::VecDeque<String>> =
-        std::sync::LazyLock::new(std::collections::VecDeque::new);
-    if let Some(id) = active_worktree_id(state) {
-        state
-            .worktrees
-            .get(&id)
-            .map(|s| &s.output)
-            .unwrap_or(&EMPTY)
-    } else {
-        &EMPTY
-    }
-}
-
-/// Returns the scroll offset for the active worktree's command output (0 if none selected).
-///
-/// Plan 14-09: reads from `state.worktrees` slice (was `CommandRunnerState.command_output_scroll_by_worktree`).
-pub fn active_output_scroll(state: &AppState) -> usize {
-    active_worktree_id(state)
-        .and_then(|id| state.worktrees.get(&id).map(|s| s.output_scroll))
-        .unwrap_or(0)
-}
-
 /// Phase 14 / D-07: convenient lookup of the running task in a worktree's slice.
 /// Returns `None` if no slice exists for `id`, or if the slice has no current task.
 pub fn task_for_worktree<'a>(
@@ -323,7 +265,7 @@ pub fn task_for_worktree<'a>(
 
 /// Phase 14 / D-17: merge `loaded` worktrees into `state.worktrees`.
 ///
-/// - Surviving ids: existing slice kept (preserves task + queue + output).
+/// - Surviving ids: existing slice kept (preserves task + queue + logs).
 /// - Removed ids: slice dropped; if it had a running task, `handle.abort()` is
 ///   called explicitly (Phase 14 contract — `Box<dyn TaskHandle>::Drop` is
 ///   not specified to abort; Phase 15 widens this).

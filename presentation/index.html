@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="A lightweight scrum demo presentation for UMP Dash."
+    />
+    <title>UMP Dash — Scrum Demo</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./deck.js" defer></script>
+  </head>
+  <body>
+    <main class="deck" aria-live="polite">
+      <section class="slide slide--cover is-active" data-title="UMP Dashboard">
+        <div class="slide__content cover cover--plain">
+          <p class="eyebrow">Scrum demo</p>
+          <h1>UMP<br />Dashboard.</h1>
+          <p class="lede">From friction to flow.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Before AI">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">01 · Before AI</p>
+          <h2>Manual setup.</h2>
+          <ul class="talking-points">
+            <li>I usually had 3–4 worktrees, all managed by me.</li>
+            <li>They covered production, development, and someone else’s PR.</li>
+            <li>The path stayed the same; I only checked out different branches.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide" data-title="The setup problem">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">02 · The setup problem</p>
+          <h2>Setup wasn’t automatic.</h2>
+          <ul class="talking-points">
+            <li>Make sure Yarn dependencies were installed.</li>
+            <li>Make sure iOS pods were installed.</li>
+            <li>Find the right Metro instance and open its debugger.</li>
+            <li>I had a few setup scripts, but never enough time to finish the workflow.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide" data-title="After AI">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">03 · After AI</p>
+          <h2>More worktrees.</h2>
+          <ul class="talking-points">
+            <li>With AI, agents worked on different things, so I started creating temporary worktrees.</li>
+            <li>Every new worktree had to be ready to run—with Yarn, pods, .env files, and the Android keystore.</li>
+            <li>The setup work multiplied with every worktree.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Built with Ratatui">
+        <div class="slide__content slide__content--statement">
+          <p class="eyebrow">04 · Ratatui</p>
+          <h2>Built with<br />Ratatui.</h2>
+          <img
+            class="ratatui-badge"
+            src="./assets/ratatui-badge.svg"
+            alt="Built with Ratatui"
+          />
+        </div>
+      </section>
+
+      <section class="slide" data-title="Small improvements">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">05 · Small improvements</p>
+          <h2>Less switching.</h2>
+          <ul class="talking-points">
+            <li>Show the JIRA ticket next to the branch.</li>
+            <li>Open the Metro debugger from the dashboard.</li>
+            <li>Run multiple Metro instances at the same time.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Native build cache">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">06 · Native build cache</p>
+          <h2>Build once.<br />Run again.</h2>
+          <ul class="talking-points">
+            <li>Reuse iOS and Android builds between worktrees.</li>
+            <li>Keep JavaScript connected to the selected worktree’s Metro.</li>
+            <li>Test and experiment faster.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide" data-title="MCP">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">07 · MCP</p>
+          <h2>Agents use it too.</h2>
+          <ul class="talking-points">
+            <li>Agents can use the dashboard through MCP.</li>
+            <li>They use the same queues, checks, ports, and worktree rules.</li>
+            <li>Human and agent workflows are managed in one place.</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Demo">
+        <div class="slide__content slide__content--points">
+          <p class="eyebrow">08 · Demo</p>
+          <h2>What I’ll show.</h2>
+          <ul class="talking-points">
+            <li>Select a worktree.</li>
+            <li>Start Metro.</li>
+            <li>Launch a cached build.</li>
+            <li>Trigger the same workflow through MCP.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <nav class="deck-nav" aria-label="Presentation controls">
+      <button class="nav-button" type="button" data-action="previous" aria-label="Previous slide">
+        ←
+      </button>
+      <div class="progress" aria-label="Slide progress"></div>
+      <span class="slide-count" aria-label="Current slide">01 / 09</span>
+      <button class="nav-button" type="button" data-action="next" aria-label="Next slide">
+        →
+      </button>
+    </nav>
+
+    <button class="help-button" type="button" data-action="help" aria-label="Show keyboard shortcuts">
+      ?
+    </button>
+
+    <dialog class="help-dialog">
+      <button class="dialog-close" type="button" data-action="help" aria-label="Close">×</button>
+      <p class="eyebrow">Keyboard controls</p>
+      <dl>
+        <div><dt><kbd>→</kbd> <kbd>Space</kbd></dt><dd>Next slide</dd></div>
+        <div><dt><kbd>←</kbd></dt><dd>Previous slide</dd></div>
+        <div><dt><kbd>Home</kbd></dt><dd>First slide</dd></div>
+        <div><dt><kbd>End</kbd></dt><dd>Last slide</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd>Fullscreen</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>Toggle this help</dd></div>
+      </dl>
+    </dialog>
+
+    <noscript>
+      <p class="no-script">Enable JavaScript to navigate the presentation.</p>
+    </noscript>
+  </body>
+</html>

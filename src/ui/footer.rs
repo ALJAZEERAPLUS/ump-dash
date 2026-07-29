@@ -5,7 +5,7 @@
 //! `crate::app::keybindings::footer_hints_for(state)`. The registry walker
 //! filters every binding by `context_matches(&kb.context, state)` and by
 //! `(kb.visible)(state)`, so context-sensitive hints (palette, modal,
-//! overlay, panel-specific) flow from the single source of truth.
+//! overlay, task-specific) flow from the single source of truth.
 
 use ratatui::{
     layout::Rect,
@@ -17,7 +17,7 @@ use ratatui::{
 use crate::{app::{keybindings::footer_hints_for, AppState}, ui::theme};
 
 /// Renders the footer key hint bar. Always 1 line tall at the bottom of the layout.
-/// Hints change based on which panel is focused and current app state — satisfies SHELL-02.
+/// Hints change with the current app state — satisfies SHELL-02.
 /// Dynamic: metro hints (R/J/Esc) only shown when metro is running. No static legend.
 pub fn render_footer(f: &mut Frame, area: Rect, state: &AppState) {
     let hints = footer_hints_for(state);

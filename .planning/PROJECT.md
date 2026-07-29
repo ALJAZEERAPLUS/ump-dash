@@ -26,7 +26,7 @@ One place to see and control everything about your React Native worktrees — wh
 - ✓ Custom labels per worktree/branch that override or accompany JIRA title — v1.0
 - ✓ Vim-style keybindings with on-screen key hints — v1.0
 - ✓ Only one metro instance running at a time across all worktrees — v1.0
-- ✓ Command queue system with per-worktree output persistence — v1.0
+- ✓ Command queue system with per-worktree log persistence — v1.0
 - ✓ Multiplexer abstraction (tmux + zellij) — v1.0
 - ✓ External metro conflict detection and resolution — v1.0
 - ✓ Worktree creation and removal commands — v1.0
@@ -82,7 +82,7 @@ Architecture: TEA (The Elm Architecture) with domain/infra/app/ui separation.
 - User works in tmux or zellij, dedicating one window to this dashboard
 - Branch naming convention configurable (default: JIRA-style PROJ-XXXX)
 - Palette submenu keybinding scheme (a/i/x/y/g/w) with vim-style navigation
-- Per-worktree command output persistence, FIFO command queue
+- Per-worktree command log persistence for agent inspection, FIFO command queue
 - External metro conflict detection via port 8081 lsof
 - Public GitHub release: MIT licensed, CI on macOS+Linux, tag-triggered prebuilt binaries (signed+notarized on macOS)
 

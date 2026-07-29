@@ -1,7 +1,7 @@
 //! Command runner port — F-101 domain boundary for subprocess dispatch.
 //!
 //! The pre-Phase-13 adapter (`src/infra/command_runner.rs`) imported
-//! `crate::domain::action::Action` and sent `Action::CommandOutputLine`
+//! `crate::domain::action::Action` and sent `Action::CommandLogLine`
 //! / `Action::CommandExited` directly on its output channel. That is the
 //! F-101 Fowler violation: the infra (Data-Source) layer knew the
 //! app-layer (Service) messaging grammar.

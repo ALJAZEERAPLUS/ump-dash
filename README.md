@@ -133,6 +133,7 @@ cargo run
 | i | Open iOS palette |
 | a | Open Android palette |
 | o | Open palette (`c` Claude Code, `e` editor, `f` Finder, `t` shell tab, `j` Metro debugger) |
+| l | Open retained logs for the selected worktree |
 | q | Quit |
 | ? | Toggle help overlay |
 | j / k or arrows | Navigate worktree list |

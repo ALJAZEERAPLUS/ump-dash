@@ -247,7 +247,7 @@ impl McpToolServer {
         json(&self.gateway.request(a.worktree, AgentRequest::GetTaskStatus).await)
     }
 
-    #[tool(description = "Tail of the command output for your worktree (includes cached-launch results, e.g. '[cached-ios] installed and launched cached app').")]
+    #[tool(description = "Tail of the retained command logs for your worktree (includes cached-launch results, e.g. '[cached-ios] installed and launched cached app').")]
     async fn get_logs(&self, Parameters(a): Parameters<LogsArgs>) -> String {
         json(
             &self

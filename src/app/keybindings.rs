@@ -18,7 +18,7 @@
 
 #![allow(dead_code)]
 
-use super::state::{AppState, FocusedPanel, PaletteMode, active_worktree_id};
+use super::state::{AppState, PaletteMode, active_worktree_id};
 use crate::domain::action::Action;
 use crate::domain::command::{CommandSpec, ModalState};
 use crate::domain::worktree_slice::LastRunConfig;
@@ -28,20 +28,16 @@ use ratatui::crossterm::event::KeyCode;
 pub enum BindingContext {
     /// Matches unconditionally (currently unused — kept for future broad-scope bindings).
     Always,
-    /// Top-level (no modal, no palette, no overlay, no fullscreen-panel override).
+    /// Top-level (no modal, palette, or overlay).
     Normal,
-    /// Focused on the worktree table (Normal + focused_panel is WorktreeTable).
+    /// The worktree table is the app's primary surface.
     WorktreeTable,
-    /// Focused on the command output pane.
-    CommandOutput,
     /// A specific palette is open.
     Palette(PaletteMode),
     /// A specific modal is open.
     Modal(ModalKind),
     /// A specific overlay is active.
     Overlay(OverlayKind),
-    /// Fullscreen panel is active (Tab exits).
-    Fullscreen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,6 +52,7 @@ pub enum ModalKind {
     ExternalMetroConflict,
     BranchPicker,
     PullRequestPicker,
+    CommandLogs,
     Info,
 }
 
@@ -595,6 +592,79 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| Some(Action::PullRequestPickerBackspace),
         visible: |_| false,
     },
+    // ==== Modal: CommandLogs ====
+    KeyBinding {
+        key: KeyCode::Char('j'),
+        label: "j/k",
+        short_desc: "scroll",
+        long_desc: "Scroll command logs",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::CommandLogsScrollDown),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Down,
+        label: "Down",
+        short_desc: "scroll down",
+        long_desc: "Scroll command logs down",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::CommandLogsScrollDown),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Char('k'),
+        label: "k",
+        short_desc: "scroll up",
+        long_desc: "Scroll command logs up",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::CommandLogsScrollUp),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Up,
+        label: "Up",
+        short_desc: "scroll up",
+        long_desc: "Scroll command logs up",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::CommandLogsScrollUp),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Char('G'),
+        label: "G",
+        short_desc: "bottom",
+        long_desc: "Follow newest command logs",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::CommandLogsScrollBottom),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('l'),
+        label: "l",
+        short_desc: "close",
+        long_desc: "Close command logs",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Char('q'),
+        label: "q",
+        short_desc: "close",
+        long_desc: "Close command logs",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc",
+        short_desc: "close",
+        long_desc: "Close command logs",
+        context: BindingContext::Modal(ModalKind::CommandLogs),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
     // ==== Modal: Info ====
     KeyBinding {
         key: KeyCode::Enter,
@@ -957,22 +1027,12 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| Some(Action::DismissError),
         visible: |_| false,
     },
-    // ==== Fullscreen: Tab exits ====
-    KeyBinding {
-        key: KeyCode::Tab,
-        label: "Tab",
-        short_desc: "exit fullscreen",
-        long_desc: "Exit fullscreen mode",
-        context: BindingContext::Fullscreen,
-        action: |_| Some(Action::ToggleFullscreen),
-        visible: |_| true,
-    },
-    // ==== WorktreeTable panel ====
+    // ==== Worktree table ====
     KeyBinding {
         key: KeyCode::Char('j'),
         label: "j/k",
         short_desc: "navigate",
-        long_desc: "Navigate within panel",
+        long_desc: "Navigate worktrees",
         context: BindingContext::WorktreeTable,
         action: |_| Some(Action::WorktreeSelectNext),
         visible: |_| false,
@@ -1098,13 +1158,22 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         visible: |_| false,
     },
     KeyBinding {
-        key: KeyCode::Char('f'),
-        label: "f",
-        short_desc: "fullscreen",
-        long_desc: "Toggle fullscreen",
+        key: KeyCode::Char('l'),
+        label: "l",
+        short_desc: "logs",
+        long_desc: "Open selected worktree command logs",
         context: BindingContext::WorktreeTable,
-        action: |_| Some(Action::ToggleFullscreen),
-        visible: |_| false,
+        action: |_| Some(Action::OpenCommandLogs),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('X'),
+        label: "X",
+        short_desc: "cancel",
+        long_desc: "Cancel selected worktree command",
+        context: BindingContext::WorktreeTable,
+        action: |s| selected_task_cancellable(s).then_some(Action::CommandCancel),
+        visible: selected_task_cancellable,
     },
     KeyBinding {
         key: KeyCode::Enter,
@@ -1115,95 +1184,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| Some(Action::WorktreeSwitchToSelected),
         visible: |_| false,
     },
-    // ==== CommandOutput panel ====
-    KeyBinding {
-        key: KeyCode::Char('j'),
-        label: "j/k",
-        short_desc: "scroll",
-        long_desc: "Scroll output",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::CommandOutputScrollDown),
-        visible: |_| true,
-    },
-    KeyBinding {
-        key: KeyCode::Down,
-        label: "Down",
-        short_desc: "scroll down",
-        long_desc: "Scroll output down",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::CommandOutputScrollDown),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('k'),
-        label: "k",
-        short_desc: "scroll up",
-        long_desc: "Scroll output up",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::CommandOutputScrollUp),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Up,
-        label: "Up",
-        short_desc: "scroll up",
-        long_desc: "Scroll output up",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::CommandOutputScrollUp),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('G'),
-        label: "G",
-        short_desc: "bottom",
-        long_desc: "Scroll to bottom",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::ScrollToBottom),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('g'),
-        label: "gg",
-        short_desc: "top",
-        long_desc: "Scroll to top (double-tap)",
-        context: BindingContext::CommandOutput,
-        action: |s| {
-            if s.modal_stack.pending_g {
-                Some(Action::ScrollToTop)
-            } else {
-                Some(Action::SetPendingG)
-            }
-        },
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('X'),
-        label: "X",
-        short_desc: "cancel",
-        long_desc: "Cancel running command",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::CommandCancel),
-        visible: command_running,
-    },
-    KeyBinding {
-        key: KeyCode::Char('C'),
-        label: "C",
-        short_desc: "clear",
-        long_desc: "Clear output",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::CommandOutputClear),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('f'),
-        label: "f",
-        short_desc: "fullscreen",
-        long_desc: "Toggle fullscreen",
-        context: BindingContext::CommandOutput,
-        action: |_| Some(Action::ToggleFullscreen),
-        visible: |_| true,
-    },
-    // ==== Normal (top-level fallback when no panel-specific / modal / overlay) ====
+    // ==== Global bindings ====
     KeyBinding {
         key: KeyCode::Char('q'),
         label: "q",
@@ -1240,96 +1221,6 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| Some(Action::Search),
         visible: |_| false,
     },
-    KeyBinding {
-        key: KeyCode::Char('j'),
-        label: "j/k",
-        short_desc: "navigate",
-        long_desc: "Focus down",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusDown),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Down,
-        label: "Down",
-        short_desc: "focus down",
-        long_desc: "Focus down",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusDown),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('k'),
-        label: "k",
-        short_desc: "focus up",
-        long_desc: "Focus up",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusUp),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Up,
-        label: "Up",
-        short_desc: "focus up",
-        long_desc: "Focus up",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusUp),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('h'),
-        label: "h",
-        short_desc: "focus left",
-        long_desc: "Focus left",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusLeft),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Left,
-        label: "Left",
-        short_desc: "focus left",
-        long_desc: "Focus left",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusLeft),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Char('l'),
-        label: "l",
-        short_desc: "focus right",
-        long_desc: "Focus right",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusRight),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Right,
-        label: "Right",
-        short_desc: "focus right",
-        long_desc: "Focus right",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusRight),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::Tab,
-        label: "Tab",
-        short_desc: "panel",
-        long_desc: "Switch panel",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusNext),
-        visible: |_| false,
-    },
-    KeyBinding {
-        key: KeyCode::BackTab,
-        label: "Shift-Tab",
-        short_desc: "prev panel",
-        long_desc: "Previous panel",
-        context: BindingContext::Normal,
-        action: |_| Some(Action::FocusPrev),
-        visible: |_| false,
-    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1362,8 +1253,11 @@ fn metro_running(state: &AppState) -> bool {
         .unwrap_or(false)
 }
 
-fn command_running(state: &AppState) -> bool {
-    state.worktrees.values().any(|s| s.task.is_some())
+fn selected_task_cancellable(state: &AppState) -> bool {
+    active_worktree_id(state)
+        .and_then(|id| state.worktrees.get(&id))
+        .and_then(|slice| slice.task.as_ref())
+        .is_some_and(|task| task.spec.is_cancellable())
 }
 
 // ---------------------------------------------------------------------------
@@ -1375,24 +1269,10 @@ pub fn context_matches(ctx: &BindingContext, state: &AppState) -> bool {
     let in_overlay = state.show_help || state.error_state.is_some();
     let in_modal = state.modal_stack.modal.is_some();
     let in_palette = state.modal_stack.palette_mode.is_some();
-    let in_fullscreen = state.worktree_browser.fullscreen_panel.is_some();
-
     match ctx {
         BindingContext::Always => true,
-        BindingContext::Normal => !in_modal && !in_palette && !in_overlay && !in_fullscreen,
-        BindingContext::WorktreeTable => {
-            !in_modal
-                && !in_palette
-                && !in_overlay
-                && !in_fullscreen
-                && state.focused_panel == FocusedPanel::WorktreeTable
-        }
-        BindingContext::CommandOutput => {
-            !in_modal
-                && !in_palette
-                && !in_overlay
-                && !in_fullscreen
-                && state.focused_panel == FocusedPanel::CommandOutput
+        BindingContext::Normal | BindingContext::WorktreeTable => {
+            !in_modal && !in_palette && !in_overlay
         }
         BindingContext::Palette(p) => {
             !in_modal && !in_overlay && state.modal_stack.palette_mode.as_ref() == Some(p)
@@ -1402,7 +1282,6 @@ pub fn context_matches(ctx: &BindingContext, state: &AppState) -> bool {
         BindingContext::Overlay(OverlayKind::Error) => {
             !state.show_help && state.error_state.is_some()
         }
-        BindingContext::Fullscreen => in_fullscreen && !in_modal && !in_palette && !in_overlay,
     }
 }
 
@@ -1440,6 +1319,7 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
                 Some(ModalState::PullRequestPicker { .. }),
                 ModalKind::PullRequestPicker
             )
+            | (Some(ModalState::CommandLogs { .. }), ModalKind::CommandLogs)
             | (Some(ModalState::Info { .. }), ModalKind::Info)
     )
 }
@@ -1546,7 +1426,6 @@ fn section_for_context(ctx: &BindingContext) -> &'static str {
     match ctx {
         BindingContext::Always | BindingContext::Normal => "Global",
         BindingContext::WorktreeTable => "Worktree Table",
-        BindingContext::CommandOutput => "Output Pane",
         BindingContext::Palette(PaletteMode::Android) => "Android  (a>)",
         BindingContext::Palette(PaletteMode::Ios) => "iOS  (i>)",
         BindingContext::Palette(PaletteMode::Yarn) => "Yarn  (y>)",
@@ -1555,7 +1434,6 @@ fn section_for_context(ctx: &BindingContext) -> &'static str {
         BindingContext::Palette(PaletteMode::Open) => "Open  (o>)",
         BindingContext::Modal(_) => "Modal",
         BindingContext::Overlay(_) => "Overlay",
-        BindingContext::Fullscreen => "Fullscreen",
     }
 }
 

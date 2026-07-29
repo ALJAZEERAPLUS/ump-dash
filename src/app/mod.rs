@@ -21,10 +21,7 @@ pub mod update;
 pub use adapters::Adapters;
 pub use handle_key::handle_key;
 pub use runtime::run;
-pub use state::{
-    active_output, active_output_scroll, active_worktree_id, AppState, ErrorState,
-    FocusedPanel, PaletteMode,
-};
+pub use state::{AppState, ErrorState, PaletteMode, active_worktree_id};
 pub use update::update;
 
 #[cfg(test)]

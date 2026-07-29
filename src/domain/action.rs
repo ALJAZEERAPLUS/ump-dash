@@ -3,14 +3,6 @@
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub enum Action {
-    // Navigation
-    FocusNext,  // Tab
-    FocusPrev,  // Shift-Tab
-    FocusUp,    // k or Up arrow
-    FocusDown,  // j or Down arrow
-    FocusLeft,  // h or Left arrow
-    FocusRight, // l or Right arrow
-
     // Search
     Search, // / (Phase 1: stub — no-op. Phase 4+ will activate search mode.)
 
@@ -57,7 +49,7 @@ pub enum Action {
     /// Late stdout from a cancelled task lands here with no matching slice;
     /// the handler in `update.rs` silently drops it. Protects against the fast
     /// cancel+respawn race (RESEARCH §Pitfall P-3).
-    CommandOutputLine {
+    CommandLogLine {
         task_id: crate::domain::task::TaskId,
         line: String,
     },
@@ -68,21 +60,24 @@ pub enum Action {
         task_id: crate::domain::task::TaskId,
         status: crate::domain::task::ExitStatus,
     },
-    CommandOutputClear, // clear the output panel
-    CommandCancel,      // abort running command
+    CommandCancel, // abort running command
 
     // Phase 3: Modal flow
-    ModalConfirm,           // user pressed Y in confirm dialog
-    ModalCancel,            // user pressed N or Esc in any modal
-    ModalInputChar(char),   // character typed in text input modal
-    ModalInputBackspace,    // backspace in text input modal
-    ModalInputSubmit,       // Enter in text input modal
-    ModalDeviceNext,        // j/Down in device picker
-    ModalDevicePrev,        // k/Up in device picker
-    ModalDeviceConfirm,     // Enter on selected device
-    ModalRunVariantNext,    // j/Down in UMP run-type picker
-    ModalRunVariantPrev,    // k/Up in UMP run-type picker
-    ModalRunVariantConfirm, // Enter on selected UMP run type
+    ModalConfirm,            // user pressed Y in confirm dialog
+    ModalCancel,             // user pressed N or Esc in any modal
+    ModalInputChar(char),    // character typed in text input modal
+    ModalInputBackspace,     // backspace in text input modal
+    ModalInputSubmit,        // Enter in text input modal
+    ModalDeviceNext,         // j/Down in device picker
+    ModalDevicePrev,         // k/Up in device picker
+    ModalDeviceConfirm,      // Enter on selected device
+    ModalRunVariantNext,     // j/Down in UMP run-type picker
+    ModalRunVariantPrev,     // k/Up in UMP run-type picker
+    ModalRunVariantConfirm,  // Enter on selected UMP run type
+    OpenCommandLogs,         // l on a worktree — open its retained logs
+    CommandLogsScrollUp,     // k/Up in command logs
+    CommandLogsScrollDown,   // j/Down in command logs
+    CommandLogsScrollBottom, // G in command logs — resume following newest output
 
     // Phase 3: Device enumeration (internal — sent by background task, not user)
     DevicesEnumerated {
@@ -126,9 +121,6 @@ pub enum Action {
     CleanToggleSyncAfter,
     CleanConfirm, // dispatches queued clean commands from CleanOptions
 
-    // Phase 5.1: Fullscreen
-    ToggleFullscreen, // 'f' key — toggle fullscreen for current focused pane
-
     // Phase 5.1: Shell command
     StartShellCommand, // '!' key — opens text input modal for shell command
 
@@ -160,13 +152,6 @@ pub enum Action {
     // Quick-260410-mu7: Sync-before-metro
     SyncBeforeMetroAccept,  // user said "Yes" to sync before metro
     SyncBeforeMetroDecline, // user said "No" — start metro without sync
-
-    // Phase 5.2: Universal scroll
-    ScrollToTop,    // gg (two g presses) — scroll to top of focused scrollable pane
-    ScrollToBottom, // G — scroll to bottom, re-enable auto-follow
-    SetPendingG,    // first g press in scrollable pane — pending gg sequence
-    CommandOutputScrollUp, // k in CommandOutput pane — scroll up
-    CommandOutputScrollDown, // j in CommandOutput pane — scroll down
 
     // Phase 5.2: External metro conflict detection
     ExternalMetroDetected(crate::domain::ports::port_probe_port::ExternalProcessInfo), // port 8081 occupied by external process

@@ -795,7 +795,7 @@ impl EffectRunner {
                             maybe_ev = rx.recv() => {
                                 match maybe_ev {
                                     Some(CommandEvent::OutputLine(line)) => {
-                                        if tx.send(Action::CommandOutputLine { task_id, line }).is_err() {
+                                        if tx.send(Action::CommandLogLine { task_id, line }).is_err() {
                                             break;
                                         }
                                     }

@@ -53,3 +53,4 @@ CommandSpec::GitResetHard => "git reset --hard HEAD",
 ** TODO configurable columns
 ** TODO configure show/hide headers
 ** TODO shared native build
+** TODO show feedback in statusbar for invalid input

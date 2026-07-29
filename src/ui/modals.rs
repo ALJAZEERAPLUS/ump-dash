@@ -1,17 +1,23 @@
 //! Modal overlay renderers. Each modal type uses Clear + centered_rect pattern.
 //! render_modal() is the single dispatch point called from view().
 
-use crate::domain::command::ModalState;
+use crate::{
+    app::AppState,
+    domain::{command::ModalState, worktree::WorktreeId},
+};
 use ratatui::{
     Frame,
-    layout::Rect,
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    text::{Line, Span, Text},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState,
+    },
 };
 
 /// Dispatch to the correct modal renderer based on the current ModalState.
-pub fn render_modal(f: &mut Frame, modal: &ModalState) {
+pub fn render_modal(f: &mut Frame, modal: &ModalState, state: &AppState) {
     match modal {
         ModalState::Confirm { prompt, .. } => render_confirm_modal(f, prompt),
         ModalState::TextInput { prompt, buffer, .. } => render_text_input_modal(f, prompt, buffer),
@@ -48,6 +54,10 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState) {
             search,
             filter,
         } => render_pull_request_picker_modal(f, pull_requests, *selected, search, *filter),
+        ModalState::CommandLogs {
+            worktree_id,
+            scroll_from_bottom,
+        } => render_command_logs_modal(f, state, worktree_id, *scroll_from_bottom),
         ModalState::Info { message } => render_info_modal(f, message),
     }
 }
@@ -534,6 +544,67 @@ fn render_pull_request_picker_modal(
 
     f.render_widget(Clear, area);
     f.render_stateful_widget(list, area, &mut ls);
+}
+
+/// Renders retained command output for one worktree without changing the base layout.
+/// A zero `scroll_from_bottom` follows new output; positive values hold the
+/// viewport above the newest lines while the command continues streaming.
+fn render_command_logs_modal(
+    f: &mut Frame,
+    state: &AppState,
+    worktree_id: &WorktreeId,
+    scroll_from_bottom: usize,
+) {
+    let area = centered_rect(f.area(), 92, 82, 44, 10);
+    let slice = state.worktrees.get(worktree_id);
+    let retained_count = slice.map(|slice| slice.logs.len()).unwrap_or(0);
+    let worktree_label = state
+        .worktree_browser
+        .worktrees
+        .iter()
+        .find(|worktree| &worktree.id == worktree_id)
+        .map(|worktree| worktree.branch.as_str())
+        .unwrap_or(worktree_id.0.as_str());
+
+    let lines: Vec<Line> = match slice {
+        Some(slice) if !slice.logs.is_empty() => slice
+            .logs
+            .iter()
+            .map(|line| Line::from(line.as_str()))
+            .collect(),
+        _ => vec![Line::styled(
+            "No command logs yet.",
+            Style::default().fg(Color::DarkGray),
+        )],
+    };
+
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let max_scroll = retained_count.saturating_sub(visible_height);
+    let scroll = max_scroll.saturating_sub(scroll_from_bottom.min(max_scroll));
+    let block = Block::default()
+        .title(format!(
+            " Logs — {worktree_label} ({retained_count} lines) "
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let paragraph = Paragraph::new(Text::from(lines))
+        .block(block)
+        .scroll((scroll as u16, 0));
+
+    f.render_widget(Clear, area);
+    f.render_widget(paragraph, area);
+
+    if max_scroll > 0 {
+        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
 }
 
 fn render_info_modal(f: &mut Frame, message: &str) {

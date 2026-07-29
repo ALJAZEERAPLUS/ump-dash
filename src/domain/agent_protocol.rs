@@ -101,7 +101,7 @@ pub enum AgentRequest {
     GetWorktreeStatus,
     /// Read-only: running task + queued specs.
     GetTaskStatus,
-    /// Read-only: tail of the worktree's command output.
+    /// Read-only: tail of the worktree's retained command logs.
     GetLogs { tail: Option<usize> },
     /// Cancel the running task (honors the non-cancellable git guard).
     Cancel,

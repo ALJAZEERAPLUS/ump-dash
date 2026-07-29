@@ -3,7 +3,7 @@
 // Tokio-backed adapter implementing `CommandRunnerPort` (F-101).
 //
 // Pre-Phase-13 state: this file imported `crate::domain::action::Action` and
-// sent `Action::CommandOutputLine` / `Action::CommandExited` directly on its
+// sent `Action::CommandLogLine` / `Action::CommandExited` directly on its
 // output channel — the F-101 Fowler violation (Data-Source layer coupled to
 // Service-layer messaging grammar).
 //

@@ -1,5 +1,5 @@
 use crate::{
-    app::{AppState, FocusedPanel},
+    app::AppState,
     domain::{dash_config::WorktreeTableColumn, worktree::WorktreeMetroStatus},
     ui::{
         indicators::{SpinnerStyle, format_elapsed, spinner_frame, task_short_label},
@@ -8,17 +8,14 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Margin, Rect},
+    layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{
-        Block, BorderType, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table,
-    },
+    text::{Line, Span},
+    widgets::{Block, BorderType, Cell, Paragraph, Row, Table},
 };
 
 /// Renders the application title bar with double border.
-/// Only shown in normal (non-fullscreen) layout.
+/// Available to layouts that need a standalone title.
 #[allow(dead_code)]
 pub fn render_title_bar(f: &mut Frame, area: Rect, state: &AppState) {
     let title = state
@@ -194,17 +191,11 @@ fn android_cache_status_column_style(
     }
 }
 
-/// Renders the worktree table (bottom section) with structured columns.
+/// Renders the worktree table with structured columns.
 pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
-    let border_style = if state.focused_panel == FocusedPanel::WorktreeTable {
-        theme::style_focused_border()
-    } else {
-        theme::style_inactive_border()
-    };
-
     let block = Block::bordered()
         .border_type(BorderType::Double)
-        .border_style(border_style);
+        .border_style(theme::style_primary_border());
 
     if state.worktree_browser.worktrees.is_empty() {
         let placeholder = Paragraph::new("Loading worktrees...").block(block);
@@ -468,90 +459,6 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
                 .worktree_table_state
                 .select(Some(logical));
         }
-    }
-}
-
-/// Renders the command output pane (full top area) with real streaming output.
-pub fn render_command_output(f: &mut Frame, area: Rect, state: &AppState) {
-    let border_style = if state.focused_panel == FocusedPanel::CommandOutput {
-        theme::style_focused_border()
-    } else {
-        theme::style_inactive_border()
-    };
-
-    // Title shows running command name, [running] indicator, and queue count.
-    // Plan 14-09: reads from slice via task_for_worktree + slice queue length.
-    let active_id = crate::app::state::active_worktree_id(state);
-    let active_task = active_id
-        .as_ref()
-        .and_then(|id| crate::app::state::task_for_worktree(state, id));
-    let active_queue_count = active_id
-        .as_ref()
-        .and_then(|id| state.worktrees.get(id))
-        .map(|s| s.queue.len())
-        .unwrap_or(0);
-
-    let title = match active_task {
-        Some(record) => {
-            if active_queue_count > 0 {
-                format!(
-                    " Output — {} [running] (+{} queued) ",
-                    record.spec.label(),
-                    active_queue_count
-                )
-            } else {
-                format!(" Output — {} [running] ", record.spec.label())
-            }
-        }
-        None => {
-            if active_queue_count > 0 {
-                format!(" Output ({active_queue_count} queued) ")
-            } else {
-                " Output ".to_string()
-            }
-        }
-    };
-
-    let lines: Vec<Line> = crate::app::active_output(state)
-        .iter()
-        .map(|l| Line::from(l.as_str()))
-        .collect();
-
-    let visible_height = area.height.saturating_sub(2) as usize; // subtract borders
-
-    // Auto-scroll to bottom when scroll is 0 (default); manual scroll overrides
-    let scroll_offset = crate::app::active_output_scroll(state);
-    let scroll = if scroll_offset == 0 && !lines.is_empty() {
-        lines.len().saturating_sub(visible_height)
-    } else {
-        scroll_offset
-    };
-
-    let block = Block::bordered()
-        .border_type(BorderType::Double)
-        .title(title)
-        .title_style(Style::default().fg(Color::White))
-        .border_style(border_style);
-
-    let paragraph = Paragraph::new(Text::from(lines.clone()))
-        .block(block)
-        .scroll((scroll as u16, 0));
-
-    f.render_widget(paragraph, area);
-
-    // Scrollbar — only rendered when content exceeds visible area
-    if lines.len() > visible_height {
-        let max_scroll = lines.len() - visible_height;
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll.min(max_scroll));
-
-        f.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight),
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            &mut scrollbar_state,
-        );
     }
 }
 
