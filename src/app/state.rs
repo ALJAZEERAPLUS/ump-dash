@@ -64,6 +64,10 @@ pub struct WorktreeBrowserState {
     pub worktrees: Vec<crate::domain::worktree::Worktree>,
     pub worktree_table_state: ratatui::widgets::TableState,
     pub selected_worktree_id: Option<crate::domain::worktree::WorktreeId>,
+    /// Case-insensitive query used to narrow the worktree table.
+    pub filter_query: String,
+    /// True while printable keys edit `filter_query` instead of triggering commands.
+    pub filter_input_active: bool,
     /// Guard against periodic refresh during worktree mutations.
     pub worktree_op_in_flight: bool,
 }
@@ -76,8 +80,42 @@ impl Default for WorktreeBrowserState {
             worktrees: Vec::new(),
             worktree_table_state,
             selected_worktree_id: None,
+            filter_query: String::new(),
+            filter_input_active: false,
             worktree_op_in_flight: false,
         }
+    }
+}
+
+impl WorktreeBrowserState {
+    /// Indices into the canonical worktree list that match the current filter.
+    pub fn visible_worktree_indices(&self) -> Vec<usize> {
+        let needle = self.filter_query.to_lowercase();
+        self.worktrees
+            .iter()
+            .enumerate()
+            .filter_map(|(index, worktree)| {
+                let matches = needle.is_empty()
+                    || worktree.branch.to_lowercase().contains(&needle)
+                    || worktree.display_name().to_lowercase().contains(&needle)
+                    || worktree
+                        .jira_key
+                        .as_deref()
+                        .is_some_and(|key| key.to_lowercase().contains(&needle))
+                    || worktree
+                        .jira_title
+                        .as_deref()
+                        .is_some_and(|title| title.to_lowercase().contains(&needle));
+                matches.then_some(index)
+            })
+            .collect()
+    }
+
+    /// Worktree represented by the current table selection after filtering.
+    pub fn selected_worktree(&self) -> Option<&crate::domain::worktree::Worktree> {
+        let visible_index = self.worktree_table_state.selected()?;
+        let canonical_index = *self.visible_worktree_indices().get(visible_index)?;
+        self.worktrees.get(canonical_index)
     }
 }
 
@@ -242,16 +280,10 @@ pub struct AppState {
 
 /// Returns the WorktreeId for the currently selected worktree, or None if list is empty.
 pub fn active_worktree_id(state: &AppState) -> Option<crate::domain::worktree::WorktreeId> {
-    if state.worktree_browser.worktrees.is_empty() {
-        return None;
-    }
-    let idx = state
+    state
         .worktree_browser
-        .worktree_table_state
-        .selected()
-        .unwrap_or(0)
-        .min(state.worktree_browser.worktrees.len() - 1);
-    Some(state.worktree_browser.worktrees[idx].id.clone())
+        .selected_worktree()
+        .map(|worktree| worktree.id.clone())
 }
 
 /// Phase 14 / D-07: convenient lookup of the running task in a worktree's slice.

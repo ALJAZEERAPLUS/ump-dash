@@ -40,6 +40,15 @@ pub fn handle_key(state: &AppState, key: KeyEvent) -> Option<Action> {
         }
     }
 
+    // Worktree filtering owns printable input while active, so command keys
+    // such as q/j/k become query text instead of triggering normal actions.
+    if state.worktree_browser.filter_input_active
+        && let KeyCode::Char(c) = key.code
+        && !c.is_ascii_control()
+    {
+        return Some(Action::WorktreeFilterInput(c));
+    }
+
     // Fallthrough 1: modal char-consumers. TextInput/DevicePicker/BranchPicker/PR picker
     // accept arbitrary chars as input or filter text. The registry's explicit
     // entries handled the non-char keys; now route any remaining Char(c).

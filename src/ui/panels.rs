@@ -193,12 +193,31 @@ fn android_cache_status_column_style(
 
 /// Renders the worktree table with structured columns.
 pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
+    let title = if state.worktree_browser.filter_input_active {
+        format!(" Worktrees /{}▌ ", state.worktree_browser.filter_query)
+    } else if state.worktree_browser.filter_query.is_empty() {
+        " Worktrees ".to_string()
+    } else {
+        format!(" Worktrees /{} ", state.worktree_browser.filter_query)
+    };
     let block = Block::bordered()
+        .title(title)
         .border_type(BorderType::Double)
         .border_style(theme::style_primary_border());
 
     if state.worktree_browser.worktrees.is_empty() {
         let placeholder = Paragraph::new("Loading worktrees...").block(block);
+        f.render_widget(placeholder, area);
+        return;
+    }
+
+    let visible_worktree_indices = state.worktree_browser.visible_worktree_indices();
+    if visible_worktree_indices.is_empty() {
+        let placeholder = Paragraph::new(format!(
+            "No worktrees match /{}",
+            state.worktree_browser.filter_query
+        ))
+        .block(block);
         f.render_widget(placeholder, area);
         return;
     }
@@ -221,7 +240,8 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
         .map(|c| c.columns.as_slice())
         .unwrap_or(&crate::domain::dash_config::DEFAULT_WORKTREE_COLUMNS);
 
-    for wt in state.worktree_browser.worktrees.iter() {
+    for &worktree_index in &visible_worktree_indices {
+        let wt = &state.worktree_browser.worktrees[worktree_index];
         let branch = &wt.branch;
 
         // Extract ticket number from branch if possible
@@ -377,15 +397,9 @@ pub fn render_worktree_table(f: &mut Frame, area: Rect, state: &mut AppState) {
     }
 
     // Use green highlight when the selected row is metro-active, gray otherwise
-    let selected_idx = state
-        .worktree_browser
-        .worktree_table_state
-        .selected()
-        .unwrap_or(0);
     let selected_is_metro = state
         .worktree_browser
-        .worktrees
-        .get(selected_idx)
+        .selected_worktree()
         .map(|wt| wt.metro_status == WorktreeMetroStatus::Running)
         .unwrap_or(false);
 

@@ -32,6 +32,8 @@ pub enum BindingContext {
     Normal,
     /// The worktree table is the app's primary surface.
     WorktreeTable,
+    /// Printable input is editing the worktree table filter.
+    WorktreeFilter,
     /// A specific palette is open.
     Palette(PaletteMode),
     /// A specific modal is open.
@@ -1027,6 +1029,34 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         action: |_| Some(Action::DismissError),
         visible: |_| false,
     },
+    // ==== Worktree filter input ====
+    KeyBinding {
+        key: KeyCode::Enter,
+        label: "Enter",
+        short_desc: "apply",
+        long_desc: "Apply worktree filter",
+        context: BindingContext::WorktreeFilter,
+        action: |_| Some(Action::WorktreeFilterApply),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc",
+        short_desc: "clear",
+        long_desc: "Clear worktree filter",
+        context: BindingContext::WorktreeFilter,
+        action: |_| Some(Action::WorktreeFilterClear),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Backspace,
+        label: "Backspace",
+        short_desc: "delete",
+        long_desc: "Delete filter character",
+        context: BindingContext::WorktreeFilter,
+        action: |_| Some(Action::WorktreeFilterBackspace),
+        visible: |_| true,
+    },
     // ==== Worktree table ====
     KeyBinding {
         key: KeyCode::Char('j'),
@@ -1215,8 +1245,8 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
     KeyBinding {
         key: KeyCode::Char('/'),
         label: "/",
-        short_desc: "search",
-        long_desc: "Search",
+        short_desc: "filter",
+        long_desc: "Filter worktrees",
         context: BindingContext::Normal,
         action: |_| Some(Action::Search),
         visible: |_| false,
@@ -1239,15 +1269,9 @@ fn external_metro_kill_action(state: &AppState) -> Option<Action> {
 // ---------------------------------------------------------------------------
 
 fn metro_running(state: &AppState) -> bool {
-    let idx = state
-        .worktree_browser
-        .worktree_table_state
-        .selected()
-        .unwrap_or(0);
     state
         .worktree_browser
-        .worktrees
-        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
+        .selected_worktree()
         .and_then(|wt| state.worktrees.get(&wt.id))
         .map(|slice| slice.metro.is_running())
         .unwrap_or(false)
@@ -1269,10 +1293,14 @@ pub fn context_matches(ctx: &BindingContext, state: &AppState) -> bool {
     let in_overlay = state.show_help || state.error_state.is_some();
     let in_modal = state.modal_stack.modal.is_some();
     let in_palette = state.modal_stack.palette_mode.is_some();
+    let in_worktree_filter = state.worktree_browser.filter_input_active;
     match ctx {
         BindingContext::Always => true,
         BindingContext::Normal | BindingContext::WorktreeTable => {
-            !in_modal && !in_palette && !in_overlay
+            !in_modal && !in_palette && !in_overlay && !in_worktree_filter
+        }
+        BindingContext::WorktreeFilter => {
+            !in_modal && !in_palette && !in_overlay && in_worktree_filter
         }
         BindingContext::Palette(p) => {
             !in_modal && !in_overlay && state.modal_stack.palette_mode.as_ref() == Some(p)
@@ -1426,6 +1454,7 @@ fn section_for_context(ctx: &BindingContext) -> &'static str {
     match ctx {
         BindingContext::Always | BindingContext::Normal => "Global",
         BindingContext::WorktreeTable => "Worktree Table",
+        BindingContext::WorktreeFilter => "Worktree Filter  (/)",
         BindingContext::Palette(PaletteMode::Android) => "Android  (a>)",
         BindingContext::Palette(PaletteMode::Ios) => "iOS  (i>)",
         BindingContext::Palette(PaletteMode::Yarn) => "Yarn  (y>)",

@@ -59,29 +59,14 @@ fn metro_worktree_id_from_path(path: &Path) -> String {
 }
 
 fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
-    let idx = state
-        .worktree_browser
-        .worktree_table_state
-        .selected()
-        .unwrap_or(0);
     state
         .worktree_browser
-        .worktrees
-        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
-        .map(|wt| wt.path.clone())
+        .selected_worktree()
+        .map(|worktree| worktree.path.clone())
 }
 
 fn selected_worktree_snapshot(state: &AppState) -> Option<crate::domain::worktree::Worktree> {
-    let idx = state
-        .worktree_browser
-        .worktree_table_state
-        .selected()
-        .unwrap_or(0);
-    state
-        .worktree_browser
-        .worktrees
-        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))
-        .cloned()
+    state.worktree_browser.selected_worktree().cloned()
 }
 
 fn pull_request_matches_search(pr: &PullRequest, search: &str) -> bool {
@@ -136,16 +121,40 @@ fn shell_quote(value: &str) -> String {
 fn active_worktree_snapshot(
     state: &AppState,
 ) -> Option<(crate::domain::worktree::WorktreeId, PathBuf)> {
-    let idx = state
+    let wt = state.worktree_browser.selected_worktree()?;
+    Some((wt.id.clone(), wt.path.clone()))
+}
+
+fn reconcile_worktree_selection(state: &mut AppState) {
+    let visible_indices = state.worktree_browser.visible_worktree_indices();
+    if visible_indices.is_empty() {
+        state.worktree_browser.worktree_table_state.select(None);
+        state.worktree_browser.selected_worktree_id = None;
+        state.metro_state.active_worktree_path = None;
+        return;
+    }
+
+    let visible_index = state
+        .worktree_browser
+        .selected_worktree_id
+        .as_ref()
+        .and_then(|selected_id| {
+            visible_indices.iter().position(|canonical_index| {
+                state.worktree_browser.worktrees[*canonical_index].id == *selected_id
+            })
+        })
+        .unwrap_or(0);
+    let canonical_index = visible_indices[visible_index];
+    let selected = &state.worktree_browser.worktrees[canonical_index];
+    let selected_id = selected.id.clone();
+    let selected_path = selected.path.clone();
+
+    state
         .worktree_browser
         .worktree_table_state
-        .selected()
-        .unwrap_or(0);
-    let wt = state
-        .worktree_browser
-        .worktrees
-        .get(idx.min(state.worktree_browser.worktrees.len().saturating_sub(1)))?;
-    Some((wt.id.clone(), wt.path.clone()))
+        .select(Some(visible_index));
+    state.worktree_browser.selected_worktree_id = Some(selected_id);
+    state.metro_state.active_worktree_path = Some(selected_path);
 }
 
 fn worktree_snapshot_for_id(state: &AppState, worktree_id: &WorktreeId) -> Option<PathBuf> {
@@ -895,26 +904,7 @@ fn remove_worktree_for_agent(
         .worktree_browser
         .worktrees
         .retain(|entry| entry.id != wt.id);
-    if state.worktree_browser.worktrees.is_empty() {
-        state.worktree_browser.worktree_table_state.select(None);
-        state.worktree_browser.selected_worktree_id = None;
-        state.metro_state.active_worktree_path = None;
-    } else {
-        let idx = state
-            .worktree_browser
-            .worktree_table_state
-            .selected()
-            .unwrap_or(0)
-            .min(state.worktree_browser.worktrees.len() - 1);
-        state
-            .worktree_browser
-            .worktree_table_state
-            .select(Some(idx));
-        state.worktree_browser.selected_worktree_id =
-            Some(state.worktree_browser.worktrees[idx].id.clone());
-        state.metro_state.active_worktree_path =
-            Some(state.worktree_browser.worktrees[idx].path.clone());
-    }
+    reconcile_worktree_selection(state);
 
     state.worktree_browser.worktree_op_in_flight = true;
     let target = wt.path.to_string_lossy().to_string();
@@ -1560,7 +1550,23 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
     match action {
         // Phase 1 actions
         Action::Search => {
-            // Phase 4+: stub
+            state.worktree_browser.filter_input_active = true;
+        }
+        Action::WorktreeFilterInput(c) => {
+            state.worktree_browser.filter_query.push(c);
+            reconcile_worktree_selection(state);
+        }
+        Action::WorktreeFilterBackspace => {
+            state.worktree_browser.filter_query.pop();
+            reconcile_worktree_selection(state);
+        }
+        Action::WorktreeFilterApply => {
+            state.worktree_browser.filter_input_active = false;
+        }
+        Action::WorktreeFilterClear => {
+            state.worktree_browser.filter_query.clear();
+            state.worktree_browser.filter_input_active = false;
+            reconcile_worktree_selection(state);
         }
         Action::ShowHelp => state.show_help = true,
         Action::DismissHelp => state.show_help = false,
@@ -1826,7 +1832,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Phase 3: Worktree navigation ---
         Action::WorktreeSelectNext => {
-            let len = state.worktree_browser.worktrees.len();
+            let visible_indices = state.worktree_browser.visible_worktree_indices();
+            let len = visible_indices.len();
             if len > 0 {
                 let i = state
                     .worktree_browser
@@ -1838,17 +1845,22 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     .worktree_browser
                     .worktree_table_state
                     .select(Some(next));
+                let canonical_index = visible_indices[next];
                 // Update stable selection id
                 state.worktree_browser.selected_worktree_id =
-                    Some(state.worktree_browser.worktrees[next].id.clone());
+                    Some(state.worktree_browser.worktrees[canonical_index].id.clone());
                 // Update active worktree for metro
-                state.metro_state.active_worktree_path =
-                    Some(state.worktree_browser.worktrees[next].path.clone());
+                state.metro_state.active_worktree_path = Some(
+                    state.worktree_browser.worktrees[canonical_index]
+                        .path
+                        .clone(),
+                );
             }
         }
 
         Action::WorktreeSelectPrev => {
-            let len = state.worktree_browser.worktrees.len();
+            let visible_indices = state.worktree_browser.visible_worktree_indices();
+            let len = visible_indices.len();
             if len > 0 {
                 let i = state
                     .worktree_browser
@@ -1860,12 +1872,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     .worktree_browser
                     .worktree_table_state
                     .select(Some(prev));
+                let canonical_index = visible_indices[prev];
                 // Update stable selection id
                 state.worktree_browser.selected_worktree_id =
-                    Some(state.worktree_browser.worktrees[prev].id.clone());
+                    Some(state.worktree_browser.worktrees[canonical_index].id.clone());
                 // Update active worktree for metro
-                state.metro_state.active_worktree_path =
-                    Some(state.worktree_browser.worktrees[prev].path.clone());
+                state.metro_state.active_worktree_path = Some(
+                    state.worktree_browser.worktrees[canonical_index]
+                        .path
+                        .clone(),
+                );
             }
         }
 
@@ -1907,27 +1923,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             queue_ios_cache_lookups_for_loaded_worktrees(state, &mut effects);
             queue_android_cache_lookups_for_loaded_worktrees(state, &mut effects);
 
-            if !state.worktree_browser.worktrees.is_empty() {
-                // Re-derive selected index from selected_worktree_id (stable across sorts)
-                let selected_idx = state
-                    .worktree_browser
-                    .selected_worktree_id
-                    .as_ref()
-                    .and_then(|id| {
-                        state
-                            .worktree_browser
-                            .worktrees
-                            .iter()
-                            .position(|wt| &wt.id == id)
-                    })
-                    .unwrap_or(0);
-                state
-                    .worktree_browser
-                    .worktree_table_state
-                    .select(Some(selected_idx));
-                state.metro_state.active_worktree_path =
-                    Some(state.worktree_browser.worktrees[selected_idx].path.clone());
-            }
+            // Re-derive the visible index from the stable id after refresh or sorting.
+            reconcile_worktree_selection(state);
 
             // Phase 4: fetch titles for uncached branches
             if state.jira.available {
@@ -1974,20 +1971,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             }
 
             // Get selected worktree (needed for all branches)
-            let wt_branch = if !state.worktree_browser.worktrees.is_empty() {
-                let idx = state
-                    .worktree_browser
-                    .worktree_table_state
-                    .selected()
-                    .unwrap_or(0);
-                let idx = idx.min(state.worktree_browser.worktrees.len() - 1);
-                Some((
-                    state.worktree_browser.worktrees[idx].branch.clone(),
-                    state.worktree_browser.worktrees[idx].stale,
-                ))
-            } else {
-                None
-            };
+            let wt_branch = state
+                .worktree_browser
+                .selected_worktree()
+                .map(|worktree| (worktree.branch.clone(), worktree.stale));
 
             if is_ump_run(&spec) {
                 if spec.needs_device_selection() {
@@ -2034,15 +2021,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             {
                 let is_ios = is_ios_run_command(&spec);
                 let pods_stale = if is_ios {
-                    let idx = state
-                        .worktree_browser
-                        .worktree_table_state
-                        .selected()
-                        .unwrap_or(0);
-                    let wt_path = &state.worktree_browser.worktrees
-                        [idx.min(state.worktree_browser.worktrees.len() - 1)]
-                    .path;
-                    crate::domain::staleness::check_stale_pods(wt_path)
+                    selected_worktree_path(state)
+                        .is_some_and(|path| crate::domain::staleness::check_stale_pods(&path))
                 } else {
                     false
                 };
@@ -2444,26 +2424,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
                 // Immediately remove from worktree list for instant visual feedback
                 state.worktree_browser.worktrees.retain(|wt| wt.id != wt_id);
-                if state.worktree_browser.worktrees.is_empty() {
-                    state.worktree_browser.worktree_table_state.select(None);
-                    state.worktree_browser.selected_worktree_id = None;
-                    state.metro_state.active_worktree_path = None;
-                } else {
-                    let idx = state
-                        .worktree_browser
-                        .worktree_table_state
-                        .selected()
-                        .unwrap_or(0)
-                        .min(state.worktree_browser.worktrees.len() - 1);
-                    state
-                        .worktree_browser
-                        .worktree_table_state
-                        .select(Some(idx));
-                    state.worktree_browser.selected_worktree_id =
-                        Some(state.worktree_browser.worktrees[idx].id.clone());
-                    state.metro_state.active_worktree_path =
-                        Some(state.worktree_browser.worktrees[idx].path.clone());
-                }
+                reconcile_worktree_selection(state);
 
                 // Emit the async removal effect
                 state.worktree_browser.worktree_op_in_flight = true;
@@ -2990,27 +2951,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Phase 5: Worktree switching and Claude Code ---
         Action::WorktreeSwitchToSelected => {
-            let selected_idx = state
-                .worktree_browser
-                .worktree_table_state
-                .selected()
-                .unwrap_or(0);
+            let selected_worktree = state.worktree_browser.selected_worktree().cloned();
             // Capture target path NOW — navigation may change active_worktree_path later
-            let target_path = state
-                .worktree_browser
-                .worktrees
-                .get(selected_idx)
-                .map(|wt| wt.path.clone());
-            let target_id = state
-                .worktree_browser
-                .worktrees
-                .get(selected_idx)
-                .map(|wt| wt.id.clone());
+            let target_path = selected_worktree.as_ref().map(|wt| wt.path.clone());
+            let target_id = selected_worktree.as_ref().map(|wt| wt.id.clone());
 
             // Stale dependency check — metro only needs yarn, not pods
-            if let Some(wt) = state.worktree_browser.worktrees.get(selected_idx)
-                && wt.stale
-            {
+            if selected_worktree.is_some_and(|wt| wt.stale) {
                 if state
                     .app_config
                     .config
@@ -3665,16 +3612,9 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         // --- Quick-2: Worktree removal ---
         Action::WorktreeRemove => {
-            if state.worktree_browser.worktrees.is_empty() {
+            let Some(wt) = state.worktree_browser.selected_worktree().cloned() else {
                 return effects;
-            }
-            let idx = state
-                .worktree_browser
-                .worktree_table_state
-                .selected()
-                .unwrap_or(0)
-                .min(state.worktree_browser.worktrees.len() - 1);
-            let wt = state.worktree_browser.worktrees[idx].clone();
+            };
 
             // Guard: cannot remove the main worktree (its path equals repo_root)
             if wt.path == state.app_config.repo_root {

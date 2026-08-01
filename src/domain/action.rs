@@ -4,7 +4,11 @@
 #[allow(dead_code)]
 pub enum Action {
     // Search
-    Search, // / (Phase 1: stub — no-op. Phase 4+ will activate search mode.)
+    Search,                    // / — enter worktree filter input
+    WorktreeFilterInput(char), // printable character typed into the worktree filter
+    WorktreeFilterBackspace,
+    WorktreeFilterApply,
+    WorktreeFilterClear,
 
     // Overlays
     ShowHelp,    // ? or F1
