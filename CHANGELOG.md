@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.0] - 2026-08-18
+
+### New
+- **Worktree filtering** - press `/` to filter the table by worktree name, branch, JIRA key, or JIRA title.
+- **Open in Finder** - the Open menu can now reveal the selected worktree in Finder.
+
+### Fixed
+- New branch creation now defaults consistently to `rc-trunk`, including when loaded branch names include the `origin/` prefix.
+- Codex provisioning now preserves shared MCP server settings and comments while refreshing only the UMP Dashboard entry.
+
+### Improved
+- The worktree table now uses the full dashboard, with retained command logs available on demand and cancellation scoped to the selected worktree.
+
 ## [1.8.0] - 2026-06-30
 
 ### New
