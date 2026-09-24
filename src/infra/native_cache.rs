@@ -608,10 +608,31 @@ struct PrunableEntryMetadata {
 /// and a failure to remove one entry does not abort pruning the rest. Returns
 /// the entry directories that were removed.
 pub fn prune_worktree_in_root(root: &Path, worktree_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    prune_worktree_in_root_with_derived_data(root, None, worktree_path)
+}
+
+/// Same as `prune_worktree_in_root`, and also removes the Xcode derived data
+/// that belongs to the worktree.
+///
+/// Xcode names each derived data directory from a hash of the workspace path,
+/// so a deleted worktree keeps its directory and no later build reclaims it.
+/// Each directory records its own `WorkspacePath`, which identifies the owner.
+///
+/// The derived data root stays a parameter because this function deletes
+/// directories. A caller that gives an explicit cache root must not reach
+/// outside it.
+fn prune_worktree_in_root_with_derived_data(
+    root: &Path,
+    derived_data_root: Option<&Path>,
+    worktree_path: &Path,
+) -> anyhow::Result<Vec<PathBuf>> {
     let target = worktree_path.display().to_string();
     let mut removed = Vec::new();
     for platform in [IOS_SIMULATOR_PLATFORM, ANDROID_PLATFORM] {
         prune_platform_dir(&root.join(platform), &target, &mut removed);
+    }
+    if let Some(derived_data_root) = derived_data_root {
+        prune_derived_data_dir(derived_data_root, worktree_path, &mut removed);
     }
     Ok(removed)
 }
@@ -643,6 +664,56 @@ fn prune_platform_dir(platform_dir: &Path, target: &str, removed: &mut Vec<PathB
             ),
         }
     }
+}
+
+fn prune_derived_data_dir(
+    derived_data_root: &Path,
+    worktree_path: &Path,
+    removed: &mut Vec<PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(derived_data_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let entry_dir = entry.path();
+        if !entry_dir.is_dir() {
+            continue;
+        }
+        // ModuleCache.noindex and SDKStatCaches.noindex belong to every
+        // workspace. Removal of one makes all other worktrees build again.
+        if entry_dir
+            .extension()
+            .is_some_and(|extension| extension == "noindex")
+        {
+            continue;
+        }
+        let Some(workspace) = derived_data_workspace_path(&entry_dir) else {
+            continue;
+        };
+        if !workspace.starts_with(worktree_path) {
+            continue;
+        }
+        match std::fs::remove_dir_all(&entry_dir) {
+            Ok(()) => removed.push(entry_dir),
+            Err(e) => tracing::warn!(
+                path = %entry_dir.display(),
+                "prune_worktree: failed to remove derived data: {e}"
+            ),
+        }
+    }
+}
+
+/// Reads `WorkspacePath` from the `info.plist` of a derived data directory.
+///
+/// Xcode writes this file as XML, so a small scan removes the need for a plist
+/// dependency. A path that contains an XML entity does not match its worktree,
+/// which keeps the directory instead of deletion of the wrong one.
+fn derived_data_workspace_path(entry_dir: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(entry_dir.join("info.plist")).ok()?;
+    let after_key = text.split("<key>WorkspacePath</key>").nth(1)?;
+    let start = after_key.find("<string>")? + "<string>".len();
+    let end = after_key[start..].find("</string>")? + start;
+    Some(PathBuf::from(after_key[start..end].trim()))
 }
 
 fn has_valid_artifact_digest(algorithm: &str, digest: &str) -> bool {
@@ -1143,7 +1214,11 @@ impl NativeCachePort for LocalNativeCache {
     }
 
     async fn prune_worktree(&self, worktree_path: PathBuf) -> anyhow::Result<Vec<PathBuf>> {
-        prune_worktree_in_root(&self.root(), &worktree_path)
+        prune_worktree_in_root_with_derived_data(
+            &self.root(),
+            default_derived_data_root().as_deref(),
+            &worktree_path,
+        )
     }
 
     async fn store_ios_simulator(
@@ -2317,6 +2392,120 @@ mod tests {
         assert!(removed.is_empty());
         assert!(bad.exists());
         assert!(empty.exists());
+        Ok(())
+    }
+
+    fn seed_derived_data_entry(root: &Path, name: &str, workspace_path: &str) -> PathBuf {
+        let entry = root.join(name);
+        fs::create_dir_all(&entry).unwrap();
+        // LastAccessedDate comes first, as Xcode writes it, so the scan must
+        // select the string of the WorkspacePath key and not the first string.
+        fs::write(
+            entry.join("info.plist"),
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <plist version=\"1.0\">\n\
+                 <dict>\n\
+                 \t<key>LastAccessedDate</key>\n\
+                 \t<string>2026-09-24T00:00:00Z</string>\n\
+                 \t<key>WorkspacePath</key>\n\
+                 \t<string>{workspace_path}</string>\n\
+                 </dict>\n\
+                 </plist>\n"
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(entry.join("Build/Products")).unwrap();
+        entry
+    }
+
+    #[test]
+    fn prune_removes_derived_data_of_deleted_worktree() -> anyhow::Result<()> {
+        let cache = TempTree::new("prune-dd-match")?;
+        let derived = TempTree::new("prune-dd-match-root")?;
+        let target = "/tmp/worktrees/UMP-9014";
+        let entry = seed_derived_data_entry(
+            derived.path(),
+            "AlJazeeraMobile-gdkfdtezrechewekmdedsrxajrae",
+            "/tmp/worktrees/UMP-9014/ios/AlJazeeraMobile.xcworkspace",
+        );
+
+        let removed = prune_worktree_in_root_with_derived_data(
+            cache.path(),
+            Some(derived.path()),
+            Path::new(target),
+        )?;
+
+        assert!(
+            !entry.exists(),
+            "derived data of the deleted worktree stays"
+        );
+        assert_eq!(removed, vec![entry]);
+        Ok(())
+    }
+
+    #[test]
+    fn prune_keeps_derived_data_of_worktree_with_a_shared_name_prefix() -> anyhow::Result<()> {
+        let cache = TempTree::new("prune-dd-prefix")?;
+        let derived = TempTree::new("prune-dd-prefix-root")?;
+        // UMP-901 is a prefix of UMP-9014 as text, but not as a path.
+        let sibling = seed_derived_data_entry(
+            derived.path(),
+            "AlJazeeraMobile-sibling",
+            "/tmp/worktrees/UMP-9014/ios/AlJazeeraMobile.xcworkspace",
+        );
+
+        let removed = prune_worktree_in_root_with_derived_data(
+            cache.path(),
+            Some(derived.path()),
+            Path::new("/tmp/worktrees/UMP-901"),
+        )?;
+
+        assert!(sibling.exists(), "derived data of UMP-9014 must stay");
+        assert!(removed.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn prune_keeps_the_caches_that_every_workspace_shares() -> anyhow::Result<()> {
+        let cache = TempTree::new("prune-dd-noindex")?;
+        let derived = TempTree::new("prune-dd-noindex-root")?;
+        let module_cache = derived.path().join("ModuleCache.noindex");
+        fs::create_dir_all(&module_cache)?;
+        let stat_cache = derived.path().join("SDKStatCaches.noindex");
+        fs::create_dir_all(&stat_cache)?;
+
+        let removed = prune_worktree_in_root_with_derived_data(
+            cache.path(),
+            Some(derived.path()),
+            Path::new("/tmp/worktrees/UMP-9014"),
+        )?;
+
+        assert!(module_cache.exists(), "ModuleCache.noindex must stay");
+        assert!(stat_cache.exists(), "SDKStatCaches.noindex must stay");
+        assert!(removed.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn prune_ignores_derived_data_without_a_readable_workspace_path() -> anyhow::Result<()> {
+        let cache = TempTree::new("prune-dd-unreadable")?;
+        let derived = TempTree::new("prune-dd-unreadable-root")?;
+        let no_plist = derived.path().join("AlJazeeraMobile-no-plist");
+        fs::create_dir_all(&no_plist)?;
+        let no_key = derived.path().join("AlJazeeraMobile-no-key");
+        fs::create_dir_all(&no_key)?;
+        fs::write(no_key.join("info.plist"), "<plist><dict></dict></plist>")?;
+
+        let removed = prune_worktree_in_root_with_derived_data(
+            cache.path(),
+            Some(derived.path()),
+            Path::new("/tmp/worktrees/UMP-9014"),
+        )?;
+
+        assert!(no_plist.exists());
+        assert!(no_key.exists());
+        assert!(removed.is_empty());
         Ok(())
     }
 }
