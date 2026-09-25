@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.9.1] - 2026-09-25
+
+### Fixed
+- When you delete a worktree, ump-dash now also deletes the build caches that it produced. Xcode derived data stayed on disk before this release, about 5 GB for each worktree.
+
 ## [1.9.0] - 2026-08-18
 
 ### New
