@@ -12,6 +12,12 @@ pub trait NativeCachePort: Send + Sync {
         worktree_path: PathBuf,
     ) -> anyhow::Result<IosSimulatorCacheLookup>;
 
+    /// Removes all cached native builds (iOS + Android) and the Xcode derived
+    /// data that belong to the given worktree. Called when a worktree is
+    /// deleted so its cached artifacts do not leak. Returns the directories
+    /// that were removed.
+    async fn prune_worktree(&self, worktree_path: PathBuf) -> anyhow::Result<Vec<PathBuf>>;
+
     async fn store_ios_simulator(
         &self,
         request: IosSimulatorCacheStoreRequest,
