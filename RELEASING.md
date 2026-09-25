@@ -34,6 +34,14 @@ When the user says **"release 1.2"** or **"release the next version"**:
    updates `Cargo.lock`, commits as `chore(release): v1.2.0`, tags `v1.2.0`,
    and pushes both. GitHub Actions takes it from there.
 
+   The rules on `main` require a pull request. GitHub rejects the direct push
+   with `GH013: Changes must be made through a pull request`. If the push
+   fails:
+   1. Delete the local tag (`git tag -d v1.2.0`).
+   2. Move the release commit to a branch and open a pull request.
+   3. After the merge, tag the merged commit as `v1.2.0` and push the tag.
+      The tag push starts the build and publish workflow.
+
 5. **GitHub Release body.** The release workflow extracts the matching
    `## [X.Y.Z]` section from `CHANGELOG.md` and passes it to
    `softprops/action-gh-release` as the release description. If the section is
