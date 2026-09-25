@@ -3,7 +3,8 @@
 #
 # Usage:
 #   scripts/release.sh <version>              # prepare: dump commits, stop for changelog
-#   scripts/release.sh <version> --finalize   # bump Cargo.toml, commit, tag, push
+#   scripts/release.sh <version> --finalize   # bump Cargo.toml, commit, push release/v<version> branch
+#   scripts/release.sh <version> --tag        # after the PR merges: tag main, push the tag
 #
 # <version> is either an explicit semver (1.2.0) or patch|minor|major.
 
@@ -11,17 +12,21 @@ set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
-[[ $# -ge 1 ]] || die "usage: $0 <version|patch|minor|major> [--finalize]"
+[[ $# -ge 1 ]] || die "usage: $0 <version|patch|minor|major> [--finalize|--tag]"
 
 SPEC="$1"
-FINALIZE="${2:-}"
+MODE="${2:-}"
+case "$MODE" in
+  ""|--finalize|--tag) ;;
+  *) die "unknown mode: $MODE (expected --finalize or --tag)" ;;
+esac
 
-# Must be on main. Prepare requires a clean tree; finalize is intentionally
-# run after editing CHANGELOG.md, so allow only that pending change.
+# Must be on main. Prepare and tag require a clean tree; finalize is
+# intentionally run after editing CHANGELOG.md, so allow only that pending change.
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 [[ "$BRANCH" == "main" ]] || die "must be on main (currently on $BRANCH)"
 STATUS=$(git status --porcelain)
-if [[ "$FINALIZE" == "--finalize" ]]; then
+if [[ "$MODE" == "--finalize" ]]; then
   ALLOWED_STATUS=$(git status --porcelain -- CHANGELOG.md)
   [[ "$STATUS" == "$ALLOWED_STATUS" ]] || die "working tree has non-changelog changes — commit or stash first"
 else
@@ -52,7 +57,37 @@ esac
 NEW_TAG="v$NEW_VER"
 git rev-parse "$NEW_TAG" >/dev/null 2>&1 && die "tag $NEW_TAG already exists"
 
-if [[ "$FINALIZE" == "--finalize" ]]; then
+# main only accepts changes through a pull request (GH013). The release commit
+# goes to its own branch, and the tag must point at the commit that lands on
+# main, so it is created only after the merge.
+RELEASE_BRANCH="release/$NEW_TAG"
+
+if [[ "$MODE" == "--tag" ]]; then
+  git ls-remote --exit-code --tags origin "refs/tags/$NEW_TAG" >/dev/null \
+    && die "tag $NEW_TAG already exists on origin"
+
+  CARGO_VER=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
+  [[ "$CARGO_VER" == "$NEW_VER" ]] \
+    || die "Cargo.toml on main is $CARGO_VER, not $NEW_VER — merge the $RELEASE_BRANCH PR first"
+
+  # The publish workflow fails without this section.
+  scripts/extract-release-notes.sh "$NEW_VER" CHANGELOG.md >/dev/null
+
+  git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+  git push origin "$NEW_TAG"
+
+  echo ""
+  echo "✓ Pushed $NEW_TAG — GitHub Actions will build and publish the release."
+  echo "  https://github.com/ALJAZEERAPLUS/ump-dash/actions"
+  exit 0
+fi
+
+if [[ "$MODE" == "--finalize" ]]; then
+  git rev-parse --verify --quiet "refs/heads/$RELEASE_BRANCH" >/dev/null \
+    && die "branch $RELEASE_BRANCH already exists locally"
+  git ls-remote --exit-code --heads origin "refs/heads/$RELEASE_BRANCH" >/dev/null \
+    && die "branch $RELEASE_BRANCH already exists on origin"
+
   # Changelog must have the release body that GitHub Actions will publish.
   scripts/extract-release-notes.sh "$NEW_VER" CHANGELOG.md >/dev/null
 
@@ -67,13 +102,15 @@ if [[ "$FINALIZE" == "--finalize" ]]; then
 
   git add CHANGELOG.md Cargo.toml Cargo.lock
   git commit -m "chore(release): $NEW_TAG"
-  git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-  git push origin main
-  git push origin "$NEW_TAG"
+  git branch "$RELEASE_BRANCH"
+  git reset --hard --quiet origin/main
+  git push -u origin "$RELEASE_BRANCH"
 
   echo ""
-  echo "✓ Pushed $NEW_TAG — GitHub Actions will build and publish the release."
-  echo "  https://github.com/ALJAZEERAPLUS/ump-dash/actions"
+  echo "✓ Pushed $RELEASE_BRANCH. Local main is back at origin/main."
+  echo "Next steps:"
+  echo "  1. Open a PR from $RELEASE_BRANCH to main and merge it"
+  echo "  2. Pull main, then run: scripts/release.sh $NEW_VER --tag"
   exit 0
 fi
 

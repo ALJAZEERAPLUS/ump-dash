@@ -31,10 +31,20 @@ When the user says **"release 1.2"** or **"release the next version"**:
    scripts/release.sh 1.2.0 --finalize
    ```
    This verifies the changelog section can be extracted, bumps `Cargo.toml`,
-   updates `Cargo.lock`, commits as `chore(release): v1.2.0`, tags `v1.2.0`,
-   and pushes both. GitHub Actions takes it from there.
+   updates `Cargo.lock`, and commits as `chore(release): v1.2.0` on a new
+   `release/v1.2.0` branch. It pushes only that branch and resets local
+   `main` to `origin/main`. The rules on `main` require a pull request, so
+   open a PR from `release/v1.2.0` and merge it.
 
-5. **GitHub Release body.** The release workflow extracts the matching
+5. **Tag after the merge.** Pull `main`, then run:
+   ```
+   scripts/release.sh 1.2.0 --tag
+   ```
+   This checks that `Cargo.toml` on `main` is `1.2.0` and that the changelog
+   section exists. Then it tags the merged commit as `v1.2.0` and pushes only
+   the tag. The tag push starts the build and publish workflow.
+
+6. **GitHub Release body.** The release workflow extracts the matching
    `## [X.Y.Z]` section from `CHANGELOG.md` and passes it to
    `softprops/action-gh-release` as the release description. If the section is
    missing or empty, the release job fails instead of publishing generated
