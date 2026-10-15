@@ -156,6 +156,24 @@ pub async fn remove_worktree(repo_root: &Path, worktree_path: &Path) -> anyhow::
     Ok(())
 }
 
+/// Force-deletes a local branch with `git branch -D <branch>`.
+///
+/// The user confirms this delete in a prompt, so unmerged commits do not stop it.
+pub async fn delete_branch(repo_root: &Path, branch: &str) -> anyhow::Result<()> {
+    let output = tokio::process::Command::new("git")
+        .args(["branch", "-D", branch])
+        .current_dir(repo_root)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git branch -D failed: {}", stderr.trim());
+    }
+
+    Ok(())
+}
+
 /// Copies each `seed_files` entry from `repo_root` into `worktree_path`. Entries
 /// are paths RELATIVE to the repo root (identical across every teammate's clone),
 /// so seeding works regardless of where main/new worktrees live on disk. The
@@ -804,6 +822,10 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         worktree_path: &std::path::Path,
     ) -> anyhow::Result<()> {
         remove_worktree(repo_root, worktree_path).await
+    }
+
+    async fn delete_branch(&self, repo_root: &std::path::Path, branch: &str) -> anyhow::Result<()> {
+        delete_branch(repo_root, branch).await
     }
 
     async fn add(

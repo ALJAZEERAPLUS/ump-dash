@@ -23,6 +23,9 @@ pub trait WorktreePort: Send + Sync {
     /// Removes a worktree (`git worktree remove --force`) and prunes metadata.
     async fn remove(&self, repo_root: &Path, worktree_path: &Path) -> anyhow::Result<()>;
 
+    /// Force-deletes a local branch (`git branch -D`).
+    async fn delete_branch(&self, repo_root: &Path, branch: &str) -> anyhow::Result<()>;
+
     /// Creates a worktree as a sibling of `repo_root` using `branch_name`.
     /// Creates the branch with `-b` on first try; retries with an existing
     /// branch checkout if `-b` fails because the branch already exists.

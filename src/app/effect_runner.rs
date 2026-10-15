@@ -451,6 +451,21 @@ impl EffectRunner {
                 });
             }
 
+            Effect::DeleteBranch { repo_root, branch } => {
+                let wt = self.adapters.worktrees.clone();
+                let tx = self.action_tx.clone();
+                tokio::spawn(async move {
+                    match wt.delete_branch(&repo_root, &branch).await {
+                        Ok(()) => {
+                            let _ = tx.send(Action::BranchDeleted(branch));
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Action::BranchDeleteFailed(e.to_string()));
+                        }
+                    }
+                });
+            }
+
             Effect::PruneNativeCache { worktree_path } => {
                 let native_cache = self.adapters.native_cache.clone();
                 tokio::spawn(async move {
@@ -1070,6 +1085,10 @@ mod tests {
         }
 
         async fn remove(&self, _repo_root: &Path, _worktree_path: &Path) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn delete_branch(&self, _repo_root: &Path, _branch: &str) -> anyhow::Result<()> {
             Ok(())
         }
 

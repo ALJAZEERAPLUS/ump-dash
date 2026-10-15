@@ -2406,10 +2406,23 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::ModalConfirm => {
             // Check for pending worktree removal BEFORE falling through to normal confirm
-            if let Some((wt_id, wt_path, _branch)) =
+            if let Some(branch) = state.modal_stack.pending_branch_delete.take() {
+                state.modal_stack.modal = None;
+                effects.push(Effect::DeleteBranch {
+                    repo_root: state.app_config.repo_root.clone(),
+                    branch,
+                });
+                return effects;
+            }
+
+            if let Some((wt_id, wt_path, branch)) =
                 state.modal_stack.pending_worktree_removal.take()
             {
                 state.modal_stack.modal = None;
+
+                if branch != "(detached)" {
+                    state.modal_stack.pending_branch_delete_offer = Some((wt_path.clone(), branch));
+                }
 
                 // Stop metro if it's running on the worktree being removed
                 if state
@@ -2461,6 +2474,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 state.modal_stack.pending_device_command = None;
             }
             state.modal_stack.pending_worktree_removal = None; // discard any pending removal on cancel
+            state.modal_stack.pending_branch_delete = None;
             state.modal_stack.pending_worktree_add = false; // discard any pending add on cancel
             state.modal_stack.pending_new_branch_base = None; // discard new-branch base on cancel
             state.modal_stack.pending_new_branch_worktree = false;
@@ -3668,9 +3682,33 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             effects.push(Effect::ListWorktrees {
                 repo_root: state.app_config.repo_root.clone(),
             });
+
+            let offer = state.modal_stack.pending_branch_delete_offer.take();
+            let no_modal_open = state.modal_stack.modal.is_none();
+            if let Some((_, branch)) =
+                offer.filter(|(path, _)| no_modal_open && path == Path::new(&path_str))
+            {
+                state.modal_stack.modal = Some(ModalState::Confirm {
+                    prompt: format!("Also delete branch '{branch}'? Unmerged commits are lost."),
+                    pending_command: crate::domain::command::CommandSpec::GitPull, // sentinel
+                });
+                state.modal_stack.pending_branch_delete = Some(branch);
+            }
+        }
+
+        Action::BranchDeleted(branch) => {
+            tracing::info!("branch deleted: {}", branch);
+        }
+
+        Action::BranchDeleteFailed(err) => {
+            state.error_state = Some(ErrorState {
+                message: format!("Failed to delete branch: {err}"),
+                can_retry: false,
+            });
         }
 
         Action::WorktreeRemoveFailed(err) => {
+            state.modal_stack.pending_branch_delete_offer = None;
             state.worktree_browser.worktree_op_in_flight = false;
             state.error_state = Some(ErrorState {
                 message: format!("Failed to remove worktree: {err}"),

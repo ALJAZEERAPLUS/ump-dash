@@ -97,6 +97,10 @@ pub enum Effect {
         repo_root: PathBuf,
         path: PathBuf,
     },
+    DeleteBranch {
+        repo_root: PathBuf,
+        branch: String,
+    },
     /// Delete all native build caches (iOS + Android) produced by a worktree,
     /// dispatched after the worktree has been removed so its cached artifacts
     /// do not leak.
@@ -338,6 +342,7 @@ mod tests {
                 Effect::ListPullRequests { .. } => 25,
                 Effect::AgentReply { .. } => 26,
                 Effect::PruneNativeCache { .. } => 27,
+                Effect::DeleteBranch { .. } => 28,
             }
         }
         let e = Effect::ListWorktrees {
