@@ -2405,7 +2405,6 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::ModalConfirm => {
-            // Check for pending worktree removal BEFORE falling through to normal confirm
             if let Some(branch) = state.modal_stack.pending_branch_delete.take() {
                 state.modal_stack.modal = None;
                 effects.push(Effect::DeleteBranch {
@@ -2415,6 +2414,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 return effects;
             }
 
+            // Check for pending worktree removal BEFORE falling through to normal confirm
             if let Some((wt_id, wt_path, branch)) =
                 state.modal_stack.pending_worktree_removal.take()
             {
