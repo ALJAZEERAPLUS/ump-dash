@@ -52,6 +52,7 @@ use super::effect::Effect;
 use crate::domain::action::Action;
 use crate::domain::metro::MetroActivity;
 use crate::domain::metro::MetroHandle;
+use crate::domain::ports::worktree_port::BranchDeleteOutcome;
 use tokio::sync::mpsc::UnboundedSender;
 
 fn forward_metro_activity(
@@ -451,13 +452,20 @@ impl EffectRunner {
                 });
             }
 
-            Effect::DeleteBranch { repo_root, branch } => {
+            Effect::DeleteBranch {
+                repo_root,
+                branch,
+                force,
+            } => {
                 let wt = self.adapters.worktrees.clone();
                 let tx = self.action_tx.clone();
                 tokio::spawn(async move {
-                    match wt.delete_branch(&repo_root, &branch).await {
-                        Ok(()) => {
+                    match wt.delete_branch(&repo_root, &branch, force).await {
+                        Ok(BranchDeleteOutcome::Deleted) => {
                             let _ = tx.send(Action::BranchDeleted(branch));
+                        }
+                        Ok(BranchDeleteOutcome::Unmerged { commits }) => {
+                            let _ = tx.send(Action::BranchUnmerged { branch, commits });
                         }
                         Err(e) => {
                             let _ = tx.send(Action::BranchDeleteFailed(e.to_string()));
@@ -925,7 +933,7 @@ mod tests {
     use crate::domain::ports::native_cache_port::NativeCachePort;
     use crate::domain::ports::port_probe_port::{ExternalProcessInfo, PortProbePort};
     use crate::domain::ports::review_port::ReviewPort;
-    use crate::domain::ports::worktree_port::WorktreePort;
+    use crate::domain::ports::worktree_port::{BranchDeleteOutcome, WorktreePort};
     use crate::domain::review::{PullRequest, PullRequestFilter};
     use crate::domain::worktree::{Worktree, WorktreeId};
     use std::path::{Path, PathBuf};
@@ -1088,8 +1096,13 @@ mod tests {
             Ok(())
         }
 
-        async fn delete_branch(&self, _repo_root: &Path, _branch: &str) -> anyhow::Result<()> {
-            Ok(())
+        async fn delete_branch(
+            &self,
+            _repo_root: &Path,
+            _branch: &str,
+            _force: bool,
+        ) -> anyhow::Result<BranchDeleteOutcome> {
+            Ok(BranchDeleteOutcome::Deleted)
         }
 
         async fn add(&self, _repo_root: &Path, _branch_name: &str) -> anyhow::Result<PathBuf> {

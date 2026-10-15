@@ -492,6 +492,9 @@ pub enum ModalState {
     SyncBeforeMetro { needs_yarn: bool, needs_pods: bool },
     /// External metro conflict — another process occupies port 8081.
     ExternalMetroConflict { pid: u32, working_dir: String },
+    /// `git branch -d` refused an unmerged branch. Only D forces the delete,
+    /// so a habitual Y press cannot remove unmerged commits.
+    ForceDeleteBranch { branch: String, commits: usize },
     /// Branch picker for "create worktree with new branch" flow.
     BranchPicker {
         branches: Vec<String>,

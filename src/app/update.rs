@@ -2410,6 +2410,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 effects.push(Effect::DeleteBranch {
                     repo_root: state.app_config.repo_root.clone(),
                     branch,
+                    force: false,
                 });
                 return effects;
             }
@@ -2505,6 +2506,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 | Some(ModalState::SyncBeforeRun { .. })
                 | Some(ModalState::SyncBeforeMetro { .. })
                 | Some(ModalState::ExternalMetroConflict { .. })
+                | Some(ModalState::ForceDeleteBranch { .. })
                 | Some(ModalState::BranchPicker { .. })
                 | Some(ModalState::PullRequestPicker { .. })
                 | Some(ModalState::CommandLogs { .. })
@@ -2535,6 +2537,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 | Some(ModalState::SyncBeforeRun { .. })
                 | Some(ModalState::SyncBeforeMetro { .. })
                 | Some(ModalState::ExternalMetroConflict { .. })
+                | Some(ModalState::ForceDeleteBranch { .. })
                 | Some(ModalState::BranchPicker { .. })
                 | Some(ModalState::PullRequestPicker { .. })
                 | Some(ModalState::CommandLogs { .. })
@@ -3694,7 +3697,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let no_modal_open = state.modal_stack.modal.is_none();
             if let Some((_, branch)) = offer.filter(|_| no_modal_open) {
                 state.modal_stack.modal = Some(ModalState::Confirm {
-                    prompt: format!("Also delete branch '{branch}'? Unmerged commits are lost."),
+                    prompt: format!("Also delete branch '{branch}'?"),
                     pending_command: crate::domain::command::CommandSpec::GitPull, // sentinel
                 });
                 state.modal_stack.pending_branch_delete = Some(branch);
@@ -3703,6 +3706,24 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
         Action::BranchDeleted(branch) => {
             tracing::info!("branch deleted: {}", branch);
+        }
+
+        Action::BranchUnmerged { branch, commits } => {
+            if state.modal_stack.modal.is_none() {
+                state.modal_stack.modal = Some(ModalState::ForceDeleteBranch { branch, commits });
+            }
+        }
+
+        Action::BranchForceDelete => {
+            if let Some(ModalState::ForceDeleteBranch { branch, .. }) =
+                state.modal_stack.modal.take()
+            {
+                effects.push(Effect::DeleteBranch {
+                    repo_root: state.app_config.repo_root.clone(),
+                    branch,
+                    force: true,
+                });
+            }
         }
 
         Action::BranchDeleteFailed(err) => {

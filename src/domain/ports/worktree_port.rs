@@ -14,6 +14,17 @@
 use crate::domain::worktree::Worktree;
 use std::path::{Path, PathBuf};
 
+/// Result of `WorktreePort::delete_branch`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchDeleteOutcome {
+    Deleted,
+    /// `git branch -d` refused. `commits` counts the branch commits that are
+    /// not in the `HEAD` of the repo root.
+    Unmerged {
+        commits: usize,
+    },
+}
+
 /// Trait boundary for git worktree CRUD + remote branch enumeration.
 #[async_trait::async_trait]
 pub trait WorktreePort: Send + Sync {
@@ -23,8 +34,15 @@ pub trait WorktreePort: Send + Sync {
     /// Removes a worktree (`git worktree remove --force`) and prunes metadata.
     async fn remove(&self, repo_root: &Path, worktree_path: &Path) -> anyhow::Result<()>;
 
-    /// Force-deletes a local branch (`git branch -D`).
-    async fn delete_branch(&self, repo_root: &Path, branch: &str) -> anyhow::Result<()>;
+    /// Deletes a local branch: `git branch -D` when `force`, else `git branch -d`.
+    /// A safe delete that git refuses for unmerged commits returns
+    /// `BranchDeleteOutcome::Unmerged`, not an error.
+    async fn delete_branch(
+        &self,
+        repo_root: &Path,
+        branch: &str,
+        force: bool,
+    ) -> anyhow::Result<BranchDeleteOutcome>;
 
     /// Creates a worktree as a sibling of `repo_root` using `branch_name`.
     /// Creates the branch with `-b` on first try; retries with an existing

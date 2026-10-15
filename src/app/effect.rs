@@ -100,6 +100,7 @@ pub enum Effect {
     DeleteBranch {
         repo_root: PathBuf,
         branch: String,
+        force: bool,
     },
     /// Delete all native build caches (iOS + Android) produced by a worktree,
     /// dispatched after the worktree has been removed so its cached artifacts

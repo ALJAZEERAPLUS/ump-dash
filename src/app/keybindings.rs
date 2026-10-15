@@ -52,6 +52,7 @@ pub enum ModalKind {
     SyncBeforeRun,
     SyncBeforeMetro,
     ExternalMetroConflict,
+    ForceDeleteBranch,
     BranchPicker,
     PullRequestPicker,
     CommandLogs,
@@ -490,6 +491,43 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
         short_desc: "cancel",
         long_desc: "Cancel",
         context: BindingContext::Modal(ModalKind::ExternalMetroConflict),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| false,
+    },
+    // ==== Modal: ForceDeleteBranch (only D forces; no Y binding on purpose) ====
+    KeyBinding {
+        key: KeyCode::Char('D'),
+        label: "D",
+        short_desc: "force delete",
+        long_desc: "Force-delete the unmerged branch",
+        context: BindingContext::Modal(ModalKind::ForceDeleteBranch),
+        action: |_| Some(Action::BranchForceDelete),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('n'),
+        label: "N",
+        short_desc: "keep",
+        long_desc: "Keep the branch",
+        context: BindingContext::Modal(ModalKind::ForceDeleteBranch),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| true,
+    },
+    KeyBinding {
+        key: KeyCode::Char('N'),
+        label: "N",
+        short_desc: "keep",
+        long_desc: "Keep the branch",
+        context: BindingContext::Modal(ModalKind::ForceDeleteBranch),
+        action: |_| Some(Action::ModalCancel),
+        visible: |_| false,
+    },
+    KeyBinding {
+        key: KeyCode::Esc,
+        label: "Esc",
+        short_desc: "keep",
+        long_desc: "Keep the branch",
+        context: BindingContext::Modal(ModalKind::ForceDeleteBranch),
         action: |_| Some(Action::ModalCancel),
         visible: |_| false,
     },
@@ -1340,6 +1378,10 @@ fn matches_modal_kind(modal: Option<&ModalState>, kind: ModalKind) -> bool {
                 ModalKind::ExternalMetroConflict
             )
             | (
+                Some(ModalState::ForceDeleteBranch { .. }),
+                ModalKind::ForceDeleteBranch
+            )
+            | (
                 Some(ModalState::BranchPicker { .. }),
                 ModalKind::BranchPicker
             )
@@ -1394,14 +1436,12 @@ fn repeat_last_android_run(state: &AppState) -> Option<Action> {
 }
 
 fn repeat_last_ios_run(state: &AppState) -> Option<Action> {
-    Some(
-        last_ios_run(state).map_or(Action::ModalCancel, |config| {
-            Action::CommandRun(CommandSpec::UmpRunIos {
-                device_id: config.device_id.clone(),
-                variant: Some(config.variant),
-            })
-        }),
-    )
+    Some(last_ios_run(state).map_or(Action::ModalCancel, |config| {
+        Action::CommandRun(CommandSpec::UmpRunIos {
+            device_id: config.device_id.clone(),
+            variant: Some(config.variant),
+        })
+    }))
 }
 
 // ---------------------------------------------------------------------------

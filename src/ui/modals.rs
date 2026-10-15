@@ -43,6 +43,9 @@ pub fn render_modal(f: &mut Frame, modal: &ModalState, state: &AppState) {
         ModalState::ExternalMetroConflict { pid, working_dir } => {
             render_external_metro_modal(f, *pid, working_dir)
         }
+        ModalState::ForceDeleteBranch { branch, commits } => {
+            render_force_delete_branch_modal(f, branch, *commits)
+        }
         ModalState::BranchPicker {
             branches,
             selected,
@@ -115,6 +118,37 @@ fn render_confirm_modal(f: &mut Frame, prompt: &str) {
 
     let block = Block::default()
         .title(" Confirm ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red));
+
+    f.render_widget(Clear, area);
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+/// Renders the force-delete prompt for a branch that `git branch -d` refused.
+fn render_force_delete_branch_modal(f: &mut Frame, branch: &str, commits: usize) {
+    let area = centered_rect(f.area(), 50, 25, 40, 6);
+    let noun = if commits == 1 { "commit" } else { "commits" };
+
+    let lines = vec![
+        Line::from(Span::raw(format!(
+            "'{branch}' has {commits} {noun} not merged into HEAD."
+        ))),
+        Line::from(Span::raw("Force delete it?")),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "[D]",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" force delete    "),
+            Span::styled("[N/Esc]", Style::default().fg(Color::Green)),
+            Span::raw(" keep"),
+        ]),
+    ];
+
+    let block = Block::default()
+        .title(" Unmerged branch ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Red));
 

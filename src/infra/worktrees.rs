@@ -6,6 +6,7 @@
 
 #![allow(dead_code)]
 
+use crate::domain::ports::worktree_port::BranchDeleteOutcome;
 use crate::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 use std::path::Path;
 
@@ -156,22 +157,51 @@ pub async fn remove_worktree(repo_root: &Path, worktree_path: &Path) -> anyhow::
     Ok(())
 }
 
-/// Force-deletes a local branch with `git branch -D <branch>`.
+/// Deletes a local branch with `git branch -D` when `force`, else `git branch -d`.
 ///
-/// The user confirms this delete in a prompt, so unmerged commits do not stop it.
-pub async fn delete_branch(repo_root: &Path, branch: &str) -> anyhow::Result<()> {
+/// When `git branch -d` refuses because the branch is not fully merged, this
+/// returns `BranchDeleteOutcome::Unmerged` with the count of branch commits
+/// that are not in `HEAD`. The caller can then ask the user to force the delete.
+pub async fn delete_branch(
+    repo_root: &Path,
+    branch: &str,
+    force: bool,
+) -> anyhow::Result<BranchDeleteOutcome> {
+    let flag = if force { "-D" } else { "-d" };
     let output = tokio::process::Command::new("git")
-        .args(["branch", "-D", branch])
+        .args(["branch", flag, branch])
+        .current_dir(repo_root)
+        // The "not fully merged" match below needs git's English messages.
+        .env("LC_ALL", "C")
+        .output()
+        .await?;
+
+    if output.status.success() {
+        return Ok(BranchDeleteOutcome::Deleted);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !force && stderr.contains("not fully merged") {
+        let commits = count_commits_not_in_head(repo_root, branch).await?;
+        return Ok(BranchDeleteOutcome::Unmerged { commits });
+    }
+
+    anyhow::bail!("git branch {flag} failed: {}", stderr.trim());
+}
+
+async fn count_commits_not_in_head(repo_root: &Path, branch: &str) -> anyhow::Result<usize> {
+    let output = tokio::process::Command::new("git")
+        .args(["rev-list", "--count", &format!("HEAD..{branch}")])
         .current_dir(repo_root)
         .output()
         .await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git branch -D failed: {}", stderr.trim());
+        anyhow::bail!("git rev-list --count failed: {}", stderr.trim());
     }
 
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout).trim().parse()?)
 }
 
 /// Copies each `seed_files` entry from `repo_root` into `worktree_path`. Entries
@@ -824,8 +854,13 @@ impl crate::domain::ports::worktree_port::WorktreePort for GitWorktreeAdapter {
         remove_worktree(repo_root, worktree_path).await
     }
 
-    async fn delete_branch(&self, repo_root: &std::path::Path, branch: &str) -> anyhow::Result<()> {
-        delete_branch(repo_root, branch).await
+    async fn delete_branch(
+        &self,
+        repo_root: &std::path::Path,
+        branch: &str,
+        force: bool,
+    ) -> anyhow::Result<BranchDeleteOutcome> {
+        delete_branch(repo_root, branch, force).await
     }
 
     async fn add(
