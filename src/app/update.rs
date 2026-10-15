@@ -3683,11 +3683,16 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 repo_root: state.app_config.repo_root.clone(),
             });
 
-            let offer = state.modal_stack.pending_branch_delete_offer.take();
+            let offer_matches = state
+                .modal_stack
+                .pending_branch_delete_offer
+                .as_ref()
+                .is_some_and(|(path, _)| path == Path::new(&path_str));
+            let offer = offer_matches
+                .then(|| state.modal_stack.pending_branch_delete_offer.take())
+                .flatten();
             let no_modal_open = state.modal_stack.modal.is_none();
-            if let Some((_, branch)) =
-                offer.filter(|(path, _)| no_modal_open && path == Path::new(&path_str))
-            {
+            if let Some((_, branch)) = offer.filter(|_| no_modal_open) {
                 state.modal_stack.modal = Some(ModalState::Confirm {
                     prompt: format!("Also delete branch '{branch}'? Unmerged commits are lost."),
                     pending_command: crate::domain::command::CommandSpec::GitPull, // sentinel
