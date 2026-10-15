@@ -125,6 +125,10 @@ fn active_worktree_snapshot(
     Some((wt.id.clone(), wt.path.clone()))
 }
 
+fn branch_delete_prompt(branch: &str) -> String {
+    format!("Also delete branch '{branch}'?")
+}
+
 fn reconcile_worktree_selection(state: &mut AppState) {
     let visible_indices = state.worktree_browser.visible_worktree_indices();
     if visible_indices.is_empty() {
@@ -2405,7 +2409,18 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::ModalConfirm => {
-            if let Some(branch) = state.modal_stack.pending_branch_delete.take() {
+            let branch_prompt_open = |branch: &String| {
+                matches!(
+                    &state.modal_stack.modal,
+                    Some(ModalState::Confirm { prompt, .. }) if *prompt == branch_delete_prompt(branch)
+                )
+            };
+            if let Some(branch) = state
+                .modal_stack
+                .pending_branch_delete
+                .take()
+                .filter(branch_prompt_open)
+            {
                 state.modal_stack.modal = None;
                 effects.push(Effect::DeleteBranch {
                     repo_root: state.app_config.repo_root.clone(),
@@ -3697,7 +3712,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let no_modal_open = state.modal_stack.modal.is_none();
             if let Some((_, branch)) = offer.filter(|_| no_modal_open) {
                 state.modal_stack.modal = Some(ModalState::Confirm {
-                    prompt: format!("Also delete branch '{branch}'?"),
+                    prompt: branch_delete_prompt(&branch),
                     pending_command: crate::domain::command::CommandSpec::GitPull, // sentinel
                 });
                 state.modal_stack.pending_branch_delete = Some(branch);
