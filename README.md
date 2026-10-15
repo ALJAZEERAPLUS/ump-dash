@@ -127,7 +127,7 @@ cargo run
 
 | Key | Action |
 |-----|--------|
-| +/- | Worktree (`+ c` checkout, `+ n` new branch, `-` remove) |
+| +/- | Worktree (`+ c` checkout, `+ n` new branch, `-` remove, then an optional prompt to delete its branch) |
 | g | Open git palette |
 | y | Open yarn palette |
 | i | Open iOS palette |
