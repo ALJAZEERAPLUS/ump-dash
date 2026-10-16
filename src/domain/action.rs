@@ -169,6 +169,14 @@ pub enum Action {
     WorktreeRemove,               // user-triggered via g>D — shows confirm modal
     WorktreeRemoved(String),      // background: removal succeeded (carries path string)
     WorktreeRemoveFailed(String), // background: removal failed (carries error message)
+    BranchDeleted(String),        // background: branch delete succeeded (carries branch name)
+    BranchDeleteFailed(String),   // background: branch delete failed (carries error message)
+    BranchUnmerged {
+        // background: `git branch -d` refused — shows the force-delete modal
+        branch: String,
+        commits: usize,
+    },
+    BranchForceDelete, // user pressed D in the force-delete modal
 
     // Quick: Worktree creation
     WorktreeAdd, // user-triggered via +>c — shows TextInput modal for branch name

@@ -165,6 +165,14 @@ pub struct ModalStackState {
         String,
     )>,
 
+    /// Path and branch of a worktree that the user removed from the TUI.
+    /// When the removal succeeds, the TUI asks to delete this branch too.
+    /// Agent removals do not set it, so they never open this prompt.
+    pub pending_branch_delete_offer: Option<(std::path::PathBuf, String)>,
+
+    /// Branch in the open delete-branch confirm modal, consumed by ModalConfirm.
+    pub pending_branch_delete: Option<String>,
+
     /// Worktree creation — set when w>w is pressed, consumed by ModalInputSubmit.
     pub pending_worktree_add: bool,
 
