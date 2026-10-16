@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.10.0] - 2026-10-16
+
+### New
+- **Delete the branch with its worktree** - after you remove a worktree, a prompt offers to delete its branch too. A merged branch is deleted at once. An unmerged branch needs `D` in a second prompt to force the delete.
+
 ## [1.9.1] - 2026-09-25
 
 ### Fixed
