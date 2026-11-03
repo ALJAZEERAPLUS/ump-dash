@@ -1007,6 +1007,8 @@ mod palette_resolution {
                 ("i", "ios"),
                 ("a", "android"),
                 ("o", "open"),
+                ("R", "reload"),
+                ("Esc", "stop metro"),
                 ("l", "logs"),
                 ("q", "quit"),
                 ("?/F1", "help"),
@@ -1034,7 +1036,37 @@ mod palette_resolution {
         assert_eq!(handle_key(&state, key('C')), None);
         assert_eq!(handle_key(&state, key('T')), None);
         assert_eq!(handle_key(&state, key('J')), None);
+        assert_eq!(handle_key(&state, key('R')), Some(Action::MetroSendReload));
+        assert_eq!(
+            handle_key(&state, key_code(KeyCode::Esc)),
+            Some(Action::MetroStop)
+        );
         assert_eq!(handle_key(&state, key('o')), Some(Action::EnterOpenPalette));
+    }
+
+    #[test]
+    fn worktree_table_footer_hides_metro_controls_when_selected_worktree_is_stopped() {
+        let mut state = base_state();
+        seed_one_worktree(&mut state);
+
+        let hints = footer_hints_for(&state);
+
+        assert!(!hints.contains(&("R", "reload")));
+        assert!(!hints.contains(&("Esc", "stop metro")));
+        assert_eq!(handle_key(&state, key('R')), Some(Action::RefreshWorktrees));
+        assert_eq!(handle_key(&state, key_code(KeyCode::Esc)), None);
+    }
+
+    #[test]
+    fn worktree_table_footer_hides_metro_controls_running_only_on_unselected_worktree() {
+        let mut state = base_state();
+        seed_two_worktrees(&mut state, "wt-1", "wt-2");
+        register_ready_metro(&mut state, "wt-2", 8082);
+
+        let hints = footer_hints_for(&state);
+
+        assert!(!hints.contains(&("R", "reload")));
+        assert!(!hints.contains(&("Esc", "stop metro")));
     }
 
     #[test]

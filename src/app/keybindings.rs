@@ -1208,7 +1208,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
                 Some(Action::RefreshWorktrees)
             }
         },
-        visible: |_| false,
+        visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Esc,
@@ -1223,7 +1223,7 @@ pub const KEYBINDINGS: &[KeyBinding] = &[
                 None
             }
         },
-        visible: |_| false,
+        visible: metro_running,
     },
     KeyBinding {
         key: KeyCode::Char('l'),
