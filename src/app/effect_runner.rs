@@ -18,7 +18,7 @@
 //!   ScheduleAction(a)                              → action_tx.send(a)
 //!   SpawnTask { task_id, worktree_id, spec, cwd, branch } → adapters.command_runner.spawn(...) + task_handle_tx
 //!   DetectExternalMetro { port }                   → adapters.port_probe.detect_external(port)
-//!   SpawnMetro { worktree, port }                  → adapters.metro.start(worktree, port, on_activity)
+//!   SpawnMetro { worktree_id, worktree, port }     → adapters.metro.start(worktree_id, worktree, port, on_activity)
 //!   MetroHttpPost { url, body }                    → adapters.metro.http_post(url, body)
 //!   KillProcess { pid }                            → adapters.port_probe.kill_process(pid)
 //!   LoadDevices { kind, request_id }               → adapters.devices.list(kind)
@@ -178,23 +178,23 @@ impl EffectRunner {
                 });
             }
 
-            Effect::SpawnMetro { worktree, port } => {
+            Effect::SpawnMetro {
+                worktree_id,
+                worktree,
+                port,
+            } => {
                 let metro = self.adapters.metro.clone();
                 let action_tx = self.action_tx.clone();
                 let handle_tx = self.handle_tx.clone();
                 let activity_tx = action_tx.clone();
                 let exited_tx = action_tx.clone();
                 tokio::spawn(async move {
-                    let worktree_id = worktree
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
                     // The on_activity callback bridges the callback-style
                     // MetroPort trait to the existing Action channel that
                     // update() consumes. Metro stderr errors are normal activity;
                     // only the adapter's explicit Exited activity clears the
                     // registered handle.
-                    let on_activity_worktree_id = worktree_id.clone();
+                    let on_activity_worktree_id = worktree_id.0.clone();
                     let on_activity: Box<dyn Fn(MetroActivity) + Send + Sync> =
                         Box::new(move |act| {
                             forward_metro_activity(
@@ -204,7 +204,10 @@ impl EffectRunner {
                                 &exited_tx,
                             );
                         });
-                    match metro.start(worktree, port, on_activity).await {
+                    match metro
+                        .start(worktree_id.clone(), worktree, port, on_activity)
+                        .await
+                    {
                         Ok(handle) => {
                             // Deliver via the dedicated handle channel — the
                             // event loop registers the handle into the
@@ -214,7 +217,7 @@ impl EffectRunner {
                         }
                         Err(e) => {
                             let _ = action_tx.send(Action::MetroSpawnFailed {
-                                worktree_id,
+                                worktree_id: worktree_id.0,
                                 message: e.to_string(),
                             });
                         }
@@ -1055,6 +1058,7 @@ mod tests {
     impl MetroPort for NoopMetro {
         async fn start(
             &self,
+            _worktree_id: WorktreeId,
             _worktree: PathBuf,
             _port: u16,
             _on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,

@@ -21,6 +21,7 @@
 use crate::domain::metro::MetroActivity;
 use crate::domain::ports::metro_port::{MetroHandle, MetroPort};
 use crate::domain::ports::process_port::MetroPortReservation;
+use crate::domain::worktree::WorktreeId;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -95,6 +96,7 @@ impl MetroPort for TokioMetroAdapter {
     /// — the callback is the trait-visible contract.
     async fn start(
         &self,
+        worktree_id: WorktreeId,
         worktree: PathBuf,
         port: u16,
         on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,
@@ -128,10 +130,7 @@ impl MetroPort for TokioMetroAdapter {
             on_activity,
         ));
 
-        let worktree_id = worktree
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let worktree_id = worktree_id.0;
 
         let handle: Box<dyn MetroHandle> = Box::new(TokioMetroHandle {
             pid,

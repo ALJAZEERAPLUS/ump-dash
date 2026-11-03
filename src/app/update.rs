@@ -51,13 +51,6 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_METRO_PORT: u16 = 8081;
 
-fn metro_worktree_id_from_path(path: &Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| path.to_string_lossy().to_string())
-}
-
 fn selected_worktree_path(state: &AppState) -> Option<PathBuf> {
     state
         .worktree_browser
@@ -314,33 +307,29 @@ fn active_metro_worktree_path(state: &AppState) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn active_metro_worktree_id(state: &AppState) -> String {
-    metro_worktree_id_from_path(&active_metro_worktree_path(state))
-}
-
-fn slice_id_for_metro_worktree_id(state: &AppState, worktree_id: &str) -> Option<WorktreeId> {
+/// The id of the listed worktree at `path`, or the id that path would have.
+fn worktree_id_for_path(state: &AppState, path: &Path) -> WorktreeId {
     state
         .worktree_browser
         .worktrees
         .iter()
-        .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
+        .find(|wt| wt.path == path)
         .map(|wt| wt.id.clone())
-        .or_else(|| {
-            state
-                .worktrees
-                .keys()
-                .find(|id| id.0 == worktree_id)
-                .cloned()
-        })
+        .unwrap_or_else(|| WorktreeId::from_path(path))
+}
+
+/// True when the worktree browser lists this worktree. A slice can exist for
+/// a worktree the browser has not loaded yet.
+fn worktree_is_listed(state: &AppState, worktree_id: &WorktreeId) -> bool {
+    worktree_snapshot_for_id(state, worktree_id).is_some()
 }
 
 fn active_metro_slice_id(state: &AppState) -> WorktreeId {
     if let Some(path) = state.metro_state.active_worktree_path.as_ref() {
-        let metro_worktree_id = metro_worktree_id_from_path(path);
-        return slice_id_for_metro_worktree_id(state, &metro_worktree_id)
-            .unwrap_or(WorktreeId(metro_worktree_id));
+        return worktree_id_for_path(state, path);
     }
-    active_worktree_id(state).unwrap_or_else(|| WorktreeId(active_metro_worktree_id(state)))
+    active_worktree_id(state)
+        .unwrap_or_else(|| worktree_id_for_path(state, &active_metro_worktree_path(state)))
 }
 
 fn active_worktree_has_metro(state: &AppState) -> bool {
@@ -413,6 +402,7 @@ fn start_metro_for_worktree(
         });
     slice.metro.reserve_start(port);
     effects.push(Effect::SpawnMetro {
+        worktree_id,
         worktree: worktree_path,
         port,
     });
@@ -1653,26 +1643,20 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         }
 
         Action::MetroExited(worktree_id) => {
+            let slice_id = WorktreeId(worktree_id);
             // Plan 13-09: pending_metro_run is gone — the deferred run command
             // (if any) sits in command_queue.front() and is drained on the
             // next MetroActivityUpdate(Ready). If metro exited unexpectedly,
             // clear the queue so a stale deferred command doesn't fire on the
             // next successful start.
             if !state.metro_state.pending_restart
-                && let Some(slice_id) = state
-                    .worktree_browser
-                    .worktrees
-                    .iter()
-                    .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
-                    .map(|wt| wt.id.clone())
+                && worktree_is_listed(state, &slice_id)
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
             {
                 slice.queue.clear();
                 slice.post_drain = None;
             }
-            if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
-                && let Some(slice) = state.worktrees.get_mut(&slice_id)
-            {
+            if let Some(slice) = state.worktrees.get_mut(&slice_id) {
                 let had_pending_cached_launch = slice.pending_cached_ios_launch.take().is_some();
                 let had_pending_cached_android_launch =
                     slice.pending_cached_android_launch.take().is_some();
@@ -1700,21 +1684,15 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             worktree_id,
             message,
         } => {
+            let slice_id = WorktreeId(worktree_id);
             // Plan 13-09: clear queue + post-drain action; pending flags gone.
-            if let Some(slice_id) = state
-                .worktree_browser
-                .worktrees
-                .iter()
-                .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
-                .map(|wt| wt.id.clone())
+            if worktree_is_listed(state, &slice_id)
                 && let Some(slice) = state.worktrees.get_mut(&slice_id)
             {
                 slice.queue.clear();
                 slice.post_drain = None;
             }
-            if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
-                && let Some(slice) = state.worktrees.get_mut(&slice_id)
-            {
+            if let Some(slice) = state.worktrees.get_mut(&slice_id) {
                 let had_pending_cached_launch = slice.pending_cached_ios_launch.take().is_some();
                 let had_pending_cached_android_launch =
                     slice.pending_cached_android_launch.take().is_some();
@@ -1741,9 +1719,8 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             worktree_id,
             activity,
         } => {
-            if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id)
-                && let Some(slice) = state.worktrees.get_mut(&slice_id)
-            {
+            let slice_id = WorktreeId(worktree_id);
+            if let Some(slice) = state.worktrees.get_mut(&slice_id) {
                 slice.metro.record_activity(activity.clone());
             }
             // Plan 13-09: pending_metro_run absorbed into command_queue. When
@@ -1757,19 +1734,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 // Metro instance just became ready.
                 let candidate_id = state
                     .worktrees
-                    .iter()
-                    .find(|(id, s)| {
-                        state
-                            .worktree_browser
-                            .worktrees
-                            .iter()
-                            .find(|wt| &wt.id == *id)
-                            .map(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
-                            .unwrap_or(false)
+                    .get(&slice_id)
+                    .filter(|s| {
+                        worktree_is_listed(state, &slice_id)
                             && s.task.is_none()
                             && s.queue.front().map(|c| c.needs_metro()).unwrap_or(false)
                     })
-                    .map(|(id, _)| id.clone());
+                    .map(|_| slice_id.clone());
 
                 if let Some(ref id) = candidate_id
                     && let Some(slice) = state.worktrees.get_mut(id)
@@ -1779,43 +1750,39 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     effects.push(effect);
                 }
 
-                if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id) {
-                    let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
-                        let port = slice.metro.running_port()?;
-                        slice
-                            .pending_cached_ios_launch
-                            .take()
-                            .map(|pending| (port, pending))
+                let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
+                    let port = slice.metro.running_port()?;
+                    slice
+                        .pending_cached_ios_launch
+                        .take()
+                        .map(|pending| (port, pending))
+                });
+                if let Some((port, pending)) = launch {
+                    effects.push(Effect::InstallAndLaunchCachedIosSimulator {
+                        worktree_id: slice_id.clone(),
+                        request: cached_ios_launch_request(
+                            &pending.cache_hit,
+                            pending.device_id,
+                            port,
+                        ),
                     });
-                    if let Some((port, pending)) = launch {
-                        effects.push(Effect::InstallAndLaunchCachedIosSimulator {
-                            worktree_id: slice_id,
-                            request: cached_ios_launch_request(
-                                &pending.cache_hit,
-                                pending.device_id,
-                                port,
-                            ),
-                        });
-                    }
                 }
-                if let Some(slice_id) = slice_id_for_metro_worktree_id(state, &worktree_id) {
-                    let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
-                        let port = slice.metro.running_port()?;
-                        slice
-                            .pending_cached_android_launch
-                            .take()
-                            .map(|pending| (port, pending))
+                let launch = state.worktrees.get_mut(&slice_id).and_then(|slice| {
+                    let port = slice.metro.running_port()?;
+                    slice
+                        .pending_cached_android_launch
+                        .take()
+                        .map(|pending| (port, pending))
+                });
+                if let Some((port, pending)) = launch {
+                    effects.push(Effect::InstallAndLaunchCachedAndroid {
+                        worktree_id: slice_id,
+                        request: cached_android_launch_request(
+                            &pending.cache_hit,
+                            pending.device_id,
+                            port,
+                        ),
                     });
-                    if let Some((port, pending)) = launch {
-                        effects.push(Effect::InstallAndLaunchCachedAndroid {
-                            worktree_id: slice_id,
-                            request: cached_android_launch_request(
-                                &pending.cache_hit,
-                                pending.device_id,
-                                port,
-                            ),
-                        });
-                    }
                 }
             }
         }

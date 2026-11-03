@@ -24,6 +24,7 @@
 #![allow(dead_code)]
 
 use crate::domain::metro::MetroActivity;
+use crate::domain::worktree::WorktreeId;
 use std::path::PathBuf;
 
 /// Opaque handle to a live metro process. Implementations live infra-side.
@@ -67,10 +68,11 @@ pub trait MetroPort: Send + Sync {
     /// `MetroActivity` parsed from stdout/stderr — the adapter converts
     /// channel plumbing internally.
     ///
-    /// Returns an opaque handle; caller registers it in the selected
-    /// worktree's `WorktreeMetro`.
+    /// Returns an opaque handle that reports `worktree_id`; the caller
+    /// registers it in that worktree's `WorktreeMetro`.
     async fn start(
         &self,
+        worktree_id: WorktreeId,
         worktree: PathBuf,
         port: u16,
         on_activity: Box<dyn Fn(MetroActivity) + Send + Sync>,

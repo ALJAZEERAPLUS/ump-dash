@@ -8,6 +8,15 @@
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct WorktreeId(pub String);
 
+impl WorktreeId {
+    /// The id of the worktree at `path`: its full path, the value
+    /// `git worktree list` reports. A directory name alone does not identify
+    /// a worktree: every treehouse lease ends in `/ump`, like the main checkout.
+    pub fn from_path(path: &std::path::Path) -> Self {
+        Self(path.to_string_lossy().to_string())
+    }
+}
+
 /// Metro bundler status for a given worktree.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorktreeMetroStatus {

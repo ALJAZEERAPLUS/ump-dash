@@ -17,33 +17,12 @@ use crate::domain::worktree::WorktreeId;
 use futures::StreamExt;
 use ratatui::crossterm::event::EventStream;
 
-fn metro_worktree_id_from_path(path: &std::path::Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| path.to_string_lossy().to_string())
-}
-
-fn slice_id_for_metro_worktree_id(state: &AppState, worktree_id: &str) -> WorktreeId {
-    state
-        .worktree_browser
-        .worktrees
-        .iter()
-        .find(|wt| metro_worktree_id_from_path(&wt.path) == worktree_id)
-        .map(|wt| wt.id.clone())
-        .or_else(|| {
-            state
-                .worktrees
-                .keys()
-                .find(|id| id.0 == worktree_id)
-                .cloned()
-        })
-        .unwrap_or_else(|| WorktreeId(worktree_id.to_string()))
-}
-
+/// Register a freshly spawned Metro handle into the slice of the worktree it
+/// was spawned for. The handle names that worktree by the id the spawn request
+/// carried, so the slice is addressed directly. A lookup by directory name
+/// would conflate worktrees that share one, such as every treehouse lease.
 fn register_metro_handle(state: &mut AppState, handle: Box<dyn MetroHandle>) {
-    let worktree_id = handle.worktree_id().to_string();
-    let slice_id = slice_id_for_metro_worktree_id(state, &worktree_id);
+    let slice_id = WorktreeId(handle.worktree_id().to_string());
     let slice = state.worktrees.entry(slice_id.clone()).or_insert_with(|| {
         crate::domain::worktree_slice::WorktreeSlice {
             id: slice_id,
@@ -260,13 +239,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn register_metro_handle_resolves_directory_name_to_full_path_slice_id() {
-        let mut state = AppState::default();
-        let wt_id = WorktreeId("/tmp/wt-a".into());
+    fn seed_worktree(state: &mut AppState, path: &str) -> WorktreeId {
+        let wt_id = WorktreeId::from_path(std::path::Path::new(path));
         state.worktree_browser.worktrees.push(Worktree {
             id: wt_id.clone(),
-            path: std::path::PathBuf::from("/tmp/wt-a"),
+            path: std::path::PathBuf::from(path),
             branch: "main".into(),
             head_sha: "0000000".into(),
             metro_status: WorktreeMetroStatus::Stopped,
@@ -282,18 +259,47 @@ mod tests {
                 ..Default::default()
             },
         );
+        wt_id
+    }
 
-        register_metro_handle(
-            &mut state,
-            Box::new(FakeMetroHandle {
-                pid: 9001,
-                worktree_id: "wt-a".into(),
-                port: 8081,
-            }),
-        );
+    fn handle_for(path: &str, pid: u32, port: u16) -> Box<dyn MetroHandle> {
+        Box::new(FakeMetroHandle {
+            pid,
+            worktree_id: path.into(),
+            port,
+        })
+    }
+
+    #[test]
+    fn register_metro_handle_registers_into_the_slice_the_handle_names() {
+        let mut state = AppState::default();
+        let wt_id = seed_worktree(&mut state, "/tmp/wt-a");
+
+        register_metro_handle(&mut state, handle_for("/tmp/wt-a", 9001, 8081));
 
         let slice = state.worktrees.get(&wt_id).unwrap();
         assert!(slice.metro.is_running());
         assert_eq!(slice.metro.running_port(), Some(8081));
+    }
+
+    #[test]
+    fn register_metro_handle_keeps_worktrees_with_the_same_directory_name_apart() {
+        // Every treehouse lease is `<root>/<n>/ump`, the directory name of the
+        // main checkout. Metro running in one must not claim the other.
+        let mut state = AppState::default();
+        let main_id = seed_worktree(&mut state, "/tmp/aljazeera/ump");
+        let lease_id = seed_worktree(&mut state, "/tmp/treehouse/7/ump");
+        register_metro_handle(&mut state, handle_for("/tmp/aljazeera/ump", 9001, 8081));
+
+        register_metro_handle(&mut state, handle_for("/tmp/treehouse/7/ump", 9002, 8082));
+
+        assert_eq!(
+            state.worktrees.get(&main_id).unwrap().metro.running_port(),
+            Some(8081)
+        );
+        assert_eq!(
+            state.worktrees.get(&lease_id).unwrap().metro.running_port(),
+            Some(8082)
+        );
     }
 }

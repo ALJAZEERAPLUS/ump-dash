@@ -30,6 +30,7 @@ pub enum Effect {
         port: u16,
     },
     SpawnMetro {
+        worktree_id: crate::domain::worktree::WorktreeId,
         worktree: PathBuf,
         port: u16,
     },

@@ -66,7 +66,7 @@ pub fn parse_worktree_porcelain(text: &str) -> anyhow::Result<Vec<Worktree>> {
         let branch = branch.unwrap_or_else(|| "(unknown)".to_string());
 
         // WorktreeId is derived from the path — stable across renames of the branch
-        let id = WorktreeId(path_str.to_string());
+        let id = WorktreeId::from_path(&path);
 
         let stale = check_stale(&path);
         let stale_pods = check_stale_pods(&path);
