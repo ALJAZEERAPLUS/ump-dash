@@ -6237,6 +6237,35 @@ mod agent_requests {
         )
     }
 
+    /// Request 1 got `MetroStarting`, Metro spawns for `id`, and the run is queued.
+    fn assert_cold_run_waits_for_metro(
+        state: &AppState,
+        effects: &[Effect],
+        id: &str,
+        is_run: impl Fn(&CommandSpec) -> bool,
+    ) {
+        let replies = agent_replies(effects);
+        assert_eq!(replies.len(), 1, "got {replies:?}");
+        assert_eq!(replies[0].0, AgentRequestId(1));
+        assert!(
+            matches!(replies[0].1, AgentOutcome::MetroStarting { .. }),
+            "got {replies:?}"
+        );
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::SpawnMetro { worktree, .. } if *worktree == std::path::Path::new("/tmp").join(id)
+            )),
+            "Metro must start for {id}; got {effects:?}"
+        );
+        let queue = &state.worktrees[&WorktreeId(id.into())].queue;
+        assert_eq!(
+            queue.iter().filter(|spec| is_run(spec)).count(),
+            1,
+            "queue {queue:?}"
+        );
+    }
+
     #[test]
     fn agent_listing_looks_up_caches_only_for_the_new_worktree() {
         let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
@@ -6331,15 +6360,11 @@ mod agent_requests {
             },
         );
 
-        // Decided as a cold run: no cache, so Metro starts for the new worktree.
-        let replies = agent_replies(&effects);
-        assert_eq!(replies.len(), 1, "got {replies:?}");
-        assert_eq!(replies[0].0, AgentRequestId(1));
-        assert!(
-            !matches!(&replies[0].1, AgentOutcome::Accepted { expanded, .. }
-                if expanded.iter().any(|line| line.starts_with("cached launch"))),
-            "got {replies:?}"
-        );
+        // Decided as a cold run: no Metro on the new worktree yet, so Metro
+        // starts and the Gradle run waits in the queue behind it.
+        assert_cold_run_waits_for_metro(&state, &effects, "wt-2", |spec| {
+            matches!(spec, CommandSpec::UmpRunAndroid { .. })
+        });
         assert!(pending_ids(&state).is_empty());
     }
 
@@ -6352,9 +6377,10 @@ mod agent_requests {
 
         let effects = list_wt_2(&mut state);
 
-        let replies = agent_replies(&effects);
-        assert_eq!(replies.len(), 1, "got {replies:?}");
-        assert_eq!(replies[0].0, AgentRequestId(1));
+        // Physical devices have no cache path: decided on the listing as a cold run.
+        assert_cold_run_waits_for_metro(&state, &effects, "wt-2", |spec| {
+            matches!(spec, CommandSpec::UmpRunIos { .. })
+        });
         assert!(pending_ids(&state).is_empty());
     }
 
