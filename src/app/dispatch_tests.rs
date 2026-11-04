@@ -4075,6 +4075,162 @@ mod worktrees_loaded {
                 .all(|wt| wt.metro_status == WorktreeMetroStatus::Running)
         );
     }
+
+    // --- Cache lookups: a listing discovers new worktrees; a refresh revalidates ---
+
+    /// Worktree ids of the iOS and Android cache lookups in `effects`, in order.
+    fn cache_lookup_targets(effects: &[Effect]) -> (Vec<String>, Vec<String>) {
+        let ios = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::LookupIosSimulatorCache { worktree_id, .. } => Some(worktree_id.0.clone()),
+                _ => None,
+            })
+            .collect();
+        let android = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::LookupAndroidCache { worktree_id, .. } => Some(worktree_id.0.clone()),
+                _ => None,
+            })
+            .collect();
+        (ios, android)
+    }
+
+    /// Mark both caches of `id` as already looked up (a Miss), as after startup.
+    fn settle_caches(state: &mut AppState, id: &str) {
+        let slice = state
+            .worktrees
+            .get_mut(&WorktreeId(id.into()))
+            .expect("slice should exist");
+        slice.ios_simulator_cache = IosSimulatorCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+        slice.android_cache = AndroidCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+    }
+
+    fn strings(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn listing_looks_up_caches_only_for_newly_listed_worktrees() {
+        let mut state = AppState::default();
+        update(
+            &mut state,
+            Action::WorktreesLoaded(vec![make_worktree("wt-A", "main")]),
+        );
+        settle_caches(&mut state, "wt-A");
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![
+                make_worktree("wt-A", "main"),
+                make_worktree("wt-B", "feat"),
+            ]),
+        );
+
+        assert_eq!(
+            cache_lookup_targets(&effects),
+            (strings(&["wt-B"]), strings(&["wt-B"]))
+        );
+        assert!(matches!(
+            state.worktrees[&WorktreeId("wt-A".into())].ios_simulator_cache,
+            IosSimulatorCacheState::Miss { .. }
+        ));
+    }
+
+    #[test]
+    fn idle_refresh_revalidates_every_listed_worktree_cache_once() {
+        let mut state = AppState::default();
+        let both = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
+        update(&mut state, Action::WorktreesLoaded(both.clone()));
+        settle_caches(&mut state, "wt-A");
+        settle_caches(&mut state, "wt-B");
+
+        let effects = update(&mut state, Action::RefreshWorktrees);
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ListWorktrees { .. }))
+        );
+        assert_eq!(
+            cache_lookup_targets(&effects),
+            (strings(&["wt-A", "wt-B"]), strings(&["wt-A", "wt-B"]))
+        );
+
+        // The listing that answers the refresh does not look the caches up again.
+        let effects = update(&mut state, Action::WorktreesLoaded(both));
+        assert_eq!(cache_lookup_targets(&effects), (vec![], vec![]));
+    }
+
+    #[test]
+    fn refresh_during_a_build_lists_without_revalidating_caches() {
+        let mut state = AppState::default();
+        update(
+            &mut state,
+            Action::WorktreesLoaded(vec![
+                make_worktree("wt-A", "main"),
+                make_worktree("wt-B", "feat"),
+            ]),
+        );
+        settle_caches(&mut state, "wt-A");
+        settle_caches(&mut state, "wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(1, CommandSpec::YarnInstall));
+
+        let effects = update(&mut state, Action::RefreshWorktrees);
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ListWorktrees { .. }))
+        );
+        assert_eq!(cache_lookup_targets(&effects), (vec![], vec![]));
+    }
+
+    #[test]
+    fn branch_changing_command_revalidates_its_worktree_cache() {
+        let mut state = AppState::default();
+        update(
+            &mut state,
+            Action::WorktreesLoaded(vec![
+                make_worktree("wt-A", "main"),
+                make_worktree("wt-B", "feat"),
+            ]),
+        );
+        settle_caches(&mut state, "wt-A");
+        settle_caches(&mut state, "wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(1, CommandSpec::GitResetHard));
+
+        let effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(1),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ListWorktrees { .. }))
+        );
+        assert_eq!(
+            cache_lookup_targets(&effects),
+            (strings(&["wt-A"]), strings(&["wt-A"]))
+        );
+    }
 }
 
 // =========================================================================
@@ -6079,6 +6235,36 @@ mod agent_requests {
             state,
             Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
         )
+    }
+
+    #[test]
+    fn agent_listing_looks_up_caches_only_for_the_new_worktree() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+        let slice = state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("wt-1 slice");
+        slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+
+        let effects = list_wt_2(&mut state);
+
+        let lookups: Vec<&WorktreeId> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::LookupIosSimulatorCache { worktree_id, .. }
+                | Effect::LookupAndroidCache { worktree_id, .. } => Some(worktree_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lookups,
+            vec![&WorktreeId("wt-2".into()), &WorktreeId("wt-2".into())]
+        );
     }
 
     fn accepted_expanded(outcome: &AgentOutcome) -> &[String] {

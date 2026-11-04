@@ -196,19 +196,6 @@ fn queue_ios_cache_lookup_for_worktree(
     });
 }
 
-fn queue_ios_cache_lookups_for_loaded_worktrees(state: &mut AppState, effects: &mut Vec<Effect>) {
-    let worktrees = state
-        .worktree_browser
-        .worktrees
-        .iter()
-        .map(|wt| (wt.id.clone(), wt.path.clone()))
-        .collect::<Vec<_>>();
-
-    for (worktree_id, worktree_path) in worktrees {
-        queue_ios_cache_lookup_for_worktree(state, effects, worktree_id, worktree_path);
-    }
-}
-
 fn queue_android_cache_lookup_for_worktree(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
@@ -234,10 +221,23 @@ fn queue_android_cache_lookup_for_worktree(
     });
 }
 
-fn queue_android_cache_lookups_for_loaded_worktrees(
+/// Which listed worktrees get their native caches looked up.
+#[derive(Clone, Copy)]
+enum CacheLookupScope {
+    /// Discovery: only caches never looked up (a worktree seen for the first
+    /// time). Every listing does this, whatever triggered it.
+    NewWorktrees,
+    /// Revalidation: every listed worktree, to catch builds and checkouts made
+    /// since the last lookup.
+    AllWorktrees,
+}
+
+fn queue_cache_lookups_for_listed_worktrees(
     state: &mut AppState,
     effects: &mut Vec<Effect>,
+    scope: CacheLookupScope,
 ) {
+    use crate::domain::native_cache::{AndroidCacheState, IosSimulatorCacheState};
     let worktrees = state
         .worktree_browser
         .worktrees
@@ -246,7 +246,33 @@ fn queue_android_cache_lookups_for_loaded_worktrees(
         .collect::<Vec<_>>();
 
     for (worktree_id, worktree_path) in worktrees {
-        queue_android_cache_lookup_for_worktree(state, effects, worktree_id, worktree_path);
+        let slice = state.worktrees.get(&worktree_id);
+        let (ios_due, android_due) = match scope {
+            CacheLookupScope::AllWorktrees => (true, true),
+            CacheLookupScope::NewWorktrees => (
+                slice.is_none_or(|s| s.ios_simulator_cache == IosSimulatorCacheState::Unknown),
+                slice.is_none_or(|s| s.android_cache == AndroidCacheState::Unknown),
+            ),
+        };
+        if ios_due {
+            queue_ios_cache_lookup_for_worktree(
+                state,
+                effects,
+                worktree_id.clone(),
+                worktree_path.clone(),
+            );
+        }
+        if android_due {
+            queue_android_cache_lookup_for_worktree(state, effects, worktree_id, worktree_path);
+        }
+    }
+}
+
+/// Look both caches of one worktree up again, after its checkout changed.
+fn revalidate_worktree_caches(state: &mut AppState, effects: &mut Vec<Effect>, wt_id: &WorktreeId) {
+    if let Some(worktree_path) = worktree_snapshot_for_id(state, wt_id) {
+        queue_ios_cache_lookup_for_worktree(state, effects, wt_id.clone(), worktree_path.clone());
+        queue_android_cache_lookup_for_worktree(state, effects, wt_id.clone(), worktree_path);
     }
 }
 
@@ -2086,8 +2112,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             let loaded_for_merge: Vec<crate::domain::worktree::Worktree> =
                 state.worktree_browser.worktrees.clone();
             crate::app::state::merge_slices(state, &loaded_for_merge);
-            queue_ios_cache_lookups_for_loaded_worktrees(state, &mut effects);
-            queue_android_cache_lookups_for_loaded_worktrees(state, &mut effects);
+            // A listing only discovers: caches of known worktrees are revalidated by
+            // their own triggers (an idle refresh, a branch-changing command, a palette).
+            queue_cache_lookups_for_listed_worktrees(
+                state,
+                &mut effects,
+                CacheLookupScope::NewWorktrees,
+            );
 
             // Re-derive the visible index from the stable id after refresh or sorting.
             reconcile_worktree_selection(state);
@@ -2134,6 +2165,17 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             effects.push(Effect::ListWorktrees {
                 repo_root: state.app_config.repo_root.clone(),
             });
+            // Cache revalidation keeps its schedule from before refreshes ran during
+            // builds: only when no task runs. A lookup racing a build's cache store
+            // would report a Miss; the listing above still discovers new worktrees.
+            let any_running = state.worktrees.values().any(|s| s.task.is_some());
+            if !any_running {
+                queue_cache_lookups_for_listed_worktrees(
+                    state,
+                    &mut effects,
+                    CacheLookupScope::AllWorktrees,
+                );
+            }
         }
 
         // --- Phase 3: Command dispatch ---
@@ -2410,6 +2452,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     effects.push(Effect::ListWorktrees {
                         repo_root: state.app_config.repo_root.clone(),
                     });
+                    // The checkout changed, so this worktree's cache fingerprint may too.
+                    if let Some(ref id) = target_id {
+                        revalidate_worktree_caches(state, &mut effects, id);
+                    }
                 } else if refresh.staleness {
                     // Staleness refresh: re-check ALL worktrees (cheap I/O, ensures
                     // correct state even if user changed selection during command)
