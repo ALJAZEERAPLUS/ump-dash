@@ -649,30 +649,93 @@ fn fail_pending_agent_requests(state: &mut AppState, effects: &mut Vec<Effect>, 
     }
 }
 
-/// Decide every held agent request against the worktree list that just loaded:
-/// dispatch it if its cwd is now listed, otherwise answer `unknown_worktree`.
-fn decide_pending_agent_requests(state: &mut AppState, effects: &mut Vec<Effect>) {
+/// What woke the held agent requests up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingTrigger {
+    /// A worktree listing loaded: an unlisted cwd is now final.
+    Listing,
+    /// A native cache lookup finished: an unlisted cwd still waits for its listing.
+    CacheLookup,
+}
+
+/// A run on a worktree seen for the first time waits for that worktree's
+/// cache lookup, which the listing just queued. Deciding it earlier always
+/// takes the cold path, because the cache selectors return nothing while the
+/// state is `Checking`.
+fn run_waits_for_cache_lookup(
+    state: &AppState,
+    wt_id: &WorktreeId,
+    request: &AgentRequest,
+) -> bool {
+    let Some(slice) = state.worktrees.get(wt_id) else {
+        return false;
+    };
+    match request {
+        AgentRequest::RunIos { device_id, .. } => {
+            is_ios_simulator_udid(device_id)
+                && matches!(
+                    slice.ios_simulator_cache,
+                    crate::domain::native_cache::IosSimulatorCacheState::Checking
+                )
+        }
+        AgentRequest::RunAndroid { .. } => matches!(
+            slice.android_cache,
+            crate::domain::native_cache::AndroidCacheState::Checking
+        ),
+        _ => false,
+    }
+}
+
+/// Decide the held agent requests: dispatch each one whose cwd is now listed,
+/// answer `unknown_worktree` when a listing lacks the cwd, and keep the rest
+/// (a run waiting for its cache lookup, or a cwd waiting for its listing) in
+/// their original order.
+fn decide_pending_agent_requests(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    trigger: PendingTrigger,
+) {
+    let mut kept = Vec::new();
     for pending in std::mem::take(&mut state.pending_agent_requests) {
-        let outcome = match resolve_agent_worktree(state, &pending.cwd) {
-            Some(wt_id) => {
+        let Some(wt_id) = resolve_agent_worktree(state, &pending.cwd) else {
+            if trigger == PendingTrigger::CacheLookup {
+                kept.push(pending);
+                continue;
+            }
+            tracing::info!(
+                request_id = pending.request_id.0,
+                cwd = %pending.cwd.display(),
+                "agent cwd still not a worktree after listing"
+            );
+            push_agent_reply(effects, pending.request_id, unknown_worktree(&pending.cwd));
+            continue;
+        };
+        if run_waits_for_cache_lookup(state, &wt_id, &pending.request) {
+            if trigger == PendingTrigger::Listing {
                 tracing::info!(
                     request_id = pending.request_id.0,
                     worktree_id = %wt_id.0,
-                    "agent cwd found after worktree listing"
+                    "agent run waits for the new worktree's cache lookup"
                 );
-                handle_agent_request(state, effects, &wt_id, pending.request)
             }
-            None => {
-                tracing::info!(
-                    request_id = pending.request_id.0,
-                    cwd = %pending.cwd.display(),
-                    "agent cwd still not a worktree after listing"
-                );
-                unknown_worktree(&pending.cwd)
-            }
-        };
+            kept.push(pending);
+            continue;
+        }
+        match trigger {
+            PendingTrigger::Listing => tracing::info!(
+                request_id = pending.request_id.0,
+                worktree_id = %wt_id.0,
+                "agent cwd found after worktree listing"
+            ),
+            PendingTrigger::CacheLookup => tracing::info!(
+                request_id = pending.request_id.0,
+                "cache lookup finished; deciding held agent run"
+            ),
+        }
+        let outcome = handle_agent_request(state, effects, &wt_id, pending.request);
         push_agent_reply(effects, pending.request_id, outcome);
     }
+    state.pending_agent_requests = kept;
 }
 
 fn spec_labels(specs: &[CommandSpec]) -> Vec<String> {
@@ -2050,7 +2113,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
 
             // Agent requests held for a listing are decided last, so their
             // effects follow the listing's own.
-            decide_pending_agent_requests(state, &mut effects);
+            decide_pending_agent_requests(state, &mut effects, PendingTrigger::Listing);
         }
 
         Action::WorktreesLoadFailed(err) => {
@@ -3399,89 +3462,100 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
         Action::IosSimulatorCacheLookupFinished {
             worktree_id,
             result,
-        } => match result {
-            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
-                let hit = *hit;
-                let fingerprint = hit.metadata.fingerprint.clone();
-                for (id, slice) in state.worktrees.iter_mut() {
-                    let same_fingerprint_miss = matches!(
-                        &slice.ios_simulator_cache,
-                        crate::domain::native_cache::IosSimulatorCacheState::Miss {
-                            fingerprint: miss_fingerprint
-                        } if miss_fingerprint == &fingerprint
-                    );
-                    if id == &worktree_id || same_fingerprint_miss {
-                        slice.ios_simulator_cache =
-                            crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
-                                hit.clone(),
-                            ));
-                    }
-                }
-            }
-            Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    let existing_hit_for_same_fingerprint = slice
-                        .ios_simulator_cache
-                        .hit()
-                        .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
-                    if !existing_hit_for_same_fingerprint {
-                        slice.ios_simulator_cache =
+        } => {
+            match result {
+                Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(hit)) => {
+                    let hit = *hit;
+                    let fingerprint = hit.metadata.fingerprint.clone();
+                    for (id, slice) in state.worktrees.iter_mut() {
+                        let same_fingerprint_miss = matches!(
+                            &slice.ios_simulator_cache,
                             crate::domain::native_cache::IosSimulatorCacheState::Miss {
-                                fingerprint,
-                            };
+                                fingerprint: miss_fingerprint
+                            } if miss_fingerprint == &fingerprint
+                        );
+                        if id == &worktree_id || same_fingerprint_miss {
+                            slice.ios_simulator_cache =
+                                crate::domain::native_cache::IosSimulatorCacheState::Hit(Box::new(
+                                    hit.clone(),
+                                ));
+                        }
+                    }
+                }
+                Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Miss { fingerprint }) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        let existing_hit_for_same_fingerprint = slice
+                            .ios_simulator_cache
+                            .hit()
+                            .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
+                        if !existing_hit_for_same_fingerprint {
+                            slice.ios_simulator_cache =
+                                crate::domain::native_cache::IosSimulatorCacheState::Miss {
+                                    fingerprint,
+                                };
+                        }
+                    }
+                }
+                Err(message) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        slice.ios_simulator_cache =
+                            crate::domain::native_cache::IosSimulatorCacheState::Error(message);
                     }
                 }
             }
-            Err(message) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    slice.ios_simulator_cache =
-                        crate::domain::native_cache::IosSimulatorCacheState::Error(message);
-                }
-            }
-        },
+            decide_pending_agent_requests(state, &mut effects, PendingTrigger::CacheLookup);
+        }
         Action::AndroidCacheLookupFinished {
             worktree_id,
             result,
-        } => match result {
-            Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
-                let hit = *hit;
-                let fingerprint = hit.metadata.fingerprint.clone();
-                for (id, slice) in state.worktrees.iter_mut() {
-                    let same_fingerprint_miss = matches!(
-                        &slice.android_cache,
-                        crate::domain::native_cache::AndroidCacheState::Miss {
-                            fingerprint: miss_fingerprint
-                        } if miss_fingerprint == &fingerprint
-                    );
-                    if id == &worktree_id || same_fingerprint_miss {
-                        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Hit(
-                            Box::new(hit.clone()),
+        } => {
+            match result {
+                Ok(crate::domain::native_cache::AndroidCacheLookup::Hit(hit)) => {
+                    let hit = *hit;
+                    let fingerprint = hit.metadata.fingerprint.clone();
+                    for (id, slice) in state.worktrees.iter_mut() {
+                        let same_fingerprint_miss = matches!(
+                            &slice.android_cache,
+                            crate::domain::native_cache::AndroidCacheState::Miss {
+                                fingerprint: miss_fingerprint
+                            } if miss_fingerprint == &fingerprint
                         );
+                        if id == &worktree_id || same_fingerprint_miss {
+                            slice.android_cache =
+                                crate::domain::native_cache::AndroidCacheState::Hit(Box::new(
+                                    hit.clone(),
+                                ));
+                        }
+                    }
+                }
+                Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        let existing_hit_for_same_fingerprint = slice
+                            .android_cache
+                            .hit()
+                            .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
+                        if !existing_hit_for_same_fingerprint {
+                            slice.android_cache =
+                                crate::domain::native_cache::AndroidCacheState::Miss {
+                                    fingerprint,
+                                };
+                        }
+                    }
+                }
+                Err(message) => {
+                    if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
+                        if slice.android_cache.hit().is_none() {
+                            slice.android_cache =
+                                crate::domain::native_cache::AndroidCacheState::Error(
+                                    message.clone(),
+                                );
+                        }
+                        slice.append_log(format!("[cached-android error] {message}"));
                     }
                 }
             }
-            Ok(crate::domain::native_cache::AndroidCacheLookup::Miss { fingerprint }) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    let existing_hit_for_same_fingerprint = slice
-                        .android_cache
-                        .hit()
-                        .is_some_and(|hit| hit.metadata.fingerprint == fingerprint);
-                    if !existing_hit_for_same_fingerprint {
-                        slice.android_cache =
-                            crate::domain::native_cache::AndroidCacheState::Miss { fingerprint };
-                    }
-                }
-            }
-            Err(message) => {
-                if let Some(slice) = state.worktrees.get_mut(&worktree_id) {
-                    if slice.android_cache.hit().is_none() {
-                        slice.android_cache =
-                            crate::domain::native_cache::AndroidCacheState::Error(message.clone());
-                    }
-                    slice.append_log(format!("[cached-android error] {message}"));
-                }
-            }
-        },
+            decide_pending_agent_requests(state, &mut effects, PendingTrigger::CacheLookup);
+        }
         Action::CachedIosRun(cache_hit) => {
             state.modal_stack.modal = None;
             state.modal_stack.palette_mode = None;

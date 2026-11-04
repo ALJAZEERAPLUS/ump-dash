@@ -6071,4 +6071,150 @@ mod agent_requests {
         );
         assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
     }
+
+    // --- A held run on a new worktree waits for that worktree's cache lookup ---
+
+    fn list_wt_2(state: &mut AppState) -> Vec<Effect> {
+        update(
+            state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        )
+    }
+
+    fn accepted_expanded(outcome: &AgentOutcome) -> &[String] {
+        match outcome {
+            AgentOutcome::Accepted { expanded, .. } => expanded,
+            other => panic!("expected Accepted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn held_ios_simulator_run_waits_for_the_cache_lookup_and_launches_the_hit() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: SIM_UDID.into(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = list_wt_2(&mut state);
+
+        assert!(agent_replies(&effects).is_empty());
+        assert!(spawned_specs(&effects).is_empty());
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::LookupIosSimulatorCache { worktree_id, .. } if worktree_id.0 == "wt-2"
+        )));
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+
+        let mut hit = cached_ios_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: WorktreeId("wt-2".into()),
+                result: Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(
+                    Box::new(hit),
+                )),
+            },
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1);
+        assert!(
+            accepted_expanded(&replies[0].1)[0].starts_with("cached launch"),
+            "got {replies:?}"
+        );
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_android_run_is_decided_cold_when_the_lookup_fails() {
+        let mut state = state_with_pending_request(AgentRequest::RunAndroid {
+            device_id: "emulator-5554".into(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = list_wt_2(&mut state);
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-2".into()),
+                result: Err("no cache dir".into()),
+            },
+        );
+
+        // Decided as a cold run: no cache, so Metro starts for the new worktree.
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1, "got {replies:?}");
+        assert_eq!(replies[0].0, AgentRequestId(1));
+        assert!(
+            !matches!(&replies[0].1, AgentOutcome::Accepted { expanded, .. }
+                if expanded.iter().any(|line| line.starts_with("cached launch"))),
+            "got {replies:?}"
+        );
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_ios_run_on_a_physical_device_is_decided_on_the_listing() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: "00008030-ABCDEF".into(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = list_wt_2(&mut state);
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1, "got {replies:?}");
+        assert_eq!(replies[0].0, AgentRequestId(1));
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_status_request_does_not_wait_for_the_cache_lookup() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = list_wt_2(&mut state);
+
+        assert_eq!(agent_replies(&effects).len(), 1);
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_ios_run_ignores_the_android_lookup_result() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: SIM_UDID.into(),
+            variant: Some(RunVariant::Local),
+        });
+        list_wt_2(&mut state);
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-2".into()),
+                result: Err("no cache dir".into()),
+            },
+        );
+
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn cache_lookup_keeps_a_request_that_still_waits_for_its_listing() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: WorktreeId("wt-1".into()),
+                result: Err("no cache dir".into()),
+            },
+        );
+
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
 }
