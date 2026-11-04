@@ -5049,21 +5049,234 @@ mod agent_requests {
             .any(|e| matches!(e, Effect::SpawnMetro { .. }))
     }
 
+    // --- An unlisted cwd is decided after a fresh worktree listing ---
+
+    /// A worktree as `git worktree list` would report it at `/tmp/<id>`.
+    fn listed(id: &str) -> Worktree {
+        Worktree {
+            id: WorktreeId(id.into()),
+            path: std::path::PathBuf::from(format!("/tmp/{id}")),
+            branch: format!("branch-{id}"),
+            head_sha: "0000000".into(),
+            metro_status: WorktreeMetroStatus::Stopped,
+            jira_title: None,
+            stale: false,
+            stale_pods: false,
+            jira_key: None,
+        }
+    }
+
+    fn agent_request(id: u64, cwd: &str, request: AgentRequest) -> Action {
+        Action::Agent {
+            request_id: AgentRequestId(id),
+            cwd: std::path::PathBuf::from(cwd),
+            request,
+        }
+    }
+
+    fn agent_replies(effects: &[Effect]) -> Vec<(AgentRequestId, AgentOutcome)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::AgentReply {
+                    request_id,
+                    outcome,
+                } => Some((*request_id, outcome.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn has_list_worktrees(state: &AppState, effects: &[Effect]) -> bool {
+        effects.iter().any(|e| {
+            matches!(e, Effect::ListWorktrees { repo_root } if *repo_root == state.app_config.repo_root)
+        })
+    }
+
+    fn pending_ids(state: &AppState) -> Vec<AgentRequestId> {
+        state
+            .pending_agent_requests
+            .iter()
+            .map(|p| p.request_id)
+            .collect()
+    }
+
+    fn is_listed(state: &AppState, id: &str) -> bool {
+        state
+            .worktree_browser
+            .worktrees
+            .iter()
+            .any(|wt| wt.id.0 == id)
+    }
+
+    /// `wt-1` listed; request 1 from the unlisted `/tmp/wt-2` held for a listing.
+    fn state_with_pending_request(request: AgentRequest) -> AppState {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        update(&mut state, agent_request(1, "/tmp/wt-2", request));
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+        state
+    }
+
+    fn status_worktree_id(outcome: &AgentOutcome) -> &str {
+        match outcome {
+            AgentOutcome::Status(report) => &report.worktree_id,
+            other => panic!("expected Status, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn unknown_cwd_blocks_with_unknown_worktree() {
+    fn unknown_cwd_lists_worktrees_and_holds_the_request() {
         let mut state = base_state();
         seed_one_worktree_id(&mut state, "wt-1");
 
         let effects = update(
             &mut state,
-            agent_action("/tmp/not-a-worktree", AgentRequest::GetWorktreeStatus),
+            agent_request(1, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
         );
+
+        assert!(has_list_worktrees(&state, &effects));
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn listing_that_contains_the_cwd_dispatches_the_held_request() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].0, AgentRequestId(1));
+        assert_eq!(status_worktree_id(&replies[0].1), "wt-2");
+        assert!(pending_ids(&state).is_empty());
+        assert!(is_listed(&state, "wt-2"));
+    }
+
+    #[test]
+    fn listing_without_the_cwd_blocks_with_unknown_worktree() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(&mut state, Action::WorktreesLoaded(vec![listed("wt-1")]));
+
+        assert_eq!(
+            agent_replies(&effects),
+            vec![(
+                AgentRequestId(1),
+                AgentOutcome::Blocked {
+                    reason: BlockReason::UnknownWorktree {
+                        cwd: "/tmp/wt-2".into()
+                    }
+                }
+            )]
+        );
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_sync_deps_spawns_yarn_install_in_the_new_worktree() {
+        let mut state = state_with_pending_request(AgentRequest::SyncDeps {
+            include_pods: false,
+        });
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
         assert!(matches!(
-            outcome(&effects),
-            AgentOutcome::Blocked {
-                reason: BlockReason::UnknownWorktree { .. }
-            }
+            agent_replies(&effects).as_slice(),
+            [(AgentRequestId(1), AgentOutcome::Accepted { .. })]
         ));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::SpawnTask { spec: CommandSpec::YarnInstall, worktree_id, .. }
+                if worktree_id.0 == "wt-2"
+        )));
+    }
+
+    #[test]
+    fn unknown_cwd_lists_even_while_a_worktree_op_is_in_flight() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state.worktree_browser.worktree_op_in_flight = true;
+
+        let effects = update(
+            &mut state,
+            agent_request(1, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
+        );
+
+        assert!(has_list_worktrees(&state, &effects));
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn held_request_from_a_subdirectory_resolves_to_the_new_worktree() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        update(
+            &mut state,
+            agent_request(1, "/tmp/wt-2/packages/app", AgentRequest::GetWorktreeStatus),
+        );
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(status_worktree_id(&replies[0].1), "wt-2");
+    }
+
+    #[test]
+    fn known_cwd_replies_at_once_without_listing() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_request(1, "/tmp/wt-1", AgentRequest::GetWorktreeStatus),
+        );
+
+        assert_eq!(agent_replies(&effects).len(), 1);
+        assert!(!has_list_worktrees(&state, &effects));
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn one_listing_decides_every_held_request_in_order() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        update(
+            &mut state,
+            agent_request(7, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
+        );
+        update(
+            &mut state,
+            agent_request(8, "/tmp/wt-3", AgentRequest::GetWorktreeStatus),
+        );
+        assert_eq!(
+            pending_ids(&state),
+            vec![AgentRequestId(7), AgentRequestId(8)]
+        );
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2"), listed("wt-3")]),
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0].0, AgentRequestId(7));
+        assert_eq!(status_worktree_id(&replies[0].1), "wt-2");
+        assert_eq!(replies[1].0, AgentRequestId(8));
+        assert_eq!(status_worktree_id(&replies[1].1), "wt-3");
+        assert!(pending_ids(&state).is_empty());
     }
 
     #[test]

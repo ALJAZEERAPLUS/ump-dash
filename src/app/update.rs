@@ -13,12 +13,13 @@
 
 use super::effect::Effect;
 use super::state::{
-    AppState, ErrorState, PaletteMode, PendingCachedAndroidRun, PendingCachedIosRun,
-    active_worktree_id,
+    AppState, ErrorState, PaletteMode, PendingAgentRequest, PendingCachedAndroidRun,
+    PendingCachedIosRun, active_worktree_id,
 };
 use crate::domain::action::Action;
 use crate::domain::agent_protocol::{
-    AgentOutcome, AgentRequest, BlockReason, MetroReport, TaskStatusReport, WorktreeStatusReport,
+    AgentOutcome, AgentRequest, AgentRequestId, BlockReason, MetroReport, TaskStatusReport,
+    WorktreeStatusReport,
 };
 use crate::domain::command::{
     CleanOptions, CollisionPolicy, CommandSpec, ModalState, RunVariant, android_avd_name,
@@ -580,6 +581,74 @@ fn resolve_agent_worktree(state: &AppState, cwd: &Path) -> Option<WorktreeId> {
         .filter(|wt| cwd == wt.path || cwd.starts_with(&wt.path))
         .max_by_key(|wt| wt.path.as_os_str().len())
         .map(|wt| wt.id.clone())
+}
+
+fn push_agent_reply(effects: &mut Vec<Effect>, request_id: AgentRequestId, outcome: AgentOutcome) {
+    effects.push(Effect::AgentReply {
+        request_id,
+        outcome,
+    });
+}
+
+fn unknown_worktree(cwd: &Path) -> AgentOutcome {
+    AgentOutcome::Blocked {
+        reason: BlockReason::UnknownWorktree {
+            cwd: cwd.to_string_lossy().to_string(),
+        },
+    }
+}
+
+/// Hold a request whose cwd is not in the worktree list, and list worktrees so
+/// a worktree created outside the dashboard (a treehouse lease, `git worktree
+/// add`) is found. The listing is emitted directly, not through
+/// `Action::RefreshWorktrees`: its in-flight-op gate could hold the reply past
+/// the gateway's 30 s timeout, and a listing is read-only.
+fn defer_agent_request(
+    state: &mut AppState,
+    effects: &mut Vec<Effect>,
+    request_id: AgentRequestId,
+    cwd: PathBuf,
+    request: AgentRequest,
+) {
+    tracing::info!(
+        request_id = request_id.0,
+        cwd = %cwd.display(),
+        "agent cwd not in worktree list; listing before replying"
+    );
+    state.pending_agent_requests.push(PendingAgentRequest {
+        request_id,
+        cwd,
+        request,
+    });
+    effects.push(Effect::ListWorktrees {
+        repo_root: state.app_config.repo_root.clone(),
+    });
+}
+
+/// Decide every held agent request against the worktree list that just loaded:
+/// dispatch it if its cwd is now listed, otherwise answer `unknown_worktree`.
+fn decide_pending_agent_requests(state: &mut AppState, effects: &mut Vec<Effect>) {
+    for pending in std::mem::take(&mut state.pending_agent_requests) {
+        let outcome = match resolve_agent_worktree(state, &pending.cwd) {
+            Some(wt_id) => {
+                tracing::info!(
+                    request_id = pending.request_id.0,
+                    worktree_id = %wt_id.0,
+                    "agent cwd found after worktree listing"
+                );
+                handle_agent_request(state, effects, &wt_id, pending.request)
+            }
+            None => {
+                tracing::info!(
+                    request_id = pending.request_id.0,
+                    cwd = %pending.cwd.display(),
+                    "agent cwd still not a worktree after listing"
+                );
+                unknown_worktree(&pending.cwd)
+            }
+        };
+        push_agent_reply(effects, pending.request_id, outcome);
+    }
 }
 
 fn spec_labels(specs: &[CommandSpec]) -> Vec<String> {
@@ -1954,6 +2023,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                     });
                 }
             }
+
+            // Agent requests held for a listing are decided last, so their
+            // effects follow the listing's own.
+            decide_pending_agent_requests(state, &mut effects);
         }
 
         Action::RefreshWorktrees => {
@@ -4178,20 +4251,13 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             request_id,
             cwd,
             request,
-        } => {
-            let outcome = match resolve_agent_worktree(state, &cwd) {
-                Some(wt_id) => handle_agent_request(state, &mut effects, &wt_id, request),
-                None => AgentOutcome::Blocked {
-                    reason: BlockReason::UnknownWorktree {
-                        cwd: cwd.to_string_lossy().to_string(),
-                    },
-                },
-            };
-            effects.push(Effect::AgentReply {
-                request_id,
-                outcome,
-            });
-        }
+        } => match resolve_agent_worktree(state, &cwd) {
+            Some(wt_id) => {
+                let outcome = handle_agent_request(state, &mut effects, &wt_id, request);
+                push_agent_reply(&mut effects, request_id, outcome);
+            }
+            None => defer_agent_request(state, &mut effects, request_id, cwd, request),
+        },
     }
 
     effects
