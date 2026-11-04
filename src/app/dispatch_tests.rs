@@ -5178,6 +5178,33 @@ mod agent_requests {
     }
 
     #[test]
+    fn failed_listing_answers_the_held_request_with_the_git_error() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(&mut state, Action::WorktreesLoadFailed("boom".into()));
+
+        match agent_replies(&effects).as_slice() {
+            [(AgentRequestId(1), AgentOutcome::Error { message })] => {
+                assert!(message.contains("boom"), "message: {message}");
+            }
+            other => panic!("expected one Error reply, got {other:?}"),
+        }
+        assert!(pending_ids(&state).is_empty());
+        assert!(state.error_state.is_none());
+    }
+
+    #[test]
+    fn failed_listing_with_nothing_held_does_nothing() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(&mut state, Action::WorktreesLoadFailed("boom".into()));
+
+        assert!(effects.is_empty());
+        assert!(state.error_state.is_none());
+    }
+
+    #[test]
     fn held_sync_deps_spawns_yarn_install_in_the_new_worktree() {
         let mut state = state_with_pending_request(AgentRequest::SyncDeps {
             include_pods: false,

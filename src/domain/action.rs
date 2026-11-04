@@ -45,7 +45,10 @@ pub enum Action {
     WorktreeSelectNext, // j/Down in WorktreeList panel
     WorktreeSelectPrev, // k/Up in WorktreeList panel
     WorktreesLoaded(Vec<crate::domain::worktree::Worktree>), // background refresh done
-    RefreshWorktrees,   // manual refresh keybinding
+    /// Background `git worktree list` failed; carries the git error. Answers
+    /// the agent requests held for that listing.
+    WorktreesLoadFailed(String),
+    RefreshWorktrees, // manual refresh keybinding
 
     // Phase 3: Command lifecycle
     CommandRun(crate::domain::command::CommandSpec), // dispatched when command is confirmed/ready

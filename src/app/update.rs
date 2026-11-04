@@ -625,6 +625,30 @@ fn defer_agent_request(
     });
 }
 
+/// Answer every held agent request with the listing error. With nothing held
+/// this does nothing: the runner already logged the failure, and periodic
+/// listing failures stay silent in the TUI.
+fn fail_pending_agent_requests(state: &mut AppState, effects: &mut Vec<Effect>, err: &str) {
+    let pending = std::mem::take(&mut state.pending_agent_requests);
+    if pending.is_empty() {
+        return;
+    }
+    let count = pending.len();
+    tracing::warn!(
+        count,
+        "worktree listing failed; replying error to {count} agent request(s): {err}"
+    );
+    for held in pending {
+        push_agent_reply(
+            effects,
+            held.request_id,
+            AgentOutcome::Error {
+                message: format!("worktree listing failed: {err}"),
+            },
+        );
+    }
+}
+
 /// Decide every held agent request against the worktree list that just loaded:
 /// dispatch it if its cwd is now listed, otherwise answer `unknown_worktree`.
 fn decide_pending_agent_requests(state: &mut AppState, effects: &mut Vec<Effect>) {
@@ -2027,6 +2051,10 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
             // Agent requests held for a listing are decided last, so their
             // effects follow the listing's own.
             decide_pending_agent_requests(state, &mut effects);
+        }
+
+        Action::WorktreesLoadFailed(err) => {
+            fail_pending_agent_requests(state, &mut effects, &err);
         }
 
         Action::RefreshWorktrees => {
