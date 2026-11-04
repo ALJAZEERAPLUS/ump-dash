@@ -154,6 +154,22 @@ fn reconcile_worktree_selection(state: &mut AppState) {
     state.metro_state.active_worktree_path = Some(selected_path);
 }
 
+fn remove_worktree_from_browser(state: &mut AppState, removed_id: &WorktreeId) {
+    let browser = &mut state.worktree_browser;
+    if browser.selected_worktree_id.as_ref() == Some(removed_id) {
+        // Remember the preceding visible item before removal shifts the row indices.
+        // Removing the first item falls back to the first remaining visible item.
+        browser.selected_worktree_id = browser
+            .worktree_table_state
+            .selected()
+            .and_then(|index| index.checked_sub(1))
+            .and_then(|index| browser.visible_worktree_indices().get(index).copied())
+            .map(|index| browser.worktrees[index].id.clone());
+    }
+    browser.worktrees.retain(|wt| wt.id != *removed_id);
+    reconcile_worktree_selection(state);
+}
+
 fn worktree_snapshot_for_id(state: &AppState, worktree_id: &WorktreeId) -> Option<PathBuf> {
     state
         .worktree_browser
@@ -894,11 +910,7 @@ fn remove_worktree_for_agent(
         effects.extend(update(state, Action::MetroStop));
     }
 
-    state
-        .worktree_browser
-        .worktrees
-        .retain(|entry| entry.id != wt.id);
-    reconcile_worktree_selection(state);
+    remove_worktree_from_browser(state, &wt.id);
 
     state.worktree_browser.worktree_op_in_flight = true;
     let target = wt.path.to_string_lossy().to_string();
@@ -2419,8 +2431,7 @@ pub fn update(state: &mut AppState, action: Action) -> Vec<Effect> {
                 }
 
                 // Immediately remove from worktree list for instant visual feedback
-                state.worktree_browser.worktrees.retain(|wt| wt.id != wt_id);
-                reconcile_worktree_selection(state);
+                remove_worktree_from_browser(state, &wt_id);
 
                 // Emit the async removal effect
                 state.worktree_browser.worktree_op_in_flight = true;

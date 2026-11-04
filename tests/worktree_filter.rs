@@ -2,6 +2,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, 
 use ratatui::{Terminal, backend::TestBackend};
 use ump_dash::app::{AppState, active_worktree_id, handle_key, update};
 use ump_dash::domain::action::Action;
+use ump_dash::domain::agent_protocol::{AgentRequest, AgentRequestId};
 use ump_dash::domain::worktree::{Worktree, WorktreeId, WorktreeMetroStatus};
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -213,4 +214,118 @@ fn active_filter_query_is_visible_above_the_table() {
     let rendered = rendered_view(&mut state);
 
     assert!(rendered.contains("/CUSTOMER"));
+}
+
+fn assert_selection(state: &AppState, expected: Option<(usize, &str)>) {
+    assert_eq!(
+        state.worktree_browser.worktree_table_state.selected(),
+        expected.map(|(index, _)| index)
+    );
+    let expected_id = expected.map(|(_, id)| WorktreeId(id.into()));
+    assert_eq!(state.worktree_browser.selected_worktree_id, expected_id);
+    assert_eq!(active_worktree_id(state), expected_id);
+    assert_eq!(
+        state.metro_state.active_worktree_path,
+        expected.map(|(_, id)| format!("/tmp/{id}").into())
+    );
+}
+
+#[test]
+fn removal_selects_previous_visible_worktree_and_preserves_it_after_refresh() {
+    for (filter, selected_index, expected_index, expected_id) in [
+        ("", 2, 1, "beta"),
+        ("", 3, 2, "gamma"),
+        ("", 0, 0, "beta"),
+        ("client", 2, 1, "gamma"),
+        ("client", 0, 0, "gamma"),
+    ] {
+        for via_agent in [false, true] {
+            let mut state = AppState::default();
+            state.worktree_browser.filter_query = filter.into();
+            let _ = update(
+                &mut state,
+                Action::WorktreesLoaded(vec![
+                    worktree("alpha", "feature/client-alpha", None),
+                    worktree("beta", "feature/server-beta", None),
+                    worktree("gamma", "feature/client-gamma", None),
+                    worktree("delta", "feature/client-delta", None),
+                ]),
+            );
+            for _ in 0..selected_index {
+                let _ = update(&mut state, Action::WorktreeSelectNext);
+            }
+            let removed_path = state.metro_state.active_worktree_path.clone().unwrap();
+
+            if via_agent {
+                let _ = update(
+                    &mut state,
+                    Action::Agent {
+                        request_id: AgentRequestId(1),
+                        cwd: removed_path.clone(),
+                        request: AgentRequest::DeleteWorktree {
+                            target_worktree: removed_path.to_string_lossy().into(),
+                            confirm: true,
+                        },
+                    },
+                );
+            } else {
+                let _ = update(&mut state, Action::WorktreeRemove);
+                let _ = update(&mut state, Action::ModalConfirm);
+            }
+            assert!(
+                !state
+                    .worktree_browser
+                    .worktrees
+                    .iter()
+                    .any(|wt| wt.path == removed_path)
+            );
+            assert_selection(&state, Some((expected_index, expected_id)));
+
+            let _ = update(
+                &mut state,
+                Action::WorktreeRemoved(removed_path.to_string_lossy().into()),
+            );
+            let remaining = state.worktree_browser.worktrees.clone();
+            let _ = update(&mut state, Action::WorktreesLoaded(remaining));
+            assert_selection(&state, Some((expected_index, expected_id)));
+        }
+    }
+}
+
+#[test]
+fn removing_only_visible_worktree_clears_selection() {
+    for with_hidden_worktree in [false, true] {
+        let mut state = AppState::default();
+        state.worktree_browser.filter_query = "client".into();
+        let mut worktrees = vec![worktree("alpha", "feature/client-alpha", None)];
+        if with_hidden_worktree {
+            worktrees.push(worktree("beta", "feature/server-beta", None));
+        }
+        let _ = update(&mut state, Action::WorktreesLoaded(worktrees));
+
+        let _ = update(&mut state, Action::WorktreeRemove);
+        let _ = update(&mut state, Action::ModalConfirm);
+
+        assert_selection(&state, None);
+    }
+}
+
+#[test]
+fn removing_another_worktree_preserves_selection() {
+    let mut state = AppState::default();
+    let _ = update(
+        &mut state,
+        Action::WorktreesLoaded(vec![
+            worktree("alpha", "feature/alpha", None),
+            worktree("beta", "feature/beta", None),
+            worktree("gamma", "feature/gamma", None),
+        ]),
+    );
+    let _ = update(&mut state, Action::WorktreeRemove);
+    let _ = update(&mut state, Action::WorktreeSelectNext);
+    let _ = update(&mut state, Action::WorktreeSelectNext);
+
+    let _ = update(&mut state, Action::ModalConfirm);
+
+    assert_selection(&state, Some((1, "gamma")));
 }
