@@ -4075,6 +4075,162 @@ mod worktrees_loaded {
                 .all(|wt| wt.metro_status == WorktreeMetroStatus::Running)
         );
     }
+
+    // --- Cache lookups: a listing discovers new worktrees; a refresh revalidates ---
+
+    /// Worktree ids of the iOS and Android cache lookups in `effects`, in order.
+    fn cache_lookup_targets(effects: &[Effect]) -> (Vec<String>, Vec<String>) {
+        let ios = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::LookupIosSimulatorCache { worktree_id, .. } => Some(worktree_id.0.clone()),
+                _ => None,
+            })
+            .collect();
+        let android = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::LookupAndroidCache { worktree_id, .. } => Some(worktree_id.0.clone()),
+                _ => None,
+            })
+            .collect();
+        (ios, android)
+    }
+
+    /// Mark both caches of `id` as already looked up (a Miss), as after startup.
+    fn settle_caches(state: &mut AppState, id: &str) {
+        let slice = state
+            .worktrees
+            .get_mut(&WorktreeId(id.into()))
+            .expect("slice should exist");
+        slice.ios_simulator_cache = IosSimulatorCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+        slice.android_cache = AndroidCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+    }
+
+    fn strings(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn listing_looks_up_caches_only_for_newly_listed_worktrees() {
+        let mut state = AppState::default();
+        update(
+            &mut state,
+            Action::WorktreesLoaded(vec![make_worktree("wt-A", "main")]),
+        );
+        settle_caches(&mut state, "wt-A");
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![
+                make_worktree("wt-A", "main"),
+                make_worktree("wt-B", "feat"),
+            ]),
+        );
+
+        assert_eq!(
+            cache_lookup_targets(&effects),
+            (strings(&["wt-B"]), strings(&["wt-B"]))
+        );
+        assert!(matches!(
+            state.worktrees[&WorktreeId("wt-A".into())].ios_simulator_cache,
+            IosSimulatorCacheState::Miss { .. }
+        ));
+    }
+
+    #[test]
+    fn idle_refresh_revalidates_every_listed_worktree_cache_once() {
+        let mut state = AppState::default();
+        let both = vec![make_worktree("wt-A", "main"), make_worktree("wt-B", "feat")];
+        update(&mut state, Action::WorktreesLoaded(both.clone()));
+        settle_caches(&mut state, "wt-A");
+        settle_caches(&mut state, "wt-B");
+
+        let effects = update(&mut state, Action::RefreshWorktrees);
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ListWorktrees { .. }))
+        );
+        assert_eq!(
+            cache_lookup_targets(&effects),
+            (strings(&["wt-A", "wt-B"]), strings(&["wt-A", "wt-B"]))
+        );
+
+        // The listing that answers the refresh does not look the caches up again.
+        let effects = update(&mut state, Action::WorktreesLoaded(both));
+        assert_eq!(cache_lookup_targets(&effects), (vec![], vec![]));
+    }
+
+    #[test]
+    fn refresh_during_a_build_lists_without_revalidating_caches() {
+        let mut state = AppState::default();
+        update(
+            &mut state,
+            Action::WorktreesLoaded(vec![
+                make_worktree("wt-A", "main"),
+                make_worktree("wt-B", "feat"),
+            ]),
+        );
+        settle_caches(&mut state, "wt-A");
+        settle_caches(&mut state, "wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(1, CommandSpec::YarnInstall));
+
+        let effects = update(&mut state, Action::RefreshWorktrees);
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ListWorktrees { .. }))
+        );
+        assert_eq!(cache_lookup_targets(&effects), (vec![], vec![]));
+    }
+
+    #[test]
+    fn branch_changing_command_revalidates_its_worktree_cache() {
+        let mut state = AppState::default();
+        update(
+            &mut state,
+            Action::WorktreesLoaded(vec![
+                make_worktree("wt-A", "main"),
+                make_worktree("wt-B", "feat"),
+            ]),
+        );
+        settle_caches(&mut state, "wt-A");
+        settle_caches(&mut state, "wt-B");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-A".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(1, CommandSpec::GitResetHard));
+
+        let effects = update(
+            &mut state,
+            Action::CommandExited {
+                task_id: crate::domain::task::TaskId(1),
+                status: crate::domain::task::ExitStatus::Success,
+            },
+        );
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ListWorktrees { .. }))
+        );
+        assert_eq!(
+            cache_lookup_targets(&effects),
+            (strings(&["wt-A"]), strings(&["wt-A"]))
+        );
+    }
 }
 
 // =========================================================================
@@ -5049,21 +5205,290 @@ mod agent_requests {
             .any(|e| matches!(e, Effect::SpawnMetro { .. }))
     }
 
+    // --- An unlisted cwd is decided after a fresh worktree listing ---
+
+    /// A worktree as `git worktree list` would report it at `/tmp/<id>`.
+    fn listed(id: &str) -> Worktree {
+        Worktree {
+            id: WorktreeId(id.into()),
+            path: std::path::PathBuf::from(format!("/tmp/{id}")),
+            branch: format!("branch-{id}"),
+            head_sha: "0000000".into(),
+            metro_status: WorktreeMetroStatus::Stopped,
+            jira_title: None,
+            stale: false,
+            stale_pods: false,
+            jira_key: None,
+        }
+    }
+
+    fn agent_request(id: u64, cwd: &str, request: AgentRequest) -> Action {
+        Action::Agent {
+            request_id: AgentRequestId(id),
+            cwd: std::path::PathBuf::from(cwd),
+            request,
+        }
+    }
+
+    fn agent_replies(effects: &[Effect]) -> Vec<(AgentRequestId, AgentOutcome)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::AgentReply {
+                    request_id,
+                    outcome,
+                } => Some((*request_id, outcome.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn has_list_worktrees(state: &AppState, effects: &[Effect]) -> bool {
+        effects.iter().any(|e| {
+            matches!(e, Effect::ListWorktrees { repo_root } if *repo_root == state.app_config.repo_root)
+        })
+    }
+
+    fn pending_ids(state: &AppState) -> Vec<AgentRequestId> {
+        state
+            .pending_agent_requests
+            .iter()
+            .map(|p| p.request_id)
+            .collect()
+    }
+
+    fn is_listed(state: &AppState, id: &str) -> bool {
+        state
+            .worktree_browser
+            .worktrees
+            .iter()
+            .any(|wt| wt.id.0 == id)
+    }
+
+    /// `wt-1` listed; request 1 from the unlisted `/tmp/wt-2` held for a listing.
+    fn state_with_pending_request(request: AgentRequest) -> AppState {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        update(&mut state, agent_request(1, "/tmp/wt-2", request));
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+        state
+    }
+
+    fn status_worktree_id(outcome: &AgentOutcome) -> &str {
+        match outcome {
+            AgentOutcome::Status(report) => &report.worktree_id,
+            other => panic!("expected Status, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn unknown_cwd_blocks_with_unknown_worktree() {
+    fn unknown_cwd_lists_worktrees_and_holds_the_request() {
         let mut state = base_state();
         seed_one_worktree_id(&mut state, "wt-1");
 
         let effects = update(
             &mut state,
-            agent_action("/tmp/not-a-worktree", AgentRequest::GetWorktreeStatus),
+            agent_request(1, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
         );
-        assert!(matches!(
-            outcome(&effects),
-            AgentOutcome::Blocked {
-                reason: BlockReason::UnknownWorktree { .. }
+
+        assert!(has_list_worktrees(&state, &effects));
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn listing_that_contains_the_cwd_dispatches_the_held_request() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].0, AgentRequestId(1));
+        assert_eq!(status_worktree_id(&replies[0].1), "wt-2");
+        assert!(pending_ids(&state).is_empty());
+        assert!(is_listed(&state, "wt-2"));
+    }
+
+    #[test]
+    fn listing_without_the_cwd_blocks_with_unknown_worktree() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(&mut state, Action::WorktreesLoaded(vec![listed("wt-1")]));
+
+        assert_eq!(
+            agent_replies(&effects),
+            vec![(
+                AgentRequestId(1),
+                AgentOutcome::Blocked {
+                    reason: BlockReason::UnknownWorktree {
+                        cwd: "/tmp/wt-2".into()
+                    }
+                }
+            )]
+        );
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn failed_listing_answers_the_held_request_with_the_git_error() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(&mut state, Action::WorktreesLoadFailed("boom".into()));
+
+        match agent_replies(&effects).as_slice() {
+            [(AgentRequestId(1), AgentOutcome::Error { message })] => {
+                assert!(message.contains("boom"), "message: {message}");
             }
+            other => panic!("expected one Error reply, got {other:?}"),
+        }
+        assert!(pending_ids(&state).is_empty());
+        assert!(state.error_state.is_none());
+    }
+
+    #[test]
+    fn failed_listing_with_nothing_held_does_nothing() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(&mut state, Action::WorktreesLoadFailed("boom".into()));
+
+        assert!(effects.is_empty());
+        assert!(state.error_state.is_none());
+    }
+
+    #[test]
+    fn listing_during_a_build_keeps_the_running_task_and_decides_the_request() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(99, CommandSpec::YarnInstall));
+        update(
+            &mut state,
+            agent_request(1, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
+        );
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        let running = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .and_then(|s| s.task.as_ref())
+            .map(|t| t.spec.clone());
+        assert_eq!(running, Some(CommandSpec::YarnInstall));
+        assert_eq!(agent_replies(&effects).len(), 1);
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_sync_deps_spawns_yarn_install_in_the_new_worktree() {
+        let mut state = state_with_pending_request(AgentRequest::SyncDeps {
+            include_pods: false,
+        });
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        assert!(matches!(
+            agent_replies(&effects).as_slice(),
+            [(AgentRequestId(1), AgentOutcome::Accepted { .. })]
         ));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::SpawnTask { spec: CommandSpec::YarnInstall, worktree_id, .. }
+                if worktree_id.0 == "wt-2"
+        )));
+    }
+
+    #[test]
+    fn unknown_cwd_lists_even_while_a_worktree_op_is_in_flight() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state.worktree_browser.worktree_op_in_flight = true;
+
+        let effects = update(
+            &mut state,
+            agent_request(1, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
+        );
+
+        assert!(has_list_worktrees(&state, &effects));
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn held_request_from_a_subdirectory_resolves_to_the_new_worktree() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        update(
+            &mut state,
+            agent_request(1, "/tmp/wt-2/packages/app", AgentRequest::GetWorktreeStatus),
+        );
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(status_worktree_id(&replies[0].1), "wt-2");
+    }
+
+    #[test]
+    fn known_cwd_replies_at_once_without_listing() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+
+        let effects = update(
+            &mut state,
+            agent_request(1, "/tmp/wt-1", AgentRequest::GetWorktreeStatus),
+        );
+
+        assert_eq!(agent_replies(&effects).len(), 1);
+        assert!(!has_list_worktrees(&state, &effects));
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn one_listing_decides_every_held_request_in_order() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        update(
+            &mut state,
+            agent_request(7, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
+        );
+        update(
+            &mut state,
+            agent_request(8, "/tmp/wt-3", AgentRequest::GetWorktreeStatus),
+        );
+        assert_eq!(
+            pending_ids(&state),
+            vec![AgentRequestId(7), AgentRequestId(8)]
+        );
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2"), listed("wt-3")]),
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0].0, AgentRequestId(7));
+        assert_eq!(status_worktree_id(&replies[0].1), "wt-2");
+        assert_eq!(replies[1].0, AgentRequestId(8));
+        assert_eq!(status_worktree_id(&replies[1].1), "wt-3");
+        assert!(pending_ids(&state).is_empty());
     }
 
     #[test]
@@ -5801,5 +6226,221 @@ mod agent_requests {
             "the UmpRun must be queued behind the boot"
         );
         assert!(matches!(outcome(&effects), AgentOutcome::Accepted { .. }));
+    }
+
+    // --- A held run on a new worktree waits for that worktree's cache lookup ---
+
+    fn list_wt_2(state: &mut AppState) -> Vec<Effect> {
+        update(
+            state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        )
+    }
+
+    /// Request 1 got `MetroStarting`, Metro spawns for `id`, and the run is queued.
+    fn assert_cold_run_waits_for_metro(
+        state: &AppState,
+        effects: &[Effect],
+        id: &str,
+        is_run: impl Fn(&CommandSpec) -> bool,
+    ) {
+        let replies = agent_replies(effects);
+        assert_eq!(replies.len(), 1, "got {replies:?}");
+        assert_eq!(replies[0].0, AgentRequestId(1));
+        assert!(
+            matches!(replies[0].1, AgentOutcome::MetroStarting { .. }),
+            "got {replies:?}"
+        );
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::SpawnMetro { worktree, .. } if *worktree == std::path::Path::new("/tmp").join(id)
+            )),
+            "Metro must start for {id}; got {effects:?}"
+        );
+        let queue = &state.worktrees[&WorktreeId(id.into())].queue;
+        assert_eq!(
+            queue.iter().filter(|spec| is_run(spec)).count(),
+            1,
+            "queue {queue:?}"
+        );
+    }
+
+    #[test]
+    fn agent_listing_looks_up_caches_only_for_the_new_worktree() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+        let slice = state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .expect("wt-1 slice");
+        slice.ios_simulator_cache = crate::domain::native_cache::IosSimulatorCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+        slice.android_cache = crate::domain::native_cache::AndroidCacheState::Miss {
+            fingerprint: "f".into(),
+        };
+
+        let effects = list_wt_2(&mut state);
+
+        let lookups: Vec<&WorktreeId> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::LookupIosSimulatorCache { worktree_id, .. }
+                | Effect::LookupAndroidCache { worktree_id, .. } => Some(worktree_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            lookups,
+            vec![&WorktreeId("wt-2".into()), &WorktreeId("wt-2".into())]
+        );
+    }
+
+    fn accepted_expanded(outcome: &AgentOutcome) -> &[String] {
+        match outcome {
+            AgentOutcome::Accepted { expanded, .. } => expanded,
+            other => panic!("expected Accepted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn held_ios_simulator_run_waits_for_the_cache_lookup_and_launches_the_hit() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: SIM_UDID.into(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = list_wt_2(&mut state);
+
+        assert!(agent_replies(&effects).is_empty());
+        assert!(spawned_specs(&effects).is_empty());
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::LookupIosSimulatorCache { worktree_id, .. } if worktree_id.0 == "wt-2"
+        )));
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+
+        let mut hit = cached_ios_hit_fixture();
+        hit.metadata.variant = RunVariant::Local.label().into();
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: WorktreeId("wt-2".into()),
+                result: Ok(crate::domain::native_cache::IosSimulatorCacheLookup::Hit(
+                    Box::new(hit),
+                )),
+            },
+        );
+
+        let replies = agent_replies(&effects);
+        assert_eq!(replies.len(), 1);
+        assert!(
+            accepted_expanded(&replies[0].1)[0].starts_with("cached launch"),
+            "got {replies:?}"
+        );
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_android_run_is_decided_cold_when_the_lookup_fails() {
+        let mut state = state_with_pending_request(AgentRequest::RunAndroid {
+            device_id: "emulator-5554".into(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = list_wt_2(&mut state);
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-2".into()),
+                result: Err("no cache dir".into()),
+            },
+        );
+
+        // Decided as a cold run: no Metro on the new worktree yet, so Metro
+        // starts and the Gradle run waits in the queue behind it.
+        assert_cold_run_waits_for_metro(&state, &effects, "wt-2", |spec| {
+            matches!(spec, CommandSpec::UmpRunAndroid { .. })
+        });
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_ios_run_on_a_physical_device_is_decided_on_the_listing() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: "00008030-ABCDEF".into(),
+            variant: Some(RunVariant::Local),
+        });
+
+        let effects = list_wt_2(&mut state);
+
+        // Physical devices have no cache path: decided on the listing as a cold run.
+        assert_cold_run_waits_for_metro(&state, &effects, "wt-2", |spec| {
+            matches!(spec, CommandSpec::UmpRunIos { .. })
+        });
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_status_request_does_not_wait_for_the_cache_lookup() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = list_wt_2(&mut state);
+
+        assert_eq!(agent_replies(&effects).len(), 1);
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
+    fn held_ios_run_ignores_the_android_lookup_result() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: SIM_UDID.into(),
+            variant: Some(RunVariant::Local),
+        });
+        list_wt_2(&mut state);
+
+        let effects = update(
+            &mut state,
+            Action::AndroidCacheLookupFinished {
+                worktree_id: WorktreeId("wt-2".into()),
+                result: Err("no cache dir".into()),
+            },
+        );
+
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn failed_listing_keeps_a_run_that_only_waits_for_its_cache_lookup() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: SIM_UDID.into(),
+            variant: Some(RunVariant::Local),
+        });
+        list_wt_2(&mut state);
+
+        let effects = update(&mut state, Action::WorktreesLoadFailed("boom".into()));
+
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
+    fn cache_lookup_keeps_a_request_that_still_waits_for_its_listing() {
+        let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
+
+        let effects = update(
+            &mut state,
+            Action::IosSimulatorCacheLookupFinished {
+                worktree_id: WorktreeId("wt-1".into()),
+                result: Err("no cache dir".into()),
+            },
+        );
+
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
     }
 }

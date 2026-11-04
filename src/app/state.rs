@@ -280,6 +280,20 @@ pub struct AppState {
         crate::domain::worktree::WorktreeId,
         crate::domain::worktree_slice::WorktreeSlice,
     >,
+
+    /// Agent requests whose cwd was not in the worktree list when they arrived.
+    /// Each is held until the next worktree listing decides it: dispatched if
+    /// the listing contains the cwd, otherwise answered `unknown_worktree`.
+    pub pending_agent_requests: Vec<PendingAgentRequest>,
+}
+
+/// An agent request held until the next worktree listing (see
+/// `AppState::pending_agent_requests`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingAgentRequest {
+    pub request_id: crate::domain::agent_protocol::AgentRequestId,
+    pub cwd: std::path::PathBuf,
+    pub request: crate::domain::agent_protocol::AgentRequest,
 }
 
 // ---------------------------------------------------------------------------

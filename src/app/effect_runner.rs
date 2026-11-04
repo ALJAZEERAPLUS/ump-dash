@@ -434,6 +434,7 @@ impl EffectRunner {
                         }
                         Err(e) => {
                             tracing::warn!("list_worktrees failed: {e}");
+                            let _ = tx.send(Action::WorktreesLoadFailed(format!("{e:#}")));
                         }
                     }
                 });
@@ -1138,6 +1139,61 @@ mod tests {
         }
     }
 
+    /// `git worktree list` fails; every other operation behaves like `NoopWorktrees`.
+    struct FailingListWorktrees(&'static str);
+
+    #[async_trait::async_trait]
+    impl WorktreePort for FailingListWorktrees {
+        async fn list(&self, _repo_root: &Path) -> anyhow::Result<Vec<Worktree>> {
+            Err(anyhow::anyhow!(self.0))
+        }
+
+        async fn remove(&self, repo_root: &Path, worktree_path: &Path) -> anyhow::Result<()> {
+            NoopWorktrees.remove(repo_root, worktree_path).await
+        }
+
+        async fn delete_branch(
+            &self,
+            repo_root: &Path,
+            branch: &str,
+            force: bool,
+        ) -> anyhow::Result<BranchDeleteOutcome> {
+            NoopWorktrees.delete_branch(repo_root, branch, force).await
+        }
+
+        async fn add(&self, repo_root: &Path, branch_name: &str) -> anyhow::Result<PathBuf> {
+            NoopWorktrees.add(repo_root, branch_name).await
+        }
+
+        async fn add_new_branch(
+            &self,
+            repo_root: &Path,
+            new_branch: &str,
+            base_branch: &str,
+        ) -> anyhow::Result<PathBuf> {
+            NoopWorktrees
+                .add_new_branch(repo_root, new_branch, base_branch)
+                .await
+        }
+
+        async fn add_review_worktree(
+            &self,
+            repo_root: &Path,
+            pr_number: u64,
+            branch_name: &str,
+            head_oid: &str,
+            worktree_name: &str,
+        ) -> anyhow::Result<PathBuf> {
+            NoopWorktrees
+                .add_review_worktree(repo_root, pr_number, branch_name, head_oid, worktree_name)
+                .await
+        }
+
+        async fn list_remote_branches(&self, repo_root: &Path) -> anyhow::Result<Vec<String>> {
+            NoopWorktrees.list_remote_branches(repo_root).await
+        }
+    }
+
     struct NoopReview;
 
     #[async_trait::async_trait]
@@ -1376,11 +1432,60 @@ mod tests {
         (runner, action_rx)
     }
 
+    fn runner_with_worktrees(
+        worktrees: Arc<dyn WorktreePort>,
+    ) -> (EffectRunner, UnboundedReceiver<Action>) {
+        let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (handle_tx, _handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (task_handle_tx, _task_handle_rx) = tokio::sync::mpsc::unbounded_channel();
+        let runner = EffectRunner::new(
+            Adapters {
+                command_runner: Arc::new(NoopCommandRunner),
+                metro: Arc::new(NoopMetro),
+                port_probe: Arc::new(NoopProbe),
+                worktrees,
+                devices: Arc::new(NoopDevices),
+                native_cache: Arc::new(ScriptedNativeCache::new(NativeScript::LookupAndroid(Ok(
+                    AndroidCacheLookup::Miss {
+                        fingerprint: "unused".into(),
+                    },
+                )))),
+                external_command: Arc::new(NoopExternalCommand),
+                review: Arc::new(NoopReview),
+                jira: None,
+                multiplexer: None,
+                mcp_server: None,
+            },
+            action_tx,
+            handle_tx,
+            task_handle_tx,
+        );
+        (runner, action_rx)
+    }
+
     async fn receive_action(action_rx: &mut UnboundedReceiver<Action>) -> Action {
         tokio::time::timeout(Duration::from_secs(1), action_rx.recv())
             .await
             .expect("native cache effect should send an action")
             .expect("action channel should stay open")
+    }
+
+    #[tokio::test]
+    async fn failed_worktree_listing_dispatches_the_git_error() {
+        let (runner, mut action_rx) = runner_with_worktrees(Arc::new(FailingListWorktrees(
+            "fatal: not a git repository",
+        )));
+
+        runner
+            .run_effects(vec![Effect::ListWorktrees {
+                repo_root: PathBuf::from("/tmp/not-a-repo"),
+            }])
+            .await;
+
+        assert_eq!(
+            receive_action(&mut action_rx).await,
+            Action::WorktreesLoadFailed("fatal: not a git repository".into())
+        );
     }
 
     #[tokio::test]
