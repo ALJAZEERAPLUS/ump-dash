@@ -5205,6 +5205,35 @@ mod agent_requests {
     }
 
     #[test]
+    fn listing_during_a_build_keeps_the_running_task_and_decides_the_request() {
+        let mut state = base_state();
+        seed_one_worktree_id(&mut state, "wt-1");
+        state
+            .worktrees
+            .get_mut(&WorktreeId("wt-1".into()))
+            .unwrap()
+            .task = Some(synthetic_task_record(99, CommandSpec::YarnInstall));
+        update(
+            &mut state,
+            agent_request(1, "/tmp/wt-2", AgentRequest::GetWorktreeStatus),
+        );
+
+        let effects = update(
+            &mut state,
+            Action::WorktreesLoaded(vec![listed("wt-1"), listed("wt-2")]),
+        );
+
+        let running = state
+            .worktrees
+            .get(&WorktreeId("wt-1".into()))
+            .and_then(|s| s.task.as_ref())
+            .map(|t| t.spec.clone());
+        assert_eq!(running, Some(CommandSpec::YarnInstall));
+        assert_eq!(agent_replies(&effects).len(), 1);
+        assert!(pending_ids(&state).is_empty());
+    }
+
+    #[test]
     fn held_sync_deps_spawns_yarn_install_in_the_new_worktree() {
         let mut state = state_with_pending_request(AgentRequest::SyncDeps {
             include_pods: false,

@@ -131,12 +131,10 @@ pub async fn run(
             }
             _ = refresh_interval.tick() => {
                 // 60-second periodic refresh: keeps worktrees, staleness, labels, and JIRA titles current.
-                // Plan 14-09: gate walks slices — skip refresh only if any worktree has a running task.
-                let any_running = state.worktrees.values().any(|s| s.task.is_some());
-                if !any_running {
-                    let effects = update(&mut state, Action::RefreshWorktrees);
-                    runner.run_effects(effects).await;
-                }
+                // Runs during builds too: merge_slices keeps the task, queue and logs of every
+                // worktree that is still listed. RefreshWorktrees skips only during a worktree op.
+                let effects = update(&mut state, Action::RefreshWorktrees);
+                runner.run_effects(effects).await;
             }
             maybe_event = events.next() => {
                 let Some(Ok(event)) = maybe_event else { break };
