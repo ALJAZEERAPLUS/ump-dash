@@ -6203,6 +6203,20 @@ mod agent_requests {
     }
 
     #[test]
+    fn failed_listing_keeps_a_run_that_only_waits_for_its_cache_lookup() {
+        let mut state = state_with_pending_request(AgentRequest::RunIos {
+            device_id: SIM_UDID.into(),
+            variant: Some(RunVariant::Local),
+        });
+        list_wt_2(&mut state);
+
+        let effects = update(&mut state, Action::WorktreesLoadFailed("boom".into()));
+
+        assert!(agent_replies(&effects).is_empty());
+        assert_eq!(pending_ids(&state), vec![AgentRequestId(1)]);
+    }
+
+    #[test]
     fn cache_lookup_keeps_a_request_that_still_waits_for_its_listing() {
         let mut state = state_with_pending_request(AgentRequest::GetWorktreeStatus);
 

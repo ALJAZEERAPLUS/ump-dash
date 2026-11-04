@@ -625,20 +625,26 @@ fn defer_agent_request(
     });
 }
 
-/// Answer every held agent request with the listing error. With nothing held
-/// this does nothing: the runner already logged the failure, and periodic
-/// listing failures stay silent in the TUI.
+/// Answer the held agent requests that wait for a listing with the listing
+/// error. A run whose cwd is already listed waits only for its cache lookup,
+/// so it stays held. With nothing waiting for a listing this does nothing: the
+/// runner already logged the failure, and periodic listing failures stay
+/// silent in the TUI.
 fn fail_pending_agent_requests(state: &mut AppState, effects: &mut Vec<Effect>, err: &str) {
-    let pending = std::mem::take(&mut state.pending_agent_requests);
-    if pending.is_empty() {
+    let (waiting_for_listing, kept): (Vec<_>, Vec<_>) =
+        std::mem::take(&mut state.pending_agent_requests)
+            .into_iter()
+            .partition(|held| resolve_agent_worktree(state, &held.cwd).is_none());
+    state.pending_agent_requests = kept;
+    if waiting_for_listing.is_empty() {
         return;
     }
-    let count = pending.len();
+    let count = waiting_for_listing.len();
     tracing::warn!(
         count,
         "worktree listing failed; replying error to {count} agent request(s): {err}"
     );
-    for held in pending {
+    for held in waiting_for_listing {
         push_agent_reply(
             effects,
             held.request_id,
